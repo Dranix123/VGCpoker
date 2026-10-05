@@ -8,7 +8,7 @@
 | 房间号邀请注册玩家 | `server.py` / `public/app.js` | 两个独立浏览器账号通过六位房间号加入相同房间；4 人同桌 |
 | 联机合法出牌与手牌隔离 | `engine.py` / HTTP 状态同步 | 双浏览器手牌 ID 互不重叠，响应无对方 hands；权限、伪造牌和过期版本测试 |
 | 刷新返回牌桌 | SQLite 会话 + 内存房间 | 双浏览器验收中刷新加入者，恢复同一房间 |
-| 规则 AI | `Game.bot_action` | 四种玩法及进阶/DLC 全局自动游戏测试；浏览器完整斗地主对局 |
+| 规则 AI | `Game.bot_action` | 四种玩法及进阶/DLC 全局自动游戏测试；专项验证保留三张/对子/炸弹、同队让牌、对手一张时压制、立即出完、改变对手隐藏牌点数不改变决策；浏览器完整斗地主对局 |
 | 用户 API 模型 AI | 设置 / `model_move` | 模拟兼容 API 返回值验证合法动作、非法下标、失败回退、过期响应丢弃；未提供真实 API Key，因此未产生付费外部请求 |
 | 仅真人积分与段位 | SQLite results / rating_events | HTTP 跑完全真人标准版并验证每人 ±20，重复结算不重复加分；AI 认输及浏览器 AI 对局积分保持不变 |
 | 逆时针出牌 | `next_seat` | 四种玩法轮转、拒绝错误座位出牌、不出后的回到牌权持有者、跳过完成玩家、斗地主 0→2→1 叫分测试；特殊牌权与协商用逆时针座位重新验收 |
@@ -29,7 +29,7 @@
 | 设置统一管理 API 与账号 | 设置 / `/api/account` / `/api/model-settings` | 密码修改撤销其他会话、昵称更新房间、密钥不返回浏览器、配置继承与清除测试 |
 | Git 管理 | `.git` | 本地提交记录与 `.gitignore` 排除数据库、密钥、浏览器验收文件 |
 
-自动测试：`python3 -m unittest discover -s tests -v`，当前 30 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
+自动测试：`python3 -m unittest discover -s tests -v`，当前 31 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
 
 设计与玩法约定详见 `README.md` 和游戏内玩法手册。服务器重启会结束未完成的内存房间；SQL 账号、积分、已完成战绩保留。Cloudflare 域名连接由用户配置，源站使用 `http://localhost:4141`。
 

@@ -535,10 +535,99 @@ class Game:
             return {'action': 'rps', 'value': random.choice(['rock', 'paper', 'scissors'])} if seat in self.reveals and seat not in self.rps else None
         if self.phase != 'play' or seat != self.turn or seat in self.finished: return None
         moves = self.candidates(seat)
-        # Teammates avoid overtaking each other when they can safely pass.
-        teammate = self.last_seat is not None and ((self.mode == 'landlord' and seat != self.landlord and self.last_seat != self.landlord) or self.mode in ('standard', 'basic') and seat % 2 == self.last_seat % 2)
-        if teammate and self.last and not self.last.get('direct') and len(self.hands[self.last_seat]) <= 3: return {'action': 'pass'}
-        return moves[0] if moves else {'action': 'pass'}
+        hand = self.hands[seat]
+        def allied(other):
+            return other != seat and ((self.mode == 'landlord' and seat != self.landlord and other != self.landlord) or self.mode in ('standard', 'basic') and other % 2 == seat % 2)
+        opponents = [s for s in range(len(self.players)) if s != seat and s not in self.finished and not allied(s)]
+        danger = min((len(self.hands[s]) for s in opponents), default=99)
+        responding = self.last is not None and self.last_seat != seat
+        urgent = [c for c in hand if c['rank'] == 18]
+        # Evaluate every gift using only our cards, public hand counts and team seats.
+        if urgent:
+            moves = [m for m in moves if m['action'] != 'urgent'] + [
+                {'action': 'urgent', 'ids': [urgent[0]['id'], c['id']], 'target': target, 'power': -1, 'value': 0, 'n': 2}
+                for c in hand if c['rank'] != 18
+                for target in range(len(self.players)) if target != seat and target not in self.finished]
+        if not moves: return {'action': 'pass'}
+        for move in moves:
+            if len(move['ids']) == len(hand): return move
+        safe_teammate = responding and allied(self.last_seat) and not self.last.get('direct') and not (danger <= self.last['n'] <= 2 and self.last['value'] < 15)
+        minimum_bomb = 3 if self.mode == 'basic' else 4
+        counts = Counter(c['rank'] for c in hand)
+        costs = {}
+        def hand_cost(remaining):
+            key = tuple(sorted(Counter(c['rank'] for c in remaining).items()))
+            if key in costs: return costs[key]
+            best = float('inf')
+            # Try both sequence-first and set-first decompositions. Count complete
+            # future plays rather than simply maximizing cards shed this turn.
+            for order in ((3, 2, 1), (1, 2, 3)):
+                pool = Counter(dict(key)); turns = pool.pop(18, 0)
+                if self.mode != 'landlord':
+                    a = pool[14]; four = pool[4]
+                    if a >= (1 if self.mode == 'basic' else 2) and four > a and four >= (2 if self.mode == 'basic' else 3):
+                        pool[14] = pool[4] = 0; turns += 1
+                for multiple in order:
+                    minimum = 5 if multiple == 1 else 3 if multiple == 2 else 2
+                    for start in range(3, 15):
+                        sequence = []
+                        for rank in range(start, 15):
+                            if pool[rank] < multiple or pool[rank] >= minimum_bomb or self.mode != 'landlord' and rank == self.main: break
+                            sequence.append(rank)
+                        if len(sequence) >= minimum:
+                            for rank in sequence: pool[rank] -= multiple
+                            turns += 1
+                            if multiple == 3:
+                                wings = [r for r in RANKS if r not in sequence and pool[r] == 1 and strength(r, self.main, self.mode) < 15][:len(sequence)]
+                                if len(wings) == len(sequence):
+                                    for wing in wings: pool[wing] -= 1
+                if pool[16] and pool[17]:
+                    pool[16] = pool[17] = 0; turns += 1
+                elif self.mode != 'landlord' and pool[16] + pool[17] >= 2:
+                    pool[16] = pool[17] = 0; turns += 1
+                for rank in RANKS:
+                    if pool[rank] == 3 and self.mode != 'basic':
+                        wing = next((r for r in RANKS if r != rank and pool[r] in (1, 2) and strength(r, self.main, self.mode) < 15), None)
+                        if wing is not None: pool[wing] = 0
+                        pool[rank] = 0; turns += 1
+                turns += sum(1 for n in pool.values() if n)
+                # Low isolated cards are harder to regain control with in the endgame.
+                stranded = sum(.18 for r, n in pool.items() if n == 1 and strength(r, self.main, self.mode) < 12)
+                best = min(best, turns + stranded)
+            costs[key] = best
+            return best
+        def score(move):
+            ids = set(move['ids']); chosen = [c for c in hand if c['id'] in ids]
+            remaining = [c for c in hand if c['id'] not in ids]
+            value = hand_cost(remaining) * 8
+            used = Counter(c['rank'] for c in chosen)
+            for rank, number in used.items():
+                if 0 < number < counts[rank]:
+                    value += 12 if counts[rank] >= minimum_bomb else 3 if counts[rank] >= 2 else 0
+            controls = sum(strength(c['rank'], self.main, self.mode) >= 15 for c in chosen)
+            value += controls * (1 if danger <= 2 else 4)
+            value += sum(c['rank'] == 14 and c['suit'] == 'S' for c in chosen) * 3
+            if move['action'] == 'urgent':
+                gift = next(c for c in chosen if c['rank'] != 18 and move.get('wildcard', {}).get(c['id']) != 18)
+                if not urgent: value += 8
+                target = move['target']
+                value += 4 if allied(target) else -2
+                if allied(target) and strength(gift['rank'], self.main, self.mode) >= 15: value -= 5
+                if allied(target) and len(self.hands[target]) <= 2: value += 8
+                if not allied(target) and strength(gift['rank'], self.main, self.mode) >= 15: value += 10
+                if len(remaining) == 1 and remaining[0]['rank'] == 18: value += 40
+            else:
+                value += (12 if danger > 2 else 3) if move['power'] else 0
+                value += move['value'] * (.12 if not responding or danger > 2 else -.35)
+                if responding and danger == 1 and move['n'] == 1 and controls: value -= 4
+                if not responding and danger == 1 and move['n'] > 1: value -= 6
+                if safe_teammate: value += 20
+            return value, move.get('power', 0), move.get('value', 0)
+        best = min(moves, key=score)
+        if responding and not self.last.get('direct'):
+            passing = hand_cost(hand) * 8 + (0 if safe_teammate else 14 if danger <= 2 else 5)
+            if score(best)[0] >= passing: return {'action': 'pass'}
+        return best
 
     def view(self, seat):
         return {'mode': self.mode, 'phase': self.phase, 'main': self.main, 'scores': self.scores, 'turn': self.turn, 'landlord': self.landlord, 'bid': self.bid,

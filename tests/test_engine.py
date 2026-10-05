@@ -238,4 +238,27 @@ class Rules(unittest.TestCase):
                     self.assertEqual(g.phase,'over')
                     self.assertTrue(g.winner)
 
+    def test_bot_preserves_groups_and_uses_sufficient_responses(self):
+        g=table('landlord');g.landlord=0
+        g.hands[0]=cards([3,4,5,6,7,8,8,8,9,9,15],prefix='a')
+        move=g.bot_action(0)
+        self.assertEqual([c['rank'] for c in g.hands[0] if c['id'] in move['ids']],[3,4,5,6,7])
+        g=table('landlord');g.landlord=0;g.turn=2
+        g.hands[2]=cards([6,8],prefix='c');g.action(2,'play',['c0'])
+        g.hands[1]=cards([7,7,9,15,16,17],prefix='b')
+        # Farmers pass on a safe partner's lead, even with playable larger cards.
+        self.assertEqual(g.bot_action(1),{'action':'pass'})
+        g.landlord=2;g.hands[2]=cards([8,10,11,12],prefix='c')
+        move=g.bot_action(1)
+        self.assertEqual(move['ids'],['b2'])
+        g.hands[1]=cards([7,7,7,7,9,15],prefix='b')
+        self.assertEqual(g.bot_action(1)['ids'],['b4'])
+        g.hands[2]=cards([8],prefix='c')
+        self.assertEqual(g.bot_action(1)['ids'],['b5'])
+        # Hidden opponent ranks do not affect the decision; their public count does.
+        g.hands[2]=cards([17],prefix='c')
+        self.assertEqual(g.bot_action(1)['ids'],['b5'])
+        g.hands[1]=cards([7],prefix='b')
+        self.assertEqual(g.bot_action(1)['ids'],['b0'])
+
 if __name__=='__main__':unittest.main()
