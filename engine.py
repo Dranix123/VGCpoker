@@ -167,6 +167,8 @@ class Game:
         for i, c in enumerate(dealing): self.hands[(i + offset) % len(players)].append(c)
         self.turn = offset
         self.last, self.last_seat = None, None
+        self.seat_plays = [None for _ in players]
+        self.play_number = 0
         self.passes, self.finished, self.log = set(), [], []
         self.hui_used = False
         self.landlord, self.bid, self.bids = None, 0, []
@@ -307,10 +309,12 @@ class Game:
             return
         combo, direct = self.validate_play(seat, cards, action, args.get('wildcard'))
         import copy
-        self.history = {'seat': seat, 'snapshot': {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last')}}
+        self.history = {'seat': seat, 'snapshot': {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last')}}
         if self.last and self.last.get('direct') and self.last_seat == seat and action == 'play': self.hui_used = False
         self.remove(seat, cards)
         self.last = {**combo, 'cards': cards, 'special': action, 'direct': direct}
+        self.play_number += 1
+        self.seat_plays[seat] = {**self.last, 'order': self.play_number}
         self.last_seat = seat; self.passes = set()
         if action == 'hui': self.hui_used = True
         substitutions = [LABELS[c['rank']] + '→' + LABELS[r] for c, r in zip(cards, combo['ranks']) if c['rank'] != r]
@@ -540,6 +544,7 @@ class Game:
         return {'mode': self.mode, 'phase': self.phase, 'main': self.main, 'scores': self.scores, 'turn': self.turn, 'landlord': self.landlord, 'bid': self.bid,
                 'bottom': self.bottom if self.phase != 'bid' else [], 'hand': sorted(self.hands[seat], key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])),
                 'counts': [len(h) for h in self.hands], 'finished': self.finished, 'last': self.last, 'lastSeat': self.last_seat,
+                'seatPlays': self.seat_plays, 'playNumber': self.play_number,
                 'winner': self.winner, 'log': self.log, 'reveals': self.reveals, 'ready': list(self.rps), 'promotions': self.promotions,
                 'negotiation': {k: self.negotiation[k] for k in ('seat', 'target')} if self.negotiation else None,
                 'options': self.options, 'openingFirst': self.first, 'nextMain': self.next_main, 'urgentLast': self.urgent_last}

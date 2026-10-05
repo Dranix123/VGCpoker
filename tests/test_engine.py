@@ -100,6 +100,8 @@ class Rules(unittest.TestCase):
         g.action(2,'negotiate',['c0','c1'],special='cross')
         g.action(1,'accept')
         self.assertEqual(len(g.hands[1]),2);self.assertEqual(g.last_seat,2);self.assertEqual(g.last['special'],'cross')
+        self.assertIsNone(g.seat_plays[1]);self.assertEqual(g.play_number,2)
+        self.assertEqual(g.seat_plays[2]['order'],2)
         g=table();g.hands[0]=cards([7],prefix='a');g.hands[2]=cards([7,7,10],prefix='c')
         g.action(0,'play',['a0']);g.action(2,'cross',['c0','c1']);self.assertEqual(g.last_seat,2)
 
@@ -140,6 +142,21 @@ class Rules(unittest.TestCase):
         self.assertIn(0,g.urgent_last);self.assertEqual(g.turn,1)
         g=table();g.hands[0]=cards([18,6],prefix='a');g.action(0,'urgent',['a0','a1'],target=1)
         self.assertEqual(g.turn,1)
+
+    def test_each_seat_retains_only_latest_public_play(self):
+        g=table();g.hands[0]=cards([6,10,11],prefix='a');g.hands[1]=cards([7,12],prefix='b');g.hands[2]=cards([8,13],prefix='c');g.hands[3]=cards([9,14],prefix='d')
+        for s in range(4):g.action(s,'play',[chr(97+s)+'0'])
+        g.action(0,'play',['a1'])
+        self.assertEqual(g.play_number,5)
+        self.assertEqual([p['order'] for p in g.seat_plays],[5,2,3,4])
+        self.assertEqual(g.seat_plays[0]['cards'][0]['id'],'a1')
+        for s in (1,2,3):g.action(s,'pass')
+        self.assertIsNone(g.last);self.assertEqual(g.play_number,5)
+        view=g.view(2)
+        self.assertEqual(len(view['seatPlays']),4)
+        self.assertNotIn('a2',str(view['seatPlays']))
+        self.assertNotIn('hands',view)
+        self.assertEqual(Game('standard',g.players).seat_plays,[None]*4)
 
     def test_team_winner_and_scoring(self):
         g=table();g.hands[0]=cards([5],prefix='a');g.hands[1]=cards([6],prefix='b');g.hands[2]=cards([7],prefix='c');g.hands[3]=cards([8],prefix='d')
