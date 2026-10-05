@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+import copy
+import hashlib
+import http.cookies
+import json
+import os
+import secrets
+import sqlite3
+import threading
+import time
+import urllib.request
+import urllib.parse
+import ipaddress
+import socket
+from pathlib import Path
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from engine import Game, RuleError, MODES
+
+ROOT = Path(__file__).resolve().parent
+DB_PATH = ROOT / 'data' / 'poker.sqlite3'
+ROOMS, SESSIONS, ATTEMPTS = {}, {}, {}
+LOCK = threading.RLock()
+BOT_BUSY = set()
+
+def db():
+    connection = sqlite3.connect(str(DB_PATH), timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute('PRAGMA foreign_keys = ON')
+    return connection
+
+def initialize():
+    DB_PATH.parent.mkdir(exist_ok=True)
+    with db() as c:
+        c.executescript('''
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE, salt TEXT NOT NULL, password TEXT NOT NULL, points INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS results(id TEXT PRIMARY KEY, room TEXT NOT NULL, mode TEXT NOT NULL, outcome TEXT NOT NULL, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS rating_events(result_id TEXT NOT NULL REFERENCES results(id), user_id INTEGER NOT NULL REFERENCES users(id), delta INTEGER NOT NULL, PRIMARY KEY(result_id,user_id));
+        ''')
+        c.execute('DELETE FROM sessions WHERE expires < ?', (int(time.time()),))
+
+def rank(points):
+    return next(name for limit, name in ((800, '纸牌学徒'), (1100, '墨线新秀'), (1400, '银笔高手'), (1800, '黑金大师'), (2400, '牌桌宗师'), (10**9, '无冕传奇')) if points < limit)
+
+def user_view(row):
+    return {'id': row['id'], 'name': row['username'], 'points': row['points'], 'rank': rank(row['points']), 'wins': row['wins'], 'games': row['games']}
+
+def persist_result(room):
+    g = room['game']
+    if g.phase != 'over' or room.get('settled'): return
+    room['settled'] = True
+    rated = all(not p.get('bot') for p in room['players'])
+    room['rated'] = rated
+    delta = 24 if g.mode == 'landlord' else 20
+    with db() as c:
+        c.execute('INSERT INTO results VALUES(?,?,?,?,?)', (room['matchId'], room['code'], g.mode, json.dumps({'winner': g.winner, 'rated': rated, 'order': g.finished}), int(time.time())))
+        if rated:
+            for seat, player in enumerate(room['players']):
+                won = seat in g.winner
+                change = delta if won else -delta
+                c.execute('UPDATE users SET points = MAX(0,points+?), games=games+1, wins=wins+? WHERE id=?', (change, int(won), player['id']))
+                c.execute('INSERT INTO rating_events VALUES(?,?,?)', (room['matchId'], player['id'], change))
+    g.announce('真人对局已结算积分。' if rated else '练习对局：含AI玩家，本局不计积分。')
+
+def room_of(uid):
+    return next((r for r in ROOMS.values() if any(p['id'] == uid for p in r['players'])), None)
+
+def room_view(room, uid):
+    seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
+    return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected')} for p in room['players']],
+            'capacity': MODES[room['mode']], 'options': room['options'], 'rated': all(not p.get('bot') for p in room['players']),
+            'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
+
+def validate_endpoint(endpoint):
+    parsed = urllib.parse.urlsplit(endpoint)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.fragment or parsed.query:
+        raise RuleError('模型地址应为 HTTPS API 地址，不含账号、查询参数或片段。')
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+        if any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses): raise RuleError('模型API必须使用公网地址。')
+    except socket.gaierror: raise RuleError('无法解析模型API地址。')
+    return endpoint.rstrip('/')
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs): return None
+
+def model_move(config, g, seat):
+    moves = g.candidates(seat)[:50]
+    if g.last and g.last_seat != seat: moves.append({'action': 'pass'})
+    if not moves: return {'action': 'pass'}
+    endpoint = validate_endpoint(config['endpoint'])
+    if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
+    # Only this bot's hand and public table state are shared with its configured provider.
+    prompt = {'table': g.view(seat), 'legal_moves': [{**m, 'index': i} for i, m in enumerate(moves)]}
+    payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': 'You are a card-game player. Choose one legal_moves index to maximize your winning chance. Return only JSON: {"index": 0}.'}, {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)}], 'temperature': .2, 'max_tokens': 80}
+    req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['key']})
+    with urllib.request.build_opener(NoRedirect).open(req, timeout=12) as response:
+        raw = response.read(65537)
+        if len(raw) > 65536: raise ValueError('Response too large')
+        content = json.loads(raw)['choices'][0]['message']['content'].strip()
+        if content.startswith('```'): content = content.strip('`').removeprefix('json').strip()
+        index = json.loads(content)['index']
+        if not isinstance(index, int) or index not in range(len(moves)): raise ValueError('Invalid move')
+        return moves[index]
+
+def tick_bot(code, seat, version, snapshot, config):
+    try:
+        try: move = model_move(config, snapshot, seat)
+        except Exception: move = snapshot.bot_action(seat)
+        with LOCK:
+            room = ROOMS.get(code)
+            if room and room['revision'] == version and move:
+                try:
+                    room['game'].action(seat, **move)
+                    room['revision'] += 1
+                    persist_result(room)
+                except RuleError: pass
+    finally:
+        with LOCK: BOT_BUSY.discard(code)
+
+def bot_loop():
+    while True:
+        time.sleep(.9)
+        with LOCK:
+            for room in list(ROOMS.values()):
+                g = room.get('game')
+                if not g or g.phase == 'over' or room['code'] in BOT_BUSY: continue
+                for seat, p in enumerate(room['players']):
+                    if not p.get('bot'): continue
+                    move = g.bot_action(seat)
+                    if not move: continue
+                    config = room.get('modelConfig') if p.get('model') else None
+                    if config and g.phase == 'play' and not g.negotiation:
+                        BOT_BUSY.add(room['code'])
+                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy()), daemon=True).start()
+                    else:
+                        try:
+                            g.action(seat, **move)
+                            room['revision'] += 1
+                            persist_result(room)
+                        except RuleError as e: g.announce('AI出牌失败：' + str(e))
+                    break
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = 'PaperPoker/1.0'
+    def log_message(self, format, *args):
+        # Avoid logging request bodies, model keys, passwords, or cookies.
+        if '/api/state' not in args[0]: super().log_message(format, *args)
+
+    def respond(self, data, status=200, cookie=None):
+        body = json.dumps(data, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        if cookie: self.send_header('Set-Cookie', cookie)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def session(self):
+        cookie = http.cookies.SimpleCookie()
+        try: cookie.load(self.headers.get('Cookie', ''))
+        except http.cookies.CookieError: return None
+        token = cookie.get('poker_session')
+        if not token: return None
+        with db() as c:
+            return c.execute('SELECT users.* FROM users JOIN sessions ON users.id=sessions.user_id WHERE token=? AND expires>?', (token.value, int(time.time()))).fetchone()
+
+    def do_GET(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path.startswith('/api/'):
+            with LOCK:
+                user = self.session()
+                if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
+                if path == '/api/state':
+                    if not user: return self.respond({'user': None, 'room': None})
+                    room = room_of(user['id'])
+                    if room:
+                        p = next(p for p in room['players'] if p['id'] == user['id'])
+                        p['connected'] = True; p['seen'] = time.time()
+                        for p in room['players']:
+                            if not p.get('bot'): p['connected'] = time.time() - p.get('seen', 0) < 15
+                    return self.respond({'user': user_view(user), 'room': room_view(room, user['id']) if room else None})
+                if not user: return self.respond({'error': '请先登录。'}, 401)
+                if path == '/api/leaderboard':
+                    with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
+                    return self.respond({'players': [user_view(u) for u in users]})
+                if path == '/api/history':
+                    with db() as c:
+                        rows = c.execute('SELECT results.mode, results.created, rating_events.delta FROM rating_events JOIN results ON result_id=results.id WHERE user_id=? ORDER BY created DESC LIMIT 20', (user['id'],)).fetchall()
+                    return self.respond({'history': [dict(r) for r in rows]})
+                return self.respond({'error': '接口不存在。'}, 404)
+        filename = 'index.html' if path == '/' else path.lstrip('/')
+        file = (ROOT / 'public' / filename).resolve()
+        if not file.is_relative_to(ROOT / 'public') or not file.is_file(): return self.respond({'error': '页面不存在。'}, 404)
+        content = file.read_bytes()
+        self.send_response(200)
+        self.send_header('Content-Type', {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}.get(file.suffix, 'application/octet-stream'))
+        self.send_header('Content-Length', str(len(content)))
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+        self.end_headers(); self.wfile.write(content)
+
+    def do_POST(self):
+        # Reject cross-origin requests even if a browser attaches a session cookie.
+        origin = self.headers.get('Origin')
+        if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get('Host'): return self.respond({'error': '跨站请求被拒绝。'}, 403)
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= 16384: return self.respond({'error': '请求大小无效。'}, 400)
+            body = json.loads(self.rfile.read(size))
+            if not isinstance(body, dict): raise ValueError()
+            with LOCK: self.post(urllib.parse.urlsplit(self.path).path, body)
+        except (RuleError, ValueError, TypeError, KeyError) as e:
+            self.respond({'error': str(e) if isinstance(e, RuleError) else '请求参数无效。'}, 400)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self.respond({'error': '服务暂时无法处理请求。'}, 500)
+
+    def post(self, path, b):
+        if path in ('/api/register', '/api/login'):
+            ip = self.client_address[0]
+            attempts = ATTEMPTS.setdefault(ip, [])
+            attempts[:] = [t for t in attempts if time.time() - t < 60]
+            if len(attempts) >= 20: return self.respond({'error': '请求过于频繁，请稍后再试。'}, 429)
+            attempts.append(time.time())
+            name, password = b.get('name', ''), b.get('password', '')
+            if not isinstance(name, str) or not isinstance(password, str): raise RuleError('昵称与密码格式无效。')
+            name = name.strip()
+            if not 2 <= len(name) <= 18 or not 8 <= len(password) <= 128: raise RuleError('昵称为2–18个字符，密码为8–128个字符。')
+            if any(ord(c) < 32 for c in name): raise RuleError('昵称包含无效字符。')
+            with db() as c:
+                if path == '/api/register':
+                    salt = secrets.token_hex(16)
+                    hashed = hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 600000).hex()
+                    try: c.execute('INSERT INTO users(username,salt,password,created) VALUES(?,?,?,?)', (name, salt, hashed, int(time.time())))
+                    except sqlite3.IntegrityError: raise RuleError('这个昵称已被注册。')
+                user = c.execute('SELECT * FROM users WHERE username=?', (name,)).fetchone()
+                if not user or not secrets.compare_digest(user['password'], hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(user['salt']), 600000).hex()): raise RuleError('昵称或密码不正确。')
+                token = secrets.token_urlsafe(32)
+                c.execute('INSERT INTO sessions VALUES(?,?,?)', (token, user['id'], int(time.time()) + 7 * 86400))
+            secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' or self.headers.get('Origin', '').startswith('https://') else ''
+            return self.respond({'user': user_view(user)}, cookie='poker_session=' + token + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800' + secure)
+        user = self.session()
+        if not user: return self.respond({'error': '请先登录。'}, 401)
+        uid = user['id']
+        if path == '/api/logout':
+            cookie = http.cookies.SimpleCookie(self.headers.get('Cookie', ''))
+            with db() as c: c.execute('DELETE FROM sessions WHERE token=?', (cookie['poker_session'].value,))
+            return self.respond({'ok': True}, cookie='poker_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
+        room = room_of(uid)
+        if path == '/api/create':
+            if room: raise RuleError('请先离开当前房间。')
+            mode = b.get('mode', 'landlord')
+            if mode not in MODES: raise RuleError('未知玩法。')
+            code = ''.join(secrets.choice('0123456789') for _ in range(6))
+            while code in ROOMS: code = ''.join(secrets.choice('0123456789') for _ in range(6))
+            if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
+            options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc')}
+            room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True}], 'options': options, 'game': None, 'revision': 1}
+            ROOMS[code] = room
+        elif path == '/api/join':
+            if room: raise RuleError('请先离开当前房间。')
+            code = str(b.get('code', '')).strip()
+            room = ROOMS.get(code)
+            if not room: raise RuleError('房间不存在，请检查六位房间号。')
+            if room['game'] and room['game'].phase != 'over': raise RuleError('本房间正在对局。')
+            if len(room['players']) >= MODES[room['mode']]: raise RuleError('房间已满。')
+            room['game'] = None
+            room['players'].append({'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True})
+            room['revision'] += 1
+        else:
+            if not room: raise RuleError('你还没有加入房间。')
+            host = room['host'] == uid
+            seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
+            if path == '/api/leave':
+                if room['game'] and room['game'].phase != 'over': raise RuleError('对局中请使用认输；可关闭网页并重新登录回到牌桌。')
+                room['players'].pop(seat); room['game'] = None
+                humans = [p for p in room['players'] if not p.get('bot')]
+                if not humans: del ROOMS[room['code']]
+                elif host: room['host'] = humans[0]['id']
+            elif path == '/api/bot':
+                if not host: raise RuleError('只有房主可以添加AI。')
+                if room['game'] and room['game'].phase != 'over': raise RuleError('对局中不能变更玩家。')
+                if len(room['players']) >= MODES[room['mode']]: raise RuleError('房间已满。')
+                model = b.get('model', False) is True
+                if model and not room.get('modelConfig'): raise RuleError('请先配置模型API。')
+                room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': ('模型' if model else '墨客') + ' · ' + str(len(room['players']) + 1), 'bot': True, 'model': model, 'connected': True})
+                room['game'] = None
+            elif path == '/api/remove':
+                if not host: raise RuleError('只有房主可以移除AI。')
+                if room['game'] and room['game'].phase != 'over': raise RuleError('对局中不能变更玩家。')
+                target = int(b.get('seat', -1))
+                if target not in range(len(room['players'])) or not room['players'][target].get('bot'): raise RuleError('请选择AI玩家。')
+                room['players'].pop(target); room['game'] = None
+            elif path == '/api/model':
+                if not host: raise RuleError('只有房主可以配置模型。')
+                if room['game'] and room['game'].phase != 'over': raise RuleError('请在对局开始前配置模型。')
+                endpoint = validate_endpoint(str(b.get('endpoint', '')))
+                key, model = str(b.get('key', '')).strip(), str(b.get('model', '')).strip()
+                if not key or not model or len(key) > 4096 or len(model) > 100 or '\n' in key or '\r' in key: raise RuleError('请输入有效的API密钥和模型名称。')
+                room['modelConfig'] = {'endpoint': endpoint, 'key': key, 'model': model}
+            elif path == '/api/start':
+                if not host: raise RuleError('只有房主可以开始对局。')
+                if len(room['players']) != MODES[room['mode']]: raise RuleError('请等待玩家加入或补充AI。')
+                if room['game'] and room['game'].phase != 'over': raise RuleError('游戏已经开始。')
+                prev = room.get('game')
+                previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores} if prev and prev.mode != 'landlord' else None
+                room['game'] = Game(room['mode'], room['players'], room['options'], previous)
+                room['settled'] = False; room['matchId'] = secrets.token_hex(16)
+            elif path == '/api/hint':
+                if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
+                moves = room['game'].candidates(seat)
+                return self.respond({'moves': moves[:80]})
+            elif path == '/api/action':
+                if not room['game']: raise RuleError('对局尚未开始。')
+                if b.get('revision') != room['revision']: raise RuleError('牌桌已变化，请按最新局面出牌。')
+                args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special')}
+                room['game'].action(seat, **args)
+                persist_result(room)
+            elif path == '/api/resign':
+                g = room.get('game')
+                if not g or g.phase == 'over': raise RuleError('没有正在进行的对局。')
+                if g.mode == 'landlord': g.winner = [s for s in range(len(g.players)) if (s == g.landlord) != (seat == g.landlord)]
+                elif g.mode == 'trio': g.winner = [s for s in range(len(g.players)) if s != seat]
+                else: g.winner = [s for s in range(len(g.players)) if s % 2 != seat % 2]
+                g.phase = 'over'; g.announce(user['username'] + '认输。'); persist_result(room)
+            else: return self.respond({'error': '接口不存在。'}, 404)
+            room['revision'] += 1
+        return self.respond({'ok': True, 'room': room_view(room, uid) if any(p['id'] == uid for p in room['players']) else None})
+
+def main():
+    initialize()
+    threading.Thread(target=bot_loop, daemon=True).start()
+    port = int(os.getenv('PORT', '4141'))
+    server = ThreadingHTTPServer((os.getenv('HOST', '127.0.0.1'), port), Handler)
+    print('纸牌俱乐部运行于 http://localhost:%s' % port, flush=True)
+    server.serve_forever()
+
+if __name__ == '__main__': main()

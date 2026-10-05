@@ -1,0 +1,148 @@
+import unittest
+from collections import Counter
+from engine import Game, MODES, RuleError, classify, deck, interpretations
+
+
+def cards(ranks, suit='H', prefix='c'):
+    return [{'id': prefix + str(i), 'rank': r, 'suit': suit} for i, r in enumerate(ranks)]
+
+
+def table(mode='standard', options=None):
+    g = Game(mode, [{'name': str(i)} for i in range(MODES[mode])], options)
+    g.phase = 'play'
+    g.hands = [cards([6, 7, 8, 9, 10], prefix=str(i)) for i in range(MODES[mode])]
+    return g
+
+
+class Rules(unittest.TestCase):
+    def test_decks(self):
+        self.assertEqual([len(deck(m)) for m in MODES], [54, 110, 86, 54])
+        d = deck('trio')
+        self.assertFalse(any(c['suit'] == 'S' and c['rank'] <= 13 for c in d))
+        self.assertEqual(Counter(c['rank'] for c in d)[17], 3)
+        self.assertEqual(len(deck('standard', True)), 150)
+
+    def test_classic_combinations(self):
+        cases = [([4], '单张'), ([4,4], '对子'), ([4,4,4], '三张'), ([4,4,4,7], '三带一'),
+                 ([4,4,4,7,7], '三带二'), ([3,4,5,6,7], '顺子'), ([3,3,4,4,5,5], '连对'),
+                 ([3,3,3,4,4,4], '飞机'), ([3,3,3,4,4,4,6,7], '飞机带单'),
+                 ([3,3,3,4,4,4,6,6,7,7], '飞机带对'), ([4,4,4,4,5,6], '四带二'),
+                 ([4,4,4,4,5,5,6,6], '四带两对'), ([4,4,4,4], '炸弹'), ([16,17], '王炸')]
+        for ranks, kind in cases:
+            with self.subTest(ranks=ranks): self.assertEqual(classify(ranks)['kind'], kind)
+        self.assertIsNone(classify([11,12,13,14,15]))
+        self.assertIsNone(classify([3,4,5,6,7], 'standard', 3))
+        self.assertGreater(classify([3], 'standard', 3)['value'], classify([15], 'standard', 3)['value'])
+
+    def test_bomb_order(self):
+        groups = [[5]*4, [16,17], [5]*5, [5]*6, [16,17,17], [5]*7, [5]*8, [16,16,17,17], [5]*9, [5]*10, [4,4,4,14,14], [4]*4+[14]*2]
+        powers = [classify(r, 'standard')['power'] for r in groups]
+        self.assertEqual(powers, sorted(set(powers)))
+        self.assertEqual(classify([5]*3, 'basic')['kind'], '炸弹')
+        self.assertEqual(classify([4,14,4], 'basic')['kind'], '4A4')
+
+    def test_wildcards(self):
+        wild = cards([14,14], 'S', 'w')
+        self.assertTrue(any(c['kind']=='炸弹' for c in interpretations(cards([7,7])+wild,'standard',3)))
+        self.assertTrue(any(c['kind']=='顺子' for c in interpretations(cards([5,6,7])+wild,'standard',3)))
+        self.assertTrue(any(c['kind']=='三带二' for c in interpretations(cards([7,7,8])+wild,'standard',3)))
+        self.assertFalse(interpretations(wild[:1], 'standard', 3, 7))
+        self.assertFalse(interpretations(cards([17])+wild, 'standard', 3, 17))
+        combo = interpretations(cards([5,6,7])+wild,'standard',3,{'w0':8,'w1':9})
+        self.assertEqual(combo[0]['kind'],'顺子')
+
+    def test_cross_hook_and_bomb(self):
+        g=table()
+        g.hands[0]=cards([7,8],prefix='a');g.hands[1]=cards([7,7,9],prefix='b');g.hands[2]=cards([7,10],prefix='c')
+        g.action(0,'play',['a0']);g.action(1,'cross',['b0','b1']);g.action(2,'hook',['c0'])
+        self.assertEqual(g.last['special'],'hook')
+        with self.assertRaises(RuleError):g.action(3,'play',['30'])
+        g.hands[3]=cards([9]*4+[10],prefix='d');g.action(3,'play',['d0','d1','d2','d3'])
+        self.assertEqual(g.last['kind'],'炸弹')
+
+    def test_dot_press_direct_lead(self):
+        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([7,9],prefix='b');g.hands[2]=cards([15,8,9],prefix='c')
+        g.action(0,'play',['a0','a1']);g.action(1,'dot',['b0']);g.action(2,'press',['c0'])
+        self.assertEqual(g.turn,2)
+        g.action(2,'play',['c1']);self.assertEqual(g.last['kind'],'单张')
+        g=table();g.hands[0]=cards([15,15,9],prefix='a');g.hands[1]=cards([15,9],prefix='b')
+        g.action(0,'play',['a0','a1']);g.action(1,'dot',['b0']);self.assertEqual(g.turn,1)
+
+    def test_dead_has_priority_over_dot(self):
+        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([7,9],prefix='b');g.hands[3]=cards([7,7,7,9],prefix='d')
+        g.action(0,'play',['a0','a1']);g.action(1,'dot',['b0']);g.action(3,'dead',['d0','d1','d2'])
+        self.assertEqual(g.turn,3)
+
+    def test_next_round_allows_promotion(self):
+        g=Game('standard',[{'name':str(i)} for i in range(4)],previous={'first':2,'main':5,'scores':[2,0]})
+        self.assertEqual(g.phase,'setup')
+        for s in range(4):g.action(s,'confirm')
+        self.assertEqual(g.turn,2);self.assertEqual(g.main,5)
+
+    def test_advanced_dead_interception(self):
+        g=table(options={'advancedDead':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([7,7,7,9],prefix='b');g.hands[3]=cards([7]*4+[9],prefix='d')
+        g.action(0,'play',['a0','a1']);g.action(1,'dead',['b0','b1','b2']);self.assertEqual(g.turn,1)
+        g.action(3,'dead4',['d0','d1','d2','d3']);self.assertEqual(g.turn,3)
+        g.action(3,'play',['d4']);self.assertEqual(g.last['kind'],'单张')
+
+    def test_hui_once_and_follow(self):
+        g=table();g.hands[0]=cards([7,9],prefix='a');g.hands[1]=cards([5,10],prefix='b');g.hands[2]=cards([8,10],prefix='c');g.hands[3]=cards([6,10],prefix='d')
+        g.action(0,'play',['a0']);g.action(1,'hui',['b0']);g.action(2,'play',['c0'])
+        with self.assertRaises(RuleError):g.action(3,'hui',['d0'])
+
+    def test_finished_player_intercept_and_negotiation(self):
+        g=table();g.hands[0]=cards([7],prefix='a');g.hands[1]=cards([8,9],prefix='b');g.hands[2]=cards([7,7,10],prefix='c')
+        g.action(0,'play',['a0']);g.action(1,'play',['b0'])
+        g.action(2,'negotiate',['c0','c1'],special='cross')
+        g.action(1,'accept')
+        self.assertEqual(len(g.hands[1]),2);self.assertEqual(g.last_seat,2);self.assertEqual(g.last['special'],'cross')
+        g=table();g.hands[0]=cards([7],prefix='a');g.hands[2]=cards([7,7,10],prefix='c')
+        g.action(0,'play',['a0']);g.action(2,'cross',['c0','c1']);self.assertEqual(g.last_seat,2)
+
+    def test_urgent_and_announcements(self):
+        g=table();g.hands[0]=cards([18,6,9],prefix='a')
+        g.action(0,'urgent',['a0','a1'],target=1)
+        self.assertEqual(g.turn,0);self.assertEqual(len(g.hands[1]),6)
+        self.assertTrue(any('爆牌' in l for l in g.log))
+        g=table();g.hands[0]=cards([18,6],prefix='a');g.action(0,'play',['a1'])
+        self.assertIn(0,g.urgent_last);self.assertEqual(g.turn,1)
+        g=table();g.hands[0]=cards([18,6],prefix='a');g.action(0,'urgent',['a0','a1'],target=1)
+        self.assertEqual(g.turn,1)
+
+    def test_team_winner_and_scoring(self):
+        g=table();g.hands[0]=cards([5],prefix='a');g.hands[1]=cards([6],prefix='b');g.hands[2]=cards([7],prefix='c');g.hands[3]=cards([8],prefix='d')
+        for seat in (0,1,2):g.action(seat,'play',[chr(97+seat)+'0'])
+        self.assertEqual(g.winner,[0,2]);self.assertEqual(g.scores,[1,0]);self.assertEqual(g.next_main,4)
+        g=table();g.finished=[0,1];g.hands[0]=[];g.hands[1]=[];g.hands[3]=cards([8],prefix='d');g.turn=3
+        g.action(3,'play',['d0']);self.assertEqual(g.winner,[1,3])
+
+    def test_setup_promote_and_rps(self):
+        g=Game('standard',[{'name':str(i)} for i in range(4)])
+        g.hands[0]=cards([7]*6+[3],prefix='a');g.hands[0][-1]['suit']='S'
+        g.hands[1]=cards([8]*6+[3],prefix='b');g.hands[1][-1]['suit']='S'
+        g.action(0,'promote',rank=7);g.action(1,'promote',rank=8)
+        g.action(0,'reveal');g.action(1,'reveal')
+        for s in range(4):g.action(s,'confirm')
+        self.assertEqual(g.phase,'rps');self.assertEqual(g.main,8)
+        g.action(0,'rps',value='paper');g.action(1,'rps',value='rock')
+        self.assertEqual(g.phase,'play');self.assertEqual(g.turn,0)
+
+    def test_full_bot_games(self):
+        for mode in MODES:
+            for options in ({}, {'advancedHui':True,'advancedDead':True,'dlc':True}):
+                with self.subTest(mode=mode,options=options):
+                    g=Game(mode,[{'name':str(i)} for i in range(MODES[mode])],options)
+                    initial=len(g.cards)
+                    for step in range(1000):
+                        if g.phase=='over':break
+                        for seat in range(len(g.players)):
+                            move=g.bot_action(seat)
+                            if move:g.action(seat,**move);break
+                        else:self.fail('No legal bot action')
+                        live_ids=[c['id'] for h in g.hands for c in h]
+                        self.assertEqual(len(live_ids),len(set(live_ids)))
+                        self.assertLessEqual(len(live_ids),initial)
+                    self.assertEqual(g.phase,'over')
+                    self.assertTrue(g.winner)
+
+if __name__=='__main__':unittest.main()

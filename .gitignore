@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/*
+!data/.gitkeep
+.env
+*.log
+.playwright-cli/
+output/
+
+.DS_Store
