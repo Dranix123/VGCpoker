@@ -51,6 +51,11 @@ class Rules(unittest.TestCase):
         self.assertTrue(any(c['kind']=='顺子' for c in interpretations(cards([5,6,7])+wild,'standard',3)))
         self.assertTrue(any(c['kind']=='三带二' for c in interpretations(cards([7,7,8])+wild,'standard',3)))
         self.assertFalse(interpretations(wild[:1], 'standard', 3, 7))
+        self.assertEqual(interpretations(wild[:1], 'standard', 3)[0]['ranks'],[14])
+        for mode in ('standard','trio'):
+            g=table(mode);g.hands[0]=cards([13,6],prefix='a');g.hands[1]=cards([14,7],'S','b')
+            g.action(0,'play',['a0']);g.action(1,'play',['b0'])
+            self.assertEqual(g.last['kind'],'单张');self.assertEqual(g.last['ranks'],[14])
         self.assertFalse(interpretations(cards([17])+wild, 'standard', 3, 17))
         combo = interpretations(cards([5,6,7])+wild,'standard',3,{'w0':8,'w1':9})
         self.assertEqual(combo[0]['kind'],'顺子')
