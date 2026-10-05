@@ -346,3 +346,8 @@ footer{justify-content:flex-end}
 .mode-card{min-height:190px;padding-top:28px}
 .flow-heading{padding-bottom:24px}.room-heading{padding-top:18px}
 @media(max-width:720px){.mode-card{min-height:165px;padding-top:20px}.home-copy .main-menu{margin-top:24px}}
+
+.ai-invitation{border:1px solid var(--line);border-radius:4px;padding:17px;display:grid;gap:15px;margin:0;min-width:0}
+.ai-invitation legend{font-size:14px;padding:0 7px}
+.empty-seat{text-align:left;width:100%;color:var(--ink);cursor:pointer}
+.empty-seat:hover{border-color:var(--ink);background:var(--panel);box-shadow:2px 2px 0 #c7c3b7}
