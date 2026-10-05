@@ -68,6 +68,7 @@ class ServerIntegration(unittest.TestCase):
         state=self.request(client,'state')[1]
         self.assertEqual(state['preferences'],{'configured':True,'endpoint':'https://example.com/v1','model':'demo'})
         self.assertNotIn('private-test-key',json.dumps(state))
+        self.assertTrue(state['features']['wildUrgent'])
         code=self.new_room(humans=1)
         self.assertEqual(self.request(client,'bot',{'model':True})[0],200)
         self.assertEqual(server.ROOMS[code]['modelConfig']['key'],'private-test-key')

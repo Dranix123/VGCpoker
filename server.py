@@ -175,14 +175,14 @@ class Handler(BaseHTTPRequestHandler):
                 user = self.session()
                 if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
                 if path == '/api/state':
-                    if not user: return self.respond({'user': None, 'room': None})
+                    if not user: return self.respond({'user': None, 'room': None, 'features': {'wildUrgent': True}})
                     room = room_of(user['id'])
                     if room:
                         p = next(p for p in room['players'] if p['id'] == user['id'])
                         p['connected'] = True; p['seen'] = time.time()
                         for p in room['players']:
                             if not p.get('bot'): p['connected'] = time.time() - p.get('seen', 0) < 15
-                    return self.respond({'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    return self.respond({'features': {'wildUrgent': True}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
