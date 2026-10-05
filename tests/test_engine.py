@@ -195,6 +195,21 @@ class Rules(unittest.TestCase):
         g.action(0,'rps',value='paper');g.action(1,'rps',value='rock')
         self.assertEqual(g.phase,'play');self.assertEqual(g.turn,0)
 
+    def test_promotion_is_optional_for_humans_and_bots(self):
+        g=table();g.phase='setup';g.hands[0]=cards([15]*6+[3,3],prefix='a')
+        self.assertEqual(g.bot_action(0),{'action':'confirm'})
+        for seat in range(4):g.action(seat,'confirm')
+        self.assertEqual(g.main,3)
+        g=table();g.phase='setup';g.hands[0]=cards([4]*6+[3],prefix='a')
+        self.assertEqual(g.bot_action(0),{'action':'promote','rank':4})
+        g.promotions[1]=15
+        self.assertEqual(g.bot_action(0),{'action':'confirm'})
+        # A human remains free to choose a legal promotion even if the bot would decline.
+        g=table();g.phase='setup';g.hands[0]=cards([15]*6+[3,3],prefix='a')
+        g.action(0,'promote',rank=15)
+        for seat in range(4):g.action(seat,'confirm')
+        self.assertEqual(g.main,15)
+
     def test_hint_candidates_include_wild_sequences_and_suit_responses(self):
         g=table();g.hands[0]=cards([5,6,8,9],prefix='a')+cards([14],'S','w')
         moves=g.candidates(0)

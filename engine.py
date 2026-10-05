@@ -527,8 +527,14 @@ class Game:
             if seat in self.rps: return None
             if seat not in self.promotions:
                 counts = Counter(c['rank'] for c in self.hands[seat])
-                ranks = [r for r, n in counts.items() if n >= 6 and r in RANKS]
-                if ranks: return {'action': 'promote', 'rank': max(ranks)}
+                declared = max(self.promotions.values(), default=None)
+                current = declared if declared is not None else self.main
+                ranks = [r for r, n in counts.items() if n >= 6 and r in RANKS and r != current and (declared is None or r > declared)]
+                def promotion_gain(rank):
+                    return sum(n * (strength(r, rank, self.mode) - strength(r, current, self.mode)) for r, n in counts.items())
+                if ranks:
+                    rank = max(ranks, key=promotion_gain)
+                    if promotion_gain(rank) > 4: return {'action': 'promote', 'rank': rank}
             if self.first is None and seat not in self.reveals and any(c['rank'] == 3 and c['suit'] == 'S' for c in self.hands[seat]): return {'action': 'reveal'}
             return {'action': 'confirm'}
         if self.phase == 'rps':
