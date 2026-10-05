@@ -20,7 +20,11 @@ class Rules(unittest.TestCase):
         d = deck('trio')
         self.assertFalse(any(c['suit'] == 'S' and c['rank'] <= 13 for c in d))
         self.assertEqual(Counter(c['rank'] for c in d)[17], 3)
-        self.assertEqual(len(deck('standard', True)), 150)
+        dlc=deck('standard',True)
+        self.assertEqual(len(dlc),150)
+        self.assertEqual(Counter(c['rank'] for c in dlc if c['suit']=='T'),Counter({r:2 for r in range(3,16)}))
+        self.assertEqual(sum(c['suit']=='S' and c['rank']==14 for c in dlc),7)
+        self.assertEqual(sum(c['rank']==18 for c in dlc),9)
 
     def test_classic_combinations(self):
         cases = [([4], '单张'), ([4,4], '对子'), ([4,4,4], '三张'), ([4,4,4,7], '三带一'),
@@ -98,6 +102,24 @@ class Rules(unittest.TestCase):
         self.assertEqual(len(g.hands[1]),2);self.assertEqual(g.last_seat,2);self.assertEqual(g.last['special'],'cross')
         g=table();g.hands[0]=cards([7],prefix='a');g.hands[2]=cards([7,7,10],prefix='c')
         g.action(0,'play',['a0']);g.action(2,'cross',['c0','c1']);self.assertEqual(g.last_seat,2)
+
+    def test_advanced_hui_and_urgent_negotiation_boundary(self):
+        g=table(options={'advancedHui':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([5,5,9],prefix='b');g.hands[2]=cards([6,6,9],prefix='c')
+        g.action(0,'play',['a0','a1']);g.action(1,'hui',['b0','b1']);g.action(2,'play',['c0','c1'])
+        self.assertEqual(g.last['kind'],'对子')
+        g=table();g.hands[0]=cards([7],prefix='a');g.hands[1]=cards([8,9],prefix='b');g.hands[2]=cards([18,6,7],prefix='c');g.hands[3]=cards([7,7,9],prefix='d')
+        g.action(0,'play',['a0']);g.action(1,'play',['b0']);g.action(2,'urgent',['c0','c1'],target=1)
+        with self.assertRaises(RuleError):g.action(3,'negotiate',['d0','d1'],special='cross')
+        with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=1)
+
+    def test_rps_tie_and_4a4_equal_length_tiebreak(self):
+        g=table();g.phase='rps';g.reveals=[0,1]
+        g.action(0,'rps',value='rock');g.action(1,'rps',value='rock')
+        self.assertEqual(g.phase,'rps');self.assertEqual(g.rps,{})
+        g.action(0,'rps',value='scissors');g.action(1,'rps',value='paper')
+        self.assertEqual(g.turn,0)
+        low=classify([4]*5+[14]*2,'standard');high=classify([4]*4+[14]*3,'standard')
+        self.assertEqual(low['power'],high['power']);self.assertLess(low['value'],high['value'])
 
     def test_urgent_and_announcements(self):
         g=table();g.hands[0]=cards([18,6,9],prefix='a')

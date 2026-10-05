@@ -17,7 +17,7 @@ class ServerIntegration(unittest.TestCase):
         cls.temp=tempfile.TemporaryDirectory()
         cls.old_db=server.DB_PATH
         server.DB_PATH=Path(cls.temp.name)/'test.sqlite3'
-        server.ROOMS.clear();server.ATTEMPTS.clear()
+        server.ROOMS.clear();server.ATTEMPTS.clear();server.MODEL_CONFIG.clear()
         server.initialize()
         cls.http=server.ThreadingHTTPServer(('127.0.0.1',0),server.Handler)
         cls.thread=threading.Thread(target=cls.http.serve_forever,daemon=True);cls.thread.start()
@@ -34,7 +34,7 @@ class ServerIntegration(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.http.shutdown();cls.http.server_close();cls.thread.join()
-        server.DB_PATH=cls.old_db;server.ROOMS.clear();server.ATTEMPTS.clear();cls.temp.cleanup()
+        server.DB_PATH=cls.old_db;server.ROOMS.clear();server.ATTEMPTS.clear();server.MODEL_CONFIG.clear();cls.temp.cleanup()
 
     @classmethod
     def request(cls,client,path,body=None,headers=None):
@@ -45,6 +45,35 @@ class ServerIntegration(unittest.TestCase):
 
     def setUp(self):
         server.ROOMS.clear()
+
+    def test_account_settings_and_session_revocation(self):
+        client=self.clients[3]
+        other=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.assertEqual(self.request(other,'login',{'name':'测试玩家3','password':'testpass123'})[0],200)
+        self.assertEqual(self.request(client,'account',{'name':'新的名字','currentPassword':'wrongpass'})[0],400)
+        self.assertEqual(self.request(client,'create',{'mode':'landlord'})[0],200)
+        self.assertEqual(self.request(client,'account',{'name':'新的名字','currentPassword':'testpass123','newPassword':'newpass123'})[0],200)
+        data=self.request(client,'state')[1]
+        self.assertEqual(data['user']['name'],'新的名字')
+        self.assertEqual(data['room']['players'][0]['name'],'新的名字')
+        self.assertIsNone(self.request(other,'state')[1]['user'])
+        self.assertEqual(self.request(other,'login',{'name':'新的名字','password':'testpass123'})[0],400)
+        self.assertEqual(self.request(other,'login',{'name':'新的名字','password':'newpass123'})[0],200)
+        self.assertEqual(self.request(client,'account',{'name':'测试玩家3','currentPassword':'newpass123','newPassword':'testpass123'})[0],200)
+
+    def test_model_settings_apply_to_new_rooms_and_hide_key(self):
+        client=self.clients[0]
+        with patch.object(server,'validate_endpoint',return_value='https://example.com/v1'):
+            self.assertEqual(self.request(client,'model-settings',{'endpoint':'https://example.com/v1','key':'private-test-key','model':'demo'})[0],200)
+        state=self.request(client,'state')[1]
+        self.assertEqual(state['preferences'],{'configured':True,'endpoint':'https://example.com/v1','model':'demo'})
+        self.assertNotIn('private-test-key',json.dumps(state))
+        code=self.new_room(humans=1)
+        self.assertEqual(self.request(client,'bot',{'model':True})[0],200)
+        self.assertEqual(server.ROOMS[code]['modelConfig']['key'],'private-test-key')
+        self.assertEqual(self.request(client,'model-settings',{'clear':True})[0],200)
+        self.assertFalse(self.request(client,'state')[1]['preferences']['configured'])
+        self.assertEqual(self.request(client,'bot',{'model':True})[0],400)
 
     def test_authentication_and_origin(self):
         anonymous=urllib.request.build_opener()
@@ -118,6 +147,23 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(c.execute('SELECT COUNT(*) FROM rating_events WHERE result_id=?',(server.ROOMS[code]['matchId'],)).fetchone()[0],0)
         self.assertEqual(self.request(self.clients[0],'leave',{})[0],200)
         self.assertNotIn(code,server.ROOMS)
+
+    def test_model_failure_falls_back_and_stale_response_is_ignored(self):
+        code=self.new_room('landlord',1)
+        self.request(self.clients[0],'bot',{});self.request(self.clients[0],'bot',{})
+        self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];g=room['game'];g.action(0,'bid',value=3)
+        import copy
+        old_count=len(g.hands[0]);version=room['revision']
+        with patch.object(server,'model_move',side_effect=TimeoutError()):
+            server.BOT_BUSY.add(code)
+            server.tick_bot(code,0,version,copy.deepcopy(g),{})
+        self.assertLess(len(g.hands[0]),old_count)
+        self.assertNotIn(code,server.BOT_BUSY)
+        version=room['revision'];old_hands=copy.deepcopy(g.hands)
+        with patch.object(server,'model_move',return_value={'action':'pass'}):
+            server.tick_bot(code,1,version-1,copy.deepcopy(g),{})
+        self.assertEqual(room['revision'],version);self.assertEqual(g.hands,old_hands)
 
     def test_model_output_validation(self):
         g=Game('landlord',[{'name':str(i)} for i in range(3)]);g.action(0,'bid',value=3)

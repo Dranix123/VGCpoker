@@ -286,6 +286,7 @@ class Game:
             target = int(args.get('target', -1))
             if len(cards) != 2 or sum(c['rank'] == 18 for c in cards) != 1 or target == seat or target not in range(len(self.players)) or target in self.finished:
                 raise RuleError('选择一张急牌、一张非急牌和一位仍在场的玩家。')
+            self.history = None
             self.remove(seat, cards)
             given = next(c for c in cards if c['rank'] != 18)
             self.hands[target].append(given)

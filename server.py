@@ -18,7 +18,7 @@ from engine import Game, RuleError, MODES
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
-ROOMS, SESSIONS, ATTEMPTS = {}, {}, {}
+ROOMS, MODEL_CONFIG, ATTEMPTS = {}, {}, {}
 LOCK = threading.RLock()
 BOT_BUSY = set()
 
@@ -49,7 +49,6 @@ def user_view(row):
 def persist_result(room):
     g = room['game']
     if g.phase != 'over' or room.get('settled'): return
-    room['settled'] = True
     rated = all(not p.get('bot') for p in room['players'])
     room['rated'] = rated
     delta = 24 if g.mode == 'landlord' else 20
@@ -61,6 +60,7 @@ def persist_result(room):
                 change = delta if won else -delta
                 c.execute('UPDATE users SET points = MAX(0,points+?), games=games+1, wins=wins+? WHERE id=?', (change, int(won), player['id']))
                 c.execute('INSERT INTO rating_events VALUES(?,?,?)', (room['matchId'], player['id'], change))
+    room['settled'] = True
     g.announce('真人对局已结算积分。' if rated else '练习对局：含AI玩家，本局不计积分。')
 
 def room_of(uid):
@@ -182,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
                         p['connected'] = True; p['seen'] = time.time()
                         for p in room['players']:
                             if not p.get('bot'): p['connected'] = time.time() - p.get('seen', 0) < 15
-                    return self.respond({'user': user_view(user), 'room': room_view(room, user['id']) if room else None})
+                    return self.respond({'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
@@ -251,6 +251,42 @@ class Handler(BaseHTTPRequestHandler):
             cookie = http.cookies.SimpleCookie(self.headers.get('Cookie', ''))
             with db() as c: c.execute('DELETE FROM sessions WHERE token=?', (cookie['poker_session'].value,))
             return self.respond({'ok': True}, cookie='poker_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
+        if path == '/api/model-settings':
+            if b.get('clear') is True:
+                MODEL_CONFIG.pop(uid, None)
+                for r in ROOMS.values():
+                    if r['host'] == uid: r.pop('modelConfig', None); r['revision'] += 1
+                return self.respond({'ok': True})
+            endpoint = validate_endpoint(str(b.get('endpoint', '')))
+            key = str(b.get('key', '')).strip() or MODEL_CONFIG.get(uid, {}).get('key', '')
+            model = str(b.get('model', '')).strip()
+            if not key or not model or len(key) > 4096 or len(model) > 100 or '\n' in key or '\r' in key: raise RuleError('请输入有效的API密钥和模型名称。')
+            MODEL_CONFIG[uid] = {'endpoint': endpoint, 'key': key, 'model': model}
+            for r in ROOMS.values():
+                if r['host'] == uid: r['modelConfig'] = MODEL_CONFIG[uid].copy(); r['revision'] += 1
+            return self.respond({'ok': True})
+        if path == '/api/account':
+            current = b.get('currentPassword', '')
+            if not isinstance(current, str) or not secrets.compare_digest(user['password'], hashlib.pbkdf2_hmac('sha256', current.encode(), bytes.fromhex(user['salt']), 600000).hex()): raise RuleError('当前密码不正确。')
+            name, password = b.get('name', user['username']), b.get('newPassword', '')
+            if not isinstance(name, str) or not isinstance(password, str): raise RuleError('账号信息格式无效。')
+            name = name.strip()
+            if not 2 <= len(name) <= 18 or any(ord(c) < 32 for c in name): raise RuleError('昵称为2–18个字符，不含控制字符。')
+            if password and not 8 <= len(password) <= 128: raise RuleError('新密码为8–128个字符。')
+            salt, hashed = user['salt'], user['password']
+            if password:
+                salt = secrets.token_hex(16)
+                hashed = hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), 600000).hex()
+            with db() as c:
+                try: c.execute('UPDATE users SET username=?,salt=?,password=? WHERE id=?', (name, salt, hashed, uid))
+                except sqlite3.IntegrityError: raise RuleError('这个昵称已被注册。')
+                if password:
+                    cookie = http.cookies.SimpleCookie(self.headers.get('Cookie', ''))
+                    c.execute('DELETE FROM sessions WHERE user_id=? AND token!=?', (uid, cookie['poker_session'].value))
+            for r in ROOMS.values():
+                for p in r['players']:
+                    if p['id'] == uid: p['name'] = name; r['revision'] += 1
+            return self.respond({'ok': True})
         room = room_of(uid)
         if path == '/api/create':
             if room: raise RuleError('请先离开当前房间。')
@@ -261,6 +297,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
             options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc')}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True}], 'options': options, 'game': None, 'revision': 1}
+            if uid in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[uid].copy()
             ROOMS[code] = room
         elif path == '/api/join':
             if room: raise RuleError('请先离开当前房间。')
@@ -296,13 +333,6 @@ class Handler(BaseHTTPRequestHandler):
                 target = int(b.get('seat', -1))
                 if target not in range(len(room['players'])) or not room['players'][target].get('bot'): raise RuleError('请选择AI玩家。')
                 room['players'].pop(target); room['game'] = None
-            elif path == '/api/model':
-                if not host: raise RuleError('只有房主可以配置模型。')
-                if room['game'] and room['game'].phase != 'over': raise RuleError('请在对局开始前配置模型。')
-                endpoint = validate_endpoint(str(b.get('endpoint', '')))
-                key, model = str(b.get('key', '')).strip(), str(b.get('model', '')).strip()
-                if not key or not model or len(key) > 4096 or len(model) > 100 or '\n' in key or '\r' in key: raise RuleError('请输入有效的API密钥和模型名称。')
-                room['modelConfig'] = {'endpoint': endpoint, 'key': key, 'model': model}
             elif path == '/api/start':
                 if not host: raise RuleError('只有房主可以开始对局。')
                 if len(room['players']) != MODES[room['mode']]: raise RuleError('请等待玩家加入或补充AI。')
