@@ -299,7 +299,8 @@ class Game:
             given = next(c for c in cards if not is_urgent(c))
             substituted = any(c['id'] in wild_ids and is_urgent(c) for c in cards)
             self.hands[target].append(given)
-            self.announce(self.players[seat]['name'] + ('使用黑桃A代急牌向' if substituted else '使用急牌向') + self.players[target]['name'] + '赠牌。')
+            given_label = {'S': '黑桃', 'H': '红桃', 'C': '梅花', 'D': '方块', 'T': 'Delta'}.get(given['suit'], '') + LABELS[given['rank']]
+            self.announce(self.players[seat]['name'] + ('使用黑桃A代急牌向' if substituted else '使用急牌向') + self.players[target]['name'] + '赠送【' + given_label + '】；不占出牌次数。')
             self.report(target); self.finish(seat)
             if seat in self.finished and self.phase != 'over': self.turn = self.next_seat(seat)
             # Urgent consumes cards, not the current lead or response opportunity.
