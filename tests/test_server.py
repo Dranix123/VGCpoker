@@ -122,7 +122,7 @@ class ServerIntegration(unittest.TestCase):
             for seat in range(4):
                 move=g.bot_action(seat)
                 if move:
-                    move={k:v for k,v in move.items() if k in ('action','ids','target','rank','value')}
+                    move={k:v for k,v in move.items() if k in ('action','ids','target','rank','value','wildcard')}
                     move['revision']=room['revision']
                     status,result=self.request(self.clients[seat],'action',move)
                     self.assertEqual(status,200,result)
@@ -135,6 +135,15 @@ class ServerIntegration(unittest.TestCase):
         server.persist_result(room)
         with server.db() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM rating_events WHERE result_id=?',(room['matchId'],)).fetchone()[0],4)
         self.assertEqual(len(self.request(self.clients[0],'history')[1]['history']),1)
+
+    def test_new_round_has_a_new_match_identity(self):
+        self.new_room('landlord',1)
+        self.request(self.clients[0],'bot',{});self.request(self.clients[0],'bot',{})
+        first=self.request(self.clients[0],'start',{})[1]['room']['matchId']
+        self.assertEqual(self.request(self.clients[0],'state')[1]['room']['matchId'],first)
+        self.request(self.clients[0],'resign',{})
+        second=self.request(self.clients[0],'start',{})[1]['room']['matchId']
+        self.assertNotEqual(first,second)
 
     def test_ai_games_never_change_rating(self):
         code=self.new_room('landlord',1)

@@ -15,7 +15,7 @@
 | 四人标准 2.4 / 三人 / 基础 / DLC | `deck` / `Game` | 54 / 110 / 86 / 150 张数量与 DLC 构成断言，全局 AI 游戏 |
 | 勾、叉、点、压、死压及进阶 | `validate_play` | 专项合法与非法出牌测试，点与死压牌权优先级、进阶死压截获 |
 | 回及进阶、每轮一次 | `validate_play` | 单牌回、重复回拒绝、组合回与后续同牌型正常出牌 |
-| 黑桃 A 混子 | `interpretations` / 逐张指定界面 | 炸弹、顺子、三带二以及独立点数指定测试；禁止单张替代其他点数 |
+| 黑桃 A 混子 | `interpretations` / 逐张指定界面 | 炸弹、顺子、三带二、代急牌赠牌以及独立点数指定测试；禁止单张替代其他点数 |
 | 4A4A4 大小、王炸层级 | `classify` | 完整层级数组与同张数 A 数量比较测试 |
 | 升变、黑桃 3、猜拳、续局 | `Game.action` | 原生六张升变、最大牌升变、猜拳平局/胜负、后续对局仍可升变 |
 | 队分与下一局主牌 | `finish` / `/api/start` | 对座组队；双方第二位完成者、队分、按首位所属队分决定 next_main 的断言 |
@@ -25,7 +25,7 @@
 | 设置统一管理 API 与账号 | 设置 / `/api/account` / `/api/model-settings` | 密码修改撤销其他会话、昵称更新房间、密钥不返回浏览器、配置继承与清除测试 |
 | Git 管理 | `.git` | 本地提交记录与 `.gitignore` 排除数据库、密钥、浏览器验收文件 |
 
-自动测试：`python3 -m unittest discover -s tests -v`，当前 25 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
+自动测试：`python3 -m unittest discover -s tests -v`，当前 28 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
 
 设计与玩法约定详见 `README.md` 和游戏内玩法手册。服务器重启会结束未完成的内存房间；SQL 账号、积分、已完成战绩保留。Cloudflare 域名连接由用户配置，源站使用 `http://localhost:4141`。
 

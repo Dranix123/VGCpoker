@@ -149,6 +149,31 @@ class Rules(unittest.TestCase):
         g.action(0,'rps',value='paper');g.action(1,'rps',value='rock')
         self.assertEqual(g.phase,'play');self.assertEqual(g.turn,0)
 
+    def test_hint_candidates_include_wild_sequences_and_suit_responses(self):
+        g=table();g.hands[0]=cards([5,6,8,9],prefix='a')+cards([14],'S','w')
+        moves=g.candidates(0)
+        self.assertTrue(any(m['label']=='顺子' and len(m['ids'])==5 for m in moves))
+        g=table(options={'advancedHui':True});g.hands[0]=cards([7,7,9],prefix='a')
+        g.hands[1]=cards([5,5],'C','b')+cards([5,5],'H','c')
+        g.action(0,'play',['a0','a1'])
+        self.assertTrue(any(m['action']=='hui' and set(m['ids'])=={'c0','c1'} for m in g.candidates(1)))
+        g=table('landlord');g.hands[0]=cards([6,6,6,6,8,9],prefix='a')
+        self.assertTrue(any(m['label']=='四带二' and len(m['ids'])==6 for m in g.candidates(0)))
+
+    def test_spade_ace_can_substitute_urgent_but_never_a_joker(self):
+        g=table();g.hands[0]=cards([14],'S','w')+cards([6,9],prefix='a')
+        g.action(0,'urgent',['w0','a0'],target=1,wildcard={'w0':18})
+        self.assertEqual([c['id'] for c in g.hands[0]],['a1'])
+        self.assertTrue(any(c['id']=='a0' for c in g.hands[1]))
+        self.assertTrue(any('黑桃A代急牌' in log for log in g.log))
+        g=table();g.hands[0]=cards([14,14],'S','w')+cards([18],prefix='u')
+        with self.assertRaises(RuleError):g.action(0,'urgent',['w0','u0'],target=1,wildcard=18)
+        with self.assertRaises(RuleError):g.action(0,'urgent',['w0','w1'],target=1,wildcard=17)
+        moves=g.candidates(0)
+        move=next(m for m in moves if m['label']=='黑桃A代急牌')
+        g.action(0,**move)
+        self.assertTrue(any(c['id']=='w1' for c in g.hands[1]))
+
     def test_full_bot_games(self):
         for mode in MODES:
             for options in ({}, {'advancedHui':True,'advancedDead':True,'dlc':True}):

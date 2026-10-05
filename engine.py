@@ -284,13 +284,22 @@ class Game:
         if action == 'urgent':
             if self.mode in ('landlord', 'basic') or seat != self.turn: raise RuleError('仅轮到你时可使用急牌。')
             target = int(args.get('target', -1))
-            if len(cards) != 2 or sum(c['rank'] == 18 for c in cards) != 1 or target == seat or target not in range(len(self.players)) or target in self.finished:
+            wildcard = args.get('wildcard')
+            wild_ids = {c['id'] for c in cards if c['rank'] == 14 and c['suit'] == 'S'}
+            if isinstance(wildcard, dict):
+                if not set(wildcard) <= wild_ids or any(r not in RANKS + [18] for r in wildcard.values()): raise RuleError('混子指定无效。')
+            elif wildcard is not None and wildcard not in RANKS + [18]: raise RuleError('黑桃A不能代替王。')
+            def is_urgent(card):
+                assigned = wildcard.get(card['id'], 14) if isinstance(wildcard, dict) else wildcard
+                return card['rank'] == 18 or card['id'] in wild_ids and assigned == 18
+            if len(cards) != 2 or sum(is_urgent(c) for c in cards) != 1 or target == seat or target not in range(len(self.players)) or target in self.finished:
                 raise RuleError('选择一张急牌、一张非急牌和一位仍在场的玩家。')
             self.history = None
             self.remove(seat, cards)
-            given = next(c for c in cards if c['rank'] != 18)
+            given = next(c for c in cards if not is_urgent(c))
+            substituted = any(c['id'] in wild_ids and is_urgent(c) for c in cards)
             self.hands[target].append(given)
-            self.announce(self.players[seat]['name'] + '使用急牌向' + self.players[target]['name'] + '赠牌。')
+            self.announce(self.players[seat]['name'] + ('使用黑桃A代急牌向' if substituted else '使用急牌向') + self.players[target]['name'] + '赠牌。')
             self.report(target); self.finish(seat)
             if seat in self.finished and self.phase != 'over': self.turn = self.next_seat(seat)
             # Urgent consumes cards, not the current lead or response opportunity.
@@ -437,6 +446,27 @@ class Game:
                             pairs = [g[:2] for g in others if len(g) >= 2]
                             if len(singles) >= width: sets.append(seq + singles[:width])
                             if len(pairs) >= width: sets.append(seq + [c for g in pairs[:width] for c in g])
+        # Four-with-wings and same-suit alternatives matter for hints and advanced hui.
+        for r, group in groups.items():
+            if len(group) < 4: continue
+            others = [g for rank, g in groups.items() if rank != r]
+            singles = [c for g in others for c in g]
+            pairs = [g[:2] for g in others if len(g) >= 2]
+            if len(singles) >= 2: sets.append(group[:4] + singles[:2])
+            if len(pairs) >= 2: sets.append(group[:4] + [c for g in pairs[:2] for c in g])
+        suit_groups = {}
+        for c in hand:
+            if c['rank'] < 16: suit_groups.setdefault(c['suit'], {}).setdefault(c['rank'], []).append(c)
+        for pool in suit_groups.values():
+            for group in pool.values():
+                for n in range(2, len(group) + 1): sets.append(group[:n])
+            for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
+                for start in range(3, 15):
+                    seq = []
+                    for end in range(start, 15):
+                        if len(pool.get(end, [])) < multiple or self.mode != 'landlord' and end == self.main: break
+                        seq += pool[end][:multiple]
+                        if end - start + 1 >= minimum: sets.append(seq[:])
         kings = [c for c in hand if c['rank'] in (16, 17)]
         for n in range(2, len(kings) + 1): sets.append(kings[:n])
         for a in range(1 if self.mode == 'basic' else 2, len(groups.get(14, [])) + 1):
@@ -449,6 +479,18 @@ class Game:
                 base = [c for c in group if c not in wild]
                 for n in range(1, len(base) + 1):
                     for w in range(1, len(wild) + 1): sets.append(base[:n] + wild[:w])
+        if self.mode not in ('landlord', 'basic') and wild:
+            natural = {r: [c for c in group if c not in wild] for r, group in groups.items()}
+            for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
+                for start in range(3, 15):
+                    seq, needed = [], 0
+                    for end in range(start, 15):
+                        if end == self.main: break
+                        available = natural.get(end, [])[:multiple]
+                        seq += available
+                        needed += multiple - len(available)
+                        if needed > len(wild): break
+                        if needed and end - start + 1 >= minimum: sets.append(seq + wild[:needed])
         output, seen = [], set()
         for cards in sets:
             key = tuple(sorted(c['id'] for c in cards))
@@ -464,6 +506,9 @@ class Game:
             normal = next((c for c in hand if c['rank'] != 18), None)
             targets = [s for s in range(len(self.players)) if s != seat and s not in self.finished]
             if urgent and normal and targets: output.append({'action': 'urgent', 'ids': [urgent['id'], normal['id']], 'target': targets[0], 'label': '急牌', 'power': -1, 'value': 0, 'n': 2})
+            if wild and targets:
+                given = next((c for c in hand if c['rank'] != 18 and c['id'] != wild[0]['id']), None)
+                if given: output.append({'action': 'urgent', 'ids': [wild[0]['id'], given['id']], 'target': targets[0], 'wildcard': {wild[0]['id']: 18}, 'label': '黑桃A代急牌', 'power': 1, 'value': 0, 'n': 2})
         return sorted(output, key=lambda x: (x['power'], -x['n'], x['value']))
 
     def bot_action(self, seat):

@@ -69,7 +69,7 @@ def room_of(uid):
 def room_view(room, uid):
     seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
     return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected')} for p in room['players']],
-            'capacity': MODES[room['mode']], 'options': room['options'], 'rated': all(not p.get('bot') for p in room['players']),
+            'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': room['options'], 'rated': all(not p.get('bot') for p in room['players']),
             'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
