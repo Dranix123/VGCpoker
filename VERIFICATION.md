@@ -11,6 +11,7 @@
 | 规则 AI | `Game.bot_action` | 四种玩法及进阶/DLC 全局自动游戏测试；浏览器完整斗地主对局 |
 | 用户 API 模型 AI | 设置 / `model_move` | 模拟兼容 API 返回值验证合法动作、非法下标、失败回退、过期响应丢弃；未提供真实 API Key，因此未产生付费外部请求 |
 | 仅真人积分与段位 | SQLite results / rating_events | HTTP 跑完全真人标准版并验证每人 ±20，重复结算不重复加分；AI 认输及浏览器 AI 对局积分保持不变 |
+| 逆时针出牌 | `next_seat` | 四种玩法轮转、拒绝错误座位出牌、不出后的回到牌权持有者、跳过完成玩家、斗地主 0→2→1 叫分测试；特殊牌权与协商用逆时针座位重新验收 |
 | 斗地主 | `engine.py` | 叫分、常见组合、炸弹、王炸、胜负；浏览器叫 3 分、提示、出牌、不出直到结局 |
 | 四人标准 2.4 / 三人 / 基础 / DLC | `deck` / `Game` | 54 / 110 / 86 / 150 张数量与 DLC 构成断言，全局 AI 游戏 |
 | 勾、叉、点、压、死压及进阶 | `validate_play` | 专项合法与非法出牌测试，点与死压牌权优先级、进阶死压截获 |
@@ -28,7 +29,7 @@
 | 设置统一管理 API 与账号 | 设置 / `/api/account` / `/api/model-settings` | 密码修改撤销其他会话、昵称更新房间、密钥不返回浏览器、配置继承与清除测试 |
 | Git 管理 | `.git` | 本地提交记录与 `.gitignore` 排除数据库、密钥、浏览器验收文件 |
 
-自动测试：`python3 -m unittest discover -s tests -v`，当前 29 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
+自动测试：`python3 -m unittest discover -s tests -v`，当前 30 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
 
 设计与玩法约定详见 `README.md` 和游戏内玩法手册。服务器重启会结束未完成的内存房间；SQL 账号、积分、已完成战绩保留。Cloudflare 域名连接由用户配置，源站使用 `http://localhost:4141`。
 

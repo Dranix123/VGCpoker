@@ -15,6 +15,20 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_counterclockwise_turns_and_bidding(self):
+        for mode in MODES:
+            g=table(mode);last_seat=len(g.players)-1
+            g.action(0,'play',['00']);self.assertEqual(g.turn,last_seat)
+            with self.assertRaises(RuleError):g.action(1,'pass')
+            for seat in range(last_seat,0,-1):
+                self.assertEqual(g.turn,seat);g.action(seat,'pass')
+            self.assertEqual(g.turn,0);self.assertIsNone(g.last)
+            g.finished=[last_seat];self.assertEqual(g.next_seat(0),last_seat-1)
+        g=Game('landlord',[{'name':str(i)} for i in range(3)])
+        for seat in (0,2,1):
+            self.assertEqual(g.turn,seat);g.action(seat,'bid',value=0)
+        self.assertEqual(g.landlord,1);self.assertEqual(g.phase,'play')
+
     def test_decks(self):
         self.assertEqual([len(deck(m)) for m in MODES], [54, 110, 86, 54])
         d = deck('trio')
@@ -53,8 +67,8 @@ class Rules(unittest.TestCase):
         self.assertFalse(interpretations(wild[:1], 'standard', 3, 7))
         self.assertEqual(interpretations(wild[:1], 'standard', 3)[0]['ranks'],[14])
         for mode in ('standard','trio'):
-            g=table(mode);g.hands[0]=cards([13,6],prefix='a');g.hands[1]=cards([14,7],'S','b')
-            g.action(0,'play',['a0']);g.action(1,'play',['b0'])
+            g=table(mode);following=len(g.players)-1;g.hands[0]=cards([13,6],prefix='a');g.hands[following]=cards([14,7],'S','b')
+            g.action(0,'play',['a0']);g.action(following,'play',['b0'])
             self.assertEqual(g.last['kind'],'单张');self.assertEqual(g.last['ranks'],[14])
         self.assertFalse(interpretations(cards([17])+wild, 'standard', 3, 17))
         combo = interpretations(cards([5,6,7])+wild,'standard',3,{'w0':8,'w1':9})
@@ -62,25 +76,25 @@ class Rules(unittest.TestCase):
 
     def test_cross_hook_and_bomb(self):
         g=table()
-        g.hands[0]=cards([7,8],prefix='a');g.hands[1]=cards([7,7,9],prefix='b');g.hands[2]=cards([7,10],prefix='c')
-        g.action(0,'play',['a0']);g.action(1,'cross',['b0','b1']);g.action(2,'hook',['c0'])
+        g.hands[0]=cards([7,8],prefix='a');g.hands[3]=cards([7,7,9],prefix='b');g.hands[2]=cards([7,10],prefix='c')
+        g.action(0,'play',['a0']);g.action(3,'cross',['b0','b1']);g.action(2,'hook',['c0'])
         self.assertEqual(g.last['special'],'hook')
-        with self.assertRaises(RuleError):g.action(3,'play',['30'])
-        g.hands[3]=cards([9]*4+[10],prefix='d');g.action(3,'play',['d0','d1','d2','d3'])
+        with self.assertRaises(RuleError):g.action(1,'play',['10'])
+        g.hands[1]=cards([9]*4+[10],prefix='d');g.action(1,'play',['d0','d1','d2','d3'])
         self.assertEqual(g.last['kind'],'炸弹')
 
     def test_dot_press_direct_lead(self):
-        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([7,9],prefix='b');g.hands[2]=cards([15,8,9],prefix='c')
-        g.action(0,'play',['a0','a1']);g.action(1,'dot',['b0']);g.action(2,'press',['c0'])
+        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,9],prefix='b');g.hands[2]=cards([15,8,9],prefix='c')
+        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0']);g.action(2,'press',['c0'])
         self.assertEqual(g.turn,2)
         g.action(2,'play',['c1']);self.assertEqual(g.last['kind'],'单张')
-        g=table();g.hands[0]=cards([15,15,9],prefix='a');g.hands[1]=cards([15,9],prefix='b')
-        g.action(0,'play',['a0','a1']);g.action(1,'dot',['b0']);self.assertEqual(g.turn,1)
+        g=table();g.hands[0]=cards([15,15,9],prefix='a');g.hands[3]=cards([15,9],prefix='b')
+        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0']);self.assertEqual(g.turn,3)
 
     def test_dead_has_priority_over_dot(self):
-        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([7,9],prefix='b');g.hands[3]=cards([7,7,7,9],prefix='d')
-        g.action(0,'play',['a0','a1']);g.action(1,'dot',['b0']);g.action(3,'dead',['d0','d1','d2'])
-        self.assertEqual(g.turn,3)
+        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,9],prefix='b');g.hands[1]=cards([7,7,7,9],prefix='d')
+        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0']);g.action(1,'dead',['d0','d1','d2'])
+        self.assertEqual(g.turn,1)
 
     def test_next_round_allows_promotion(self):
         g=Game('standard',[{'name':str(i)} for i in range(4)],previous={'first':2,'main':5,'scores':[2,0]})
@@ -89,35 +103,35 @@ class Rules(unittest.TestCase):
         self.assertEqual(g.turn,2);self.assertEqual(g.main,5)
 
     def test_advanced_dead_interception(self):
-        g=table(options={'advancedDead':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([7,7,7,9],prefix='b');g.hands[3]=cards([7]*4+[9],prefix='d')
-        g.action(0,'play',['a0','a1']);g.action(1,'dead',['b0','b1','b2']);self.assertEqual(g.turn,1)
-        g.action(3,'dead4',['d0','d1','d2','d3']);self.assertEqual(g.turn,3)
-        g.action(3,'play',['d4']);self.assertEqual(g.last['kind'],'单张')
+        g=table(options={'advancedDead':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,7,7,9],prefix='b');g.hands[1]=cards([7]*4+[9],prefix='d')
+        g.action(0,'play',['a0','a1']);g.action(3,'dead',['b0','b1','b2']);self.assertEqual(g.turn,3)
+        g.action(1,'dead4',['d0','d1','d2','d3']);self.assertEqual(g.turn,1)
+        g.action(1,'play',['d4']);self.assertEqual(g.last['kind'],'单张')
 
     def test_hui_once_and_follow(self):
-        g=table();g.hands[0]=cards([7,9],prefix='a');g.hands[1]=cards([5,10],prefix='b');g.hands[2]=cards([8,10],prefix='c');g.hands[3]=cards([6,10],prefix='d')
-        g.action(0,'play',['a0']);g.action(1,'hui',['b0']);g.action(2,'play',['c0'])
-        with self.assertRaises(RuleError):g.action(3,'hui',['d0'])
+        g=table();g.hands[0]=cards([7,9],prefix='a');g.hands[3]=cards([5,10],prefix='b');g.hands[2]=cards([8,10],prefix='c');g.hands[1]=cards([6,10],prefix='d')
+        g.action(0,'play',['a0']);g.action(3,'hui',['b0']);g.action(2,'play',['c0'])
+        with self.assertRaises(RuleError):g.action(1,'hui',['d0'])
 
     def test_finished_player_intercept_and_negotiation(self):
-        g=table();g.hands[0]=cards([7],prefix='a');g.hands[1]=cards([8,9],prefix='b');g.hands[2]=cards([7,7,10],prefix='c')
-        g.action(0,'play',['a0']);g.action(1,'play',['b0'])
+        g=table();g.hands[0]=cards([7],prefix='a');g.hands[3]=cards([8,9],prefix='b');g.hands[2]=cards([7,7,10],prefix='c')
+        g.action(0,'play',['a0']);g.action(3,'play',['b0'])
         g.action(2,'negotiate',['c0','c1'],special='cross')
-        g.action(1,'accept')
-        self.assertEqual(len(g.hands[1]),2);self.assertEqual(g.last_seat,2);self.assertEqual(g.last['special'],'cross')
-        self.assertIsNone(g.seat_plays[1]);self.assertEqual(g.play_number,2)
+        g.action(3,'accept')
+        self.assertEqual(len(g.hands[3]),2);self.assertEqual(g.last_seat,2);self.assertEqual(g.last['special'],'cross')
+        self.assertIsNone(g.seat_plays[3]);self.assertEqual(g.play_number,2)
         self.assertEqual(g.seat_plays[2]['order'],2)
         g=table();g.hands[0]=cards([7],prefix='a');g.hands[2]=cards([7,7,10],prefix='c')
         g.action(0,'play',['a0']);g.action(2,'cross',['c0','c1']);self.assertEqual(g.last_seat,2)
 
     def test_advanced_hui_and_urgent_negotiation_boundary(self):
-        g=table(options={'advancedHui':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[1]=cards([5,5,9],prefix='b');g.hands[2]=cards([6,6,9],prefix='c')
-        g.action(0,'play',['a0','a1']);g.action(1,'hui',['b0','b1']);g.action(2,'play',['c0','c1'])
+        g=table(options={'advancedHui':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([5,5,9],prefix='b');g.hands[2]=cards([6,6,9],prefix='c')
+        g.action(0,'play',['a0','a1']);g.action(3,'hui',['b0','b1']);g.action(2,'play',['c0','c1'])
         self.assertEqual(g.last['kind'],'对子')
-        g=table();g.hands[0]=cards([7],prefix='a');g.hands[1]=cards([8,9],prefix='b');g.hands[2]=cards([18,6,7],prefix='c');g.hands[3]=cards([7,7,9],prefix='d')
-        g.action(0,'play',['a0']);g.action(1,'play',['b0']);g.action(2,'urgent',['c0','c1'],target=1)
-        with self.assertRaises(RuleError):g.action(3,'negotiate',['d0','d1'],special='cross')
-        with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=1)
+        g=table();g.hands[0]=cards([7],prefix='a');g.hands[3]=cards([8,9],prefix='b');g.hands[2]=cards([18,6,7],prefix='c');g.hands[1]=cards([7,7,9],prefix='d')
+        g.action(0,'play',['a0']);g.action(3,'play',['b0']);g.action(2,'urgent',['c0','c1'],target=3)
+        with self.assertRaises(RuleError):g.action(1,'negotiate',['d0','d1'],special='cross')
+        with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=3)
 
     def test_rps_tie_and_4a4_equal_length_tiebreak(self):
         g=table();g.phase='rps';g.reveals=[0,1]
@@ -130,32 +144,32 @@ class Rules(unittest.TestCase):
 
     def test_urgent_and_announcements(self):
         g=table();g.hands[0]=cards([18,6,9],prefix='a')
-        g.action(0,'urgent',['a0','a1'],target=1)
-        self.assertEqual(g.turn,0);self.assertEqual(len(g.hands[1]),6)
+        g.action(0,'urgent',['a0','a1'],target=3)
+        self.assertEqual(g.turn,0);self.assertEqual(len(g.hands[3]),6)
         self.assertTrue(any('爆牌' in l for l in g.log))
         self.assertTrue(any('赠送【红桃6】' in l for l in g.log))
         self.assertIsNone(g.last)
         g.action(0,'play',['a2']);self.assertEqual(g.last['ranks'],[9])
-        g=table();g.hands[0]=cards([8],prefix='a');g.hands[1]=cards([18,18,6,7,9],prefix='b')
+        g=table();g.hands[0]=cards([8],prefix='a');g.hands[3]=cards([18,18,6,7,9],prefix='b')
         g.action(0,'play',['a0']);previous=g.last
-        g.action(1,'urgent',['b0','b2'],target=2)
-        g.action(1,'urgent',['b1','b3'],target=3)
-        self.assertEqual(g.turn,1);self.assertEqual(g.last,previous)
+        g.action(3,'urgent',['b0','b2'],target=2)
+        g.action(3,'urgent',['b1','b3'],target=1)
+        self.assertEqual(g.turn,3);self.assertEqual(g.last,previous)
         self.assertEqual(g.last_seat,0);self.assertEqual(g.passes,set())
-        g.action(1,'play',['b4']);self.assertEqual(g.last['ranks'],[9])
+        g.action(3,'play',['b4']);self.assertEqual(g.last['ranks'],[9])
         g=table();g.hands[0]=cards([18,6],prefix='a');g.action(0,'play',['a1'])
-        self.assertIn(0,g.urgent_last);self.assertEqual(g.turn,1)
-        g=table();g.hands[0]=cards([18,6],prefix='a');g.action(0,'urgent',['a0','a1'],target=1)
-        self.assertEqual(g.turn,1)
+        self.assertIn(0,g.urgent_last);self.assertEqual(g.turn,3)
+        g=table();g.hands[0]=cards([18,6],prefix='a');g.action(0,'urgent',['a0','a1'],target=3)
+        self.assertEqual(g.turn,3)
 
     def test_each_seat_retains_only_latest_public_play(self):
-        g=table();g.hands[0]=cards([6,10,11],prefix='a');g.hands[1]=cards([7,12],prefix='b');g.hands[2]=cards([8,13],prefix='c');g.hands[3]=cards([9,14],prefix='d')
-        for s in range(4):g.action(s,'play',[chr(97+s)+'0'])
+        g=table();g.hands[0]=cards([6,10,11],prefix='a');g.hands[1]=cards([9,12],prefix='b');g.hands[2]=cards([8,13],prefix='c');g.hands[3]=cards([7,14],prefix='d')
+        for s in (0,3,2,1):g.action(s,'play',[chr(97+s)+'0'])
         g.action(0,'play',['a1'])
         self.assertEqual(g.play_number,5)
-        self.assertEqual([p['order'] for p in g.seat_plays],[5,2,3,4])
+        self.assertEqual([p['order'] for p in g.seat_plays],[5,4,3,2])
         self.assertEqual(g.seat_plays[0]['cards'][0]['id'],'a1')
-        for s in (1,2,3):g.action(s,'pass')
+        for s in (3,2,1):g.action(s,'pass')
         self.assertIsNone(g.last);self.assertEqual(g.play_number,5)
         view=g.view(2)
         self.assertEqual(len(view['seatPlays']),4)
@@ -164,8 +178,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(Game('standard',g.players).seat_plays,[None]*4)
 
     def test_team_winner_and_scoring(self):
-        g=table();g.hands[0]=cards([5],prefix='a');g.hands[1]=cards([6],prefix='b');g.hands[2]=cards([7],prefix='c');g.hands[3]=cards([8],prefix='d')
-        for seat in (0,1,2):g.action(seat,'play',[chr(97+seat)+'0'])
+        g=table();g.hands[0]=cards([5],prefix='a');g.hands[1]=cards([8],prefix='b');g.hands[2]=cards([7],prefix='c');g.hands[3]=cards([6],prefix='d')
+        for seat in (0,3,2):g.action(seat,'play',[chr(97+seat)+'0'])
         self.assertEqual(g.winner,[0,2]);self.assertEqual(g.scores,[1,0]);self.assertEqual(g.next_main,4)
         g=table();g.finished=[0,1];g.hands[0]=[];g.hands[1]=[];g.hands[3]=cards([8],prefix='d');g.turn=3
         g.action(3,'play',['d0']);self.assertEqual(g.winner,[1,3])
@@ -186,9 +200,9 @@ class Rules(unittest.TestCase):
         moves=g.candidates(0)
         self.assertTrue(any(m['label']=='顺子' and len(m['ids'])==5 for m in moves))
         g=table(options={'advancedHui':True});g.hands[0]=cards([7,7,9],prefix='a')
-        g.hands[1]=cards([5,5],'C','b')+cards([5,5],'H','c')
+        g.hands[3]=cards([5,5],'C','b')+cards([5,5],'H','c')
         g.action(0,'play',['a0','a1'])
-        self.assertTrue(any(m['action']=='hui' and set(m['ids'])=={'c0','c1'} for m in g.candidates(1)))
+        self.assertTrue(any(m['action']=='hui' and set(m['ids'])=={'c0','c1'} for m in g.candidates(3)))
         g=table('landlord');g.hands[0]=cards([6,6,6,6,8,9],prefix='a')
         self.assertTrue(any(m['label']=='四带二' and len(m['ids'])==6 for m in g.candidates(0)))
 

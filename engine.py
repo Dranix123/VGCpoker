@@ -186,7 +186,7 @@ class Game:
 
     def next_seat(self, seat):
         for i in range(1, len(self.players) + 1):
-            nxt = (seat + i) % len(self.players)
+            nxt = (seat - i) % len(self.players)
             if nxt not in self.finished: return nxt
         return seat
 
