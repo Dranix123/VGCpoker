@@ -57,14 +57,27 @@ def classify(ranks, mode='landlord', main=3):
         value = strength(keys[0], main, mode)
         if n >= minimum: return result('炸弹', value, n if mode != 'landlord' else 1)
         return result({1: '单张', 2: '对子', 3: '三张'}.get(n, '无效'), value)
-    if mode != 'basic' and n == 4 and vals == [1, 3]: return result('三带一', strength(next(r for r in keys if counts[r] == 3), main, mode))
-    if n == 5 and vals == [2, 3]: return result('三带二', strength(next(r for r in keys if counts[r] == 3), main, mode))
+    if mode == 'landlord' and n == 4 and vals == [1, 3]: return result('三带一', strength(next(r for r in keys if counts[r] == 3), main, mode))
+    if mode == 'landlord' and n == 5 and vals == [2, 3]: return result('三带二', strength(next(r for r in keys if counts[r] == 3), main, mode))
+    if mode not in ('landlord', 'basic'):
+        numerals = {1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十'}
+        for rank in keys:
+            body = counts[rank]
+            wings = [counts[r] for r in keys if r != rank]
+            if body < 3 or not 1 <= len(wings) <= body - 2 or len(set(wings)) != 1 or wings[0] not in (1, 2): continue
+            if body == 3:
+                kind = '三带一' if wings[0] == 1 else '三带二'
+            else:
+                units = '两' if wings[0] == 2 and len(wings) == 2 else numerals.get(len(wings), str(len(wings)))
+                kind = numerals.get(body, str(body)) + '带' + units + ('对' if wings[0] == 2 else '')
+            return result(kind, strength(rank, main, mode))
     sequence = keys[-1] < 15 and not (mode != 'landlord' and main in keys) and keys == list(range(keys[0], keys[-1] + 1))
     if sequence and len(set(vals)) == 1:
         v = vals[0]
         if (v == 1 and n >= 5) or (v == 2 and n >= 6) or (v == 3 and n >= 6):
             return result({1: '顺子', 2: '连对', 3: '飞机'}[v], keys[-1])
     for width in range(2, 7):
+        if mode == 'basic': break
         if n not in (width * 4, width * 5): continue
         for start in range(3, 15 - width + 1):
             seq = list(range(start, start + width))
@@ -79,6 +92,7 @@ def classify(ranks, mode='landlord', main=3):
             if n == width * 5 and len(rem) == width and all(v == 2 for v in rem.values()):
                 return result('飞机带对', seq[-1])
     for r in keys:
+        if mode != 'landlord': break
         if counts[r] != 4: continue
         rem = [v for k, v in counts.items() if k != r]
         if n == 6: return result('四带二', strength(r, main, mode))
@@ -119,22 +133,29 @@ def interpretations(cards, mode, main, wildcard=None):
         width = n // multiple
         for start in range(3, 15 - width + 1):
             targets.append(Counter({r: multiple for r in range(start, start + width)}))
-    # Airplane and four-with-wings: preserve existing wing ranks and fill missing
+    # Carried groups and airplanes: preserve existing wing ranks and fill missing
     # wing cards deterministically, including wildcards needed for pairs.
     bodies = []
     for width in range(2, 7):
         if n in (width * 4, width * 5):
             for start in range(3, 15 - width + 1):
-                bodies.append((Counter({r: 3 for r in range(start, start + width)}), width, n == width * 5))
-    if n in (6, 8):
-        bodies.extend((Counter({r: 4}), 2, n == 8) for r in RANKS)
-    for body, wings, paired in bodies:
+                bodies.append((Counter({r: 3 for r in range(start, start + width)}), width, n == width * 5, False))
+    for size in range(3, n):
+        for unit in (1, 2):
+            wings, remainder = divmod(n - size, unit)
+            if not remainder and 1 <= wings <= size - 2:
+                bodies.extend((Counter({r: size}), wings, unit == 2, True) for r in RANKS)
+    for body, wings, paired, unique in bodies:
         if any(fixed[r] > body[r] for r in body): continue
         wing_fixed = Counter({r: v for r, v in fixed.items() if r not in body})
         if paired:
             if len(wing_fixed) > wings or any(v > 2 for v in wing_fixed.values()): continue
             extras = [r for r in RANKS if r not in body and r not in wing_fixed]
             target = body + Counter({r: 2 for r in wing_fixed}) + Counter({r: 2 for r in extras[:wings - len(wing_fixed)]})
+        elif unique:
+            if len(wing_fixed) > wings or any(v != 1 for v in wing_fixed.values()): continue
+            extras = [r for r in RANKS if r not in body and r not in wing_fixed]
+            target = body + wing_fixed + Counter(extras[:wings - len(wing_fixed)])
         else:
             if sum(wing_fixed.values()) > wings: continue
             wing_rank = next(r for r in RANKS if r not in body)
@@ -386,7 +407,7 @@ class Game:
             active = set(range(len(self.players))) - set(self.finished) - {self.last_seat}
             if active <= self.passes:
                 self.turn = self.last_seat if self.last_seat not in self.finished else self.inherit_lead(self.last_seat)
-                self.last = None; self.passes = set(); self.hui_used = False; self.history = None
+                self.last = None; self.passes = set(); self.hui_used = False; self.history = None; self.priority = None
                 self.display_seen.clear(); self.claims = {}
                 for finished in self.finished: self.seat_plays[finished] = None
             else: self.turn = self.next_seat(seat)
@@ -553,7 +574,7 @@ class Game:
         for group in groups.values():
             for n in range(2, len(group) + 1): sets.append(group[:n])
         for r, group in groups.items():
-            if len(group) >= 3:
+            if self.mode != 'basic' and len(group) >= 3:
                 for other, wing in groups.items():
                     if other != r:
                         sets.append(group[:3] + wing[:1])
@@ -566,21 +587,27 @@ class Game:
                     seq += groups[end][:multiple]
                     if end - start + 1 >= minimum:
                         sets.append(seq[:])
-                        if multiple == 3:
+                        if multiple == 3 and self.mode != 'basic':
                             others = [g for r, g in groups.items() if r < start or r > end]
                             width = end - start + 1
                             singles = [c for g in others for c in g]
                             pairs = [g[:2] for g in others if len(g) >= 2]
                             if len(singles) >= width: sets.append(seq + singles[:width])
                             if len(pairs) >= width: sets.append(seq + [c for g in pairs[:width] for c in g])
-        # Four-with-wings and same-suit alternatives matter for hints and advanced hui.
+        # Carried units are uniformly singles or pairs in the custom rules.
         for r, group in groups.items():
-            if len(group) < 4: continue
+            if self.mode == 'basic' or len(group) < 4: continue
             others = [g for rank, g in groups.items() if rank != r]
             singles = [c for g in others for c in g]
             pairs = [g[:2] for g in others if len(g) >= 2]
-            if len(singles) >= 2: sets.append(group[:4] + singles[:2])
-            if len(pairs) >= 2: sets.append(group[:4] + [c for g in pairs[:2] for c in g])
+            if self.mode == 'landlord':
+                if len(singles) >= 2: sets.append(group[:4] + singles[:2])
+                if len(pairs) >= 2: sets.append(group[:4] + [c for g in pairs[:2] for c in g])
+            else:
+                for size in range(4, len(group) + 1):
+                    for units in ([[g[0]] for g in others], pairs):
+                        for count in range(1, min(size - 2, len(units)) + 1):
+                            sets.append(group[:size] + [c for g in units[:count] for c in g])
         suit_groups = {}
         for c in hand:
             if c['rank'] < 16: suit_groups.setdefault(c['suit'], {}).setdefault(c['rank'], []).append(c)
@@ -608,6 +635,16 @@ class Game:
                     for w in range(1, len(wild) + 1): sets.append(base[:n] + wild[:w])
         if self.mode not in ('landlord', 'basic') and wild:
             natural = {r: [c for c in group if c not in wild] for r, group in groups.items()}
+            for rank, group in natural.items():
+                if rank not in RANKS: continue
+                others = [g for r, g in natural.items() if r != rank and g]
+                for size in range(3, len(group) + len(wild) + 1):
+                    needed = max(1, size - len(group))
+                    if needed > len(wild) or size - needed > len(group): continue
+                    body = group[:size - needed] + wild[:needed]
+                    for units in ([[g[0]] for g in others], [g[:2] for g in others if len(g) >= 2]):
+                        for count in range(1, min(size - 2, len(units)) + 1):
+                            sets.append(body + [c for g in units[:count] for c in g])
             for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
                 for start in range(3, 15):
                     seq, needed = [], 0
@@ -720,7 +757,7 @@ class Game:
                         if len(sequence) >= minimum:
                             for rank in sequence: pool[rank] -= multiple
                             turns += 1
-                            if multiple == 3:
+                            if multiple == 3 and self.mode != 'basic':
                                 wings = [r for r in RANKS if r not in sequence and pool[r] == 1 and strength(r, self.main, self.mode) < 15][:len(sequence)]
                                 if len(wings) == len(sequence):
                                     for wing in wings: pool[wing] -= 1

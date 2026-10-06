@@ -155,6 +155,67 @@ class Rules(unittest.TestCase):
         g=table();g.hands[0]=cards([6,6,6,8,9],prefix='a')
         g.action(0,'auto',['a0','a1','a2','a3']);self.assertEqual(g.last['kind'],'三带一')
 
+    def test_custom_carried_units(self):
+        for mode in ('standard', 'trio'):
+            for size in range(3, 11):
+                for count in range(1, size - 1):
+                    for unit in (1, 2):
+                        ranks = [6] * size + [r for r in range(7, 7 + count) for _ in range(unit)]
+                        combo = classify(ranks, mode)
+                        self.assertIsNotNone(combo, (mode, size, count, unit))
+                        self.assertEqual(combo['power'], 0)
+                        self.assertEqual(combo['value'], 6)
+            self.assertIsNone(classify([6]*4 + [8,8,9], mode))
+            self.assertIsNone(classify([6]*5 + [8,8,9,10], mode))
+            self.assertIsNone(classify([6]*4 + [8,9,10], mode))
+        self.assertIsNone(classify([6]*4 + [8], 'landlord'))
+        self.assertIsNone(classify([6]*5 + [8,9], 'landlord'))
+
+    def test_basic_rejects_all_carried_cards(self):
+        for ranks in ([6,6,6,8], [6,6,6,8,8], [6]*4+[8,9], [6]*4+[8,8,9,9], [6]*3+[7]*3+[9,10], [6]*3+[7]*3+[9,9,10,10]):
+            self.assertIsNone(classify(ranks, 'basic'), ranks)
+            g=table('basic');g.hands[0]=cards(ranks+[12],prefix='a')
+            ids=[c['id'] for c in g.hands[0][:-1]]
+            with self.assertRaises(RuleError):g.action(0,'auto',ids)
+            self.assertFalse(any(set(m['ids'])==set(ids) for m in g.candidates(0)))
+        self.assertIsNotNone(classify([4,4,14], 'basic'))
+        self.assertEqual(classify([6]*3+[7]*3, 'basic')['kind'], '飞机')
+
+    def test_carried_shapes_and_candidates(self):
+        g=table();g.hands[0]=cards([6]*5+[8,8,9,9,10,10,12],prefix='a')
+        moves=g.candidates(0)
+        for kind in ('五带一', '五带二', '五带三', '五带一对', '五带两对', '五带三对'):
+            self.assertTrue(any(m['label']==kind for m in moves),kind)
+        g.action(0,'auto',['a'+str(i) for i in range(9)])
+        self.assertEqual(g.last['kind'],'五带两对')
+        with self.assertRaises(RuleError):g.validate_play(3,cards([7]*6+[10,11,12]),'play')
+        self.assertEqual(g.validate_play(3,cards([7]*5+[10,10,11,11]),'play')[0]['kind'],'五带两对')
+
+    def test_wildcard_carried_units(self):
+        chosen=cards([6]*4+[8,8,9,9])+cards([14],'S','w')
+        self.assertTrue(any(c['kind']=='五带两对' for c in interpretations(chosen,'standard',3)))
+        chosen=cards([6]*5+[8,9])+cards([14],'S','w')
+        self.assertTrue(any(c['kind']=='五带三' for c in interpretations(chosen,'standard',3)))
+        g=table();g.hands[0]=cards([6]*4+[8,8,9,9,12])+cards([14],'S','w')
+        self.assertTrue(any(m['label']=='五带两对' for m in g.candidates(0)))
+
+    def test_unanswered_play_gives_unrestricted_fresh_lead(self):
+        for mode in ('basic','standard','landlord'):
+            g=table(mode);g.interactive=True
+            g.hands[0]=cards([12,6,6,7],prefix='a')
+            if mode != 'landlord':
+                g.players[-1]['bot']=True
+                g.hands[-1]=cards([12,12,8],prefix='d')
+            g.action(0,'auto',['a0'])
+            if mode != 'landlord':self.assertIsNotNone(g.priority)
+            for seat in range(len(g.players)-1,0,-1):g.action(seat,'pass')
+            self.assertEqual(g.turn,0)
+            self.assertIsNone(g.last)
+            self.assertIsNone(g.priority)
+            self.assertEqual(g.claims,{})
+            g.action(0,'auto',['a1','a2'])
+            self.assertEqual(g.last['kind'],'对子')
+
     def test_cross_only_hook_and_unanswered_cross_keeps_lead(self):
         for mode in ('basic','standard','trio'):
             g=table(mode);last=len(g.players)-1
