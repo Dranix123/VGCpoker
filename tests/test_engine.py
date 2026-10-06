@@ -1,4 +1,5 @@
 import unittest
+import itertools
 from collections import Counter
 from unittest.mock import patch
 from engine import Game, MODES, RuleError, classify, deck, interpretations
@@ -453,7 +454,35 @@ class Rules(unittest.TestCase):
         for seat in (0,3,2):g.action(seat,'play',[chr(97+seat)+'0'])
         self.assertEqual(g.winner,[0,2]);self.assertEqual(g.scores,[1,0]);self.assertEqual(g.next_main,4)
         g=table();g.finished=[0,1];g.hands[0]=[];g.hands[1]=[];g.hands[3]=cards([8],prefix='d');g.turn=3
-        g.action(3,'play',['d0']);self.assertEqual(g.winner,[1,3])
+        g.action(3,'play',['d0']);self.assertEqual(g.winner,[0,2]);self.assertEqual(g.scores,[0,0]);self.assertEqual(g.next_main,3)
+
+    def test_first_finisher_team_upgrade_all_orders(self):
+        for mode in ('basic','standard'):
+            for order in itertools.permutations(range(4)):
+                g=table(mode);g.scores=[4,7]
+                for seat in order:
+                    g.hands[seat]=[];g.finish(seat)
+                    if g.phase=='over':break
+                team=order[0]%2
+                caught=3-order.index((order[0]+2)%4)
+                expected=[4,7];expected[team]+=caught
+                self.assertEqual(g.winner,[s for s in range(4) if s%2==team],order)
+                self.assertEqual(g.scores,expected,order)
+                self.assertEqual(g.next_main, list(range(3,16))[expected[team]%13],order)
+                following=Game(mode,g.players,previous={'first':order[0],'main':g.next_main,'scores':g.scores})
+                self.assertEqual(following.main,g.next_main)
+                self.assertEqual(following.scores,expected)
+
+    def test_team_main_tracks_each_team_across_rounds(self):
+        g=table();g.scores=[12,5]
+        for order, expected, next_main in (((0,2,1,3),[14,5],4),((1,0,3,2),[14,6],9),((0,1,3,2),[14,6],4)):
+            g=Game('standard',g.players,previous={'main':g.next_main,'scores':g.scores})
+            g.phase='play'
+            for seat in order:
+                g.hands[seat]=[];g.finish(seat)
+                if g.phase=='over':break
+            self.assertEqual(g.scores,expected)
+            self.assertEqual(g.next_main,next_main)
 
     def test_setup_promote_and_rps(self):
         g=Game('standard',[{'name':str(i)} for i in range(4)])

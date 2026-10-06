@@ -554,13 +554,13 @@ class Game:
                     self.scores[order[0]] += 1
                     self.next_main = RANKS[self.scores[order[0]] % len(RANKS)]
                 else:
-                    # Each team scores the number still on table when its second member finishes.
-                    for team in (0, 1):
-                        pos = max(order.index(s) for s in range(len(self.players)) if s % 2 == team)
-                        self.scores[team] += len(self.players) - pos - 1
-                    winning_team = min((0, 1), key=lambda t: max(order.index(s) for s in range(len(self.players)) if s % 2 == t))
+                    # The first finisher's team wins; its partner determines how many are caught.
+                    winning_team = order[0] % 2
+                    partner = (order[0] + 2) % len(self.players)
+                    caught = len(self.players) - order.index(partner) - 1
+                    self.scores[winning_team] += caught
                     self.winner = [s for s in range(len(self.players)) if s % 2 == winning_team]
-                    score = self.scores[order[0] % 2]
+                    score = self.scores[winning_team]
                     self.next_main = RANKS[score % len(RANKS)]
                 self.phase = 'over'
         if self.phase == 'over': self.announce('本局结束。')
