@@ -525,7 +525,7 @@ class Game:
         elif self.mode != 'landlord':
             active = [s for s in range(len(self.players)) if s not in self.finished]
             order = [s for s in self.finished if s not in self.urgent_last]
-            if len(active) <= 1:
+            if len(active) <= 1 or self.mode in ('basic', 'standard') and len(active) == 2 and active[0] % 2 == active[1] % 2:
                 order += active + self.urgent_last
                 self.finished = order
                 if self.mode == 'trio':
@@ -779,7 +779,7 @@ class Game:
             elif self.priority and seat in self.priority['pending']: response = {'key': self.play_number, 'moves': self.priority_moves(seat)}
         return {'mode': self.mode, 'phase': self.phase, 'main': self.main, 'scores': self.scores, 'turn': self.turn, 'landlord': self.landlord, 'bid': self.bid,
                 'bottom': self.bottom if self.phase != 'bid' else [], 'hand': sorted(self.hands[seat], key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])),
-                'counts': [len(h) for h in self.hands], 'finished': self.finished, 'last': self.last, 'lastSeat': self.last_seat,
+                'counts': [len(h) for h in self.hands], 'remainingHands': [sorted(h, key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])) for h in self.hands] if self.phase == 'over' else None, 'finished': self.finished, 'last': self.last, 'lastSeat': self.last_seat,
                 'seatPlays': self.seat_plays, 'playNumber': self.play_number, 'response': response,
                 'winner': self.winner, 'log': self.log, 'reveals': self.reveals, 'ready': list(self.rps), 'promotions': self.promotions,
                 'negotiation': {k: self.negotiation[k] for k in ('seat', 'target') if k in self.negotiation} if self.negotiation else None,

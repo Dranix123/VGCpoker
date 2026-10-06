@@ -371,6 +371,22 @@ class Rules(unittest.TestCase):
         self.assertNotIn('hands',view)
         self.assertEqual(Game('standard',g.players).seat_plays,[None]*4)
 
+    def test_last_opposite_pair_settles_and_reveals_remaining_hands(self):
+        for mode in ('basic','standard'):
+            g=table(mode);g.hands[0]=cards([6],prefix='a');g.hands[2]=cards([8],prefix='c')
+            self.assertIsNone(g.view(0)['remainingHands'])
+            g.action(0,'auto',['a0']);g.action(3,'pass');g.action(2,'auto',['c0'])
+            self.assertEqual(g.phase,'over');self.assertEqual(g.winner,[0,2]);self.assertEqual(g.scores,[2,0]);self.assertEqual(g.next_main,5)
+            self.assertEqual(len(g.hands[1]),5);self.assertEqual(len(g.hands[3]),5)
+            for viewer in range(4):
+                revealed=g.view(viewer)['remainingHands']
+                self.assertEqual([len(h) for h in revealed],[0,5,0,5])
+                self.assertEqual({c['id'] for c in revealed[1]},{c['id'] for c in g.hands[1]})
+            with self.assertRaises(RuleError):g.action(1,'pass')
+        g=table();g.hands[0]=cards([6],prefix='a');g.hands[3]=cards([7],prefix='d')
+        g.action(0,'auto',['a0']);g.action(3,'auto',['d0'])
+        self.assertEqual(g.phase,'play');self.assertIsNone(g.view(0)['remainingHands'])
+
     def test_team_winner_and_scoring(self):
         g=table();g.hands[0]=cards([5],prefix='a');g.hands[1]=cards([8],prefix='b');g.hands[2]=cards([7],prefix='c');g.hands[3]=cards([6],prefix='d')
         for seat in (0,3,2):g.action(seat,'play',[chr(97+seat)+'0'])

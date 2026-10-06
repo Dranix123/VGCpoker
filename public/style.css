@@ -356,3 +356,6 @@ footer{justify-content:flex-end}
 .main-indicator b{font:17px Georgia,serif;margin-left:3px}
 
 #response-notice{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);z-index:99;background:var(--ink);color:var(--panel);border-radius:4px;padding:13px 24px;font-size:12px;box-shadow:2px 3px 0 #b6b6ab;max-width:90vw;text-align:center;pointer-events:none}
+
+.settlement-hands{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px;text-align:left}.settlement-hand{padding:14px;border:1px solid var(--line);border-radius:3px}.settlement-hand h3{font-size:13px;margin-bottom:10px}.settlement-hand h3 small{font-size:11px;font-weight:normal;color:var(--muted);margin-left:8px}.settlement-cards{display:flex;flex-wrap:wrap;gap:5px}.settlement-card{padding:5px 8px;border:1px solid var(--line);border-radius:2px;background:var(--paper);font:16px Georgia,serif}.settlement-card.red{color:var(--red)}
+@media(max-width:600px){.settlement-hands{grid-template-columns:1fr}}
