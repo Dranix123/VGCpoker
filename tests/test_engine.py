@@ -17,6 +17,20 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_basic_short_sequences_and_hints(self):
+        for ranks,kind in (([6,7,8],'顺子'),([6,6,7,7],'连对')):
+            self.assertEqual(classify(ranks,'basic')['kind'],kind)
+            for mode in ('standard','trio','landlord'):self.assertIsNone(classify(ranks,mode))
+            g=table('basic');g.hands[0]=cards(ranks+[12],prefix='a')
+            ids=[c['id'] for c in g.hands[0][:-1]]
+            self.assertTrue(any(set(m['ids'])==set(ids) for m in g.candidates(0)))
+            g.action(0,'auto',ids);self.assertEqual(g.last['kind'],kind)
+            g=table('basic');g.hands[0]=cards(ranks,prefix='a')
+            self.assertEqual(set(g.bot_action(0)['ids']),set(ids))
+        for ranks in ([6,7],[6,6],[14,15,16],[3,4,5],[6,6,8,8]):
+            combo=classify(ranks,'basic')
+            self.assertTrue(combo is None or combo['kind'] not in ('顺子','连对'))
+
     def test_initial_hand_counts_survive_play_for_music_threshold(self):
         g=Game('standard',[{'name':str(i)} for i in range(4)])
         counts=[len(hand) for hand in g.hands]

@@ -71,7 +71,7 @@ def classify(ranks, mode='landlord', main=3):
     sequence = keys[-1] < 15 and not (mode != 'landlord' and main in keys) and keys == list(range(keys[0], keys[-1] + 1))
     if sequence and len(set(vals)) == 1:
         v = vals[0]
-        if (v == 1 and n >= 5) or (v == 2 and n >= 6) or (v == 3 and n >= 6):
+        if (v == 1 and n >= (3 if mode == 'basic' else 5)) or (v == 2 and n >= (4 if mode == 'basic' else 6)) or (v == 3 and n >= 6):
             return result({1: '顺子', 2: '连对', 3: '飞机'}[v], keys[-1])
     for width in range(2, 7):
         if mode == 'basic': break
@@ -578,7 +578,7 @@ class Game:
                     if other != r:
                         sets.append(group[:3] + wing[:1])
                         if len(wing) >= 2: sets.append(group[:3] + wing[:2])
-        for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
+        for multiple, minimum in ((1, 3 if self.mode == 'basic' else 5), (2, 2 if self.mode == 'basic' else 3), (3, 2)):
             for start in range(3, 15):
                 seq = []
                 for end in range(start, 15):
@@ -613,7 +613,7 @@ class Game:
         for pool in suit_groups.values():
             for group in pool.values():
                 for n in range(2, len(group) + 1): sets.append(group[:n])
-            for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
+            for multiple, minimum in ((1, 3 if self.mode == 'basic' else 5), (2, 2 if self.mode == 'basic' else 3), (3, 2)):
                 for start in range(3, 15):
                     seq = []
                     for end in range(start, 15):
@@ -747,7 +747,7 @@ class Game:
                     if a >= (1 if self.mode == 'basic' else 2) and four > a and four >= (2 if self.mode == 'basic' else 3):
                         pool[14] = pool[4] = 0; turns += 1
                 for multiple in order:
-                    minimum = 5 if multiple == 1 else 3 if multiple == 2 else 2
+                    minimum = (3 if self.mode == 'basic' else 5) if multiple == 1 else (2 if self.mode == 'basic' else 3) if multiple == 2 else 2
                     for start in range(3, 15):
                         sequence = []
                         for rank in range(start, 15):

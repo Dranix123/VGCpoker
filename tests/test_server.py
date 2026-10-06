@@ -59,6 +59,15 @@ class ServerIntegration(unittest.TestCase):
                 self.assertEqual(response.headers['CDN-Cache-Control'],'no-store')
                 self.assertEqual(response.read(),(server.ROOT/'public'/asset).read_bytes())
 
+    def test_recorded_voice_assets_are_served_as_audio(self):
+        with urllib.request.urlopen(self.url+'/audio/manifest.json') as response:
+            voices=json.load(response)['voices']
+        for key in ('pass','单张-8','对子-8','三带一对','连对'):
+            self.assertTrue((server.ROOT/'public'/voices[key].lstrip('/')).is_file())
+        with urllib.request.urlopen(self.url+voices['pass']) as response:
+            self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
+            self.assertGreater(len(response.read()),500)
+
     def test_account_settings_and_session_revocation(self):
         client=self.clients[3]
         other=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))

@@ -39,7 +39,9 @@ const gameAudio = (() => {
   }
   function unlock() {
     if(!context){const AudioContext=window.AudioContext||window.webkitAudioContext;if(AudioContext)context=new AudioContext();}
-    context?.resume().catch(()=>{});unlocked=true;ready.then(startMusic);
+    context?.resume().catch(()=>{});
+    if(!unlocked&&context){const silent=context.createBufferSource();silent.buffer=context.createBuffer(1,1,context.sampleRate);silent.connect(context.destination);silent.start();}
+    unlocked=true;ready.then(startMusic);
   }
   function synth(name) {
     if(!context||!volumes.effects||document.hidden)return;
@@ -58,22 +60,31 @@ const gameAudio = (() => {
     }
     setTimeout(()=>gain.disconnect(),1300);
   }
+  function audioBuffer(path) {
+    if(!buffers.has(path))buffers.set(path,fetch(path).then(r=>{if(!r.ok)throw Error();return r.arrayBuffer();}).then(b=>context.decodeAudioData(b)));
+    return buffers.get(path);
+  }
   async function effect(name) {
     if(!unlocked||document.hidden||!volumes.effects)return;
     const path=manifest.effects[name];if(!path){synth(name);return;}
     try {
-      if(!buffers.has(path)) buffers.set(path,fetch(path).then(r=>{if(!r.ok)throw Error();return r.arrayBuffer();}).then(b=>context.decodeAudioData(b)));
-      const buffer=await buffers.get(path);if(!volumes.effects||document.hidden)return;
+      const buffer=await audioBuffer(path);if(!volumes.effects||document.hidden)return;
       const source=context.createBufferSource(),gain=context.createGain();source.buffer=buffer;gain.gain.value=volumes.effects;source.connect(gain);gain.connect(context.destination);source.onended=()=>gain.disconnect();source.start();
     } catch {synth(name);}
   }
-  let voiceTrack;
-  function speak(text, key=text) {
+  let voiceSource, voiceGain, voiceRequest=0;
+  function stopVoice(){voiceRequest++;voiceSource?.stop();voiceSource=null;window.speechSynthesis?.cancel();}
+  async function speak(text, key=text) {
     if(!unlocked||document.hidden||!volumes.voice)return;
-    voiceTrack?.pause();window.speechSynthesis?.cancel();
-    const path=manifest.voices[key];
-    if(path){voiceTrack=new Audio(path);voiceTrack.volume=volumes.voice;voiceTrack.play().catch(()=>speech(text));}
-    else speech(text);
+    stopVoice();const request=voiceRequest, path=manifest.voices[key];
+    if(!path||!context){speech(text);return;}
+    try {
+      const buffer=await audioBuffer(path);
+      if(request!==voiceRequest||!volumes.voice||document.hidden)return;
+      const source=context.createBufferSource(),gain=context.createGain();source.buffer=buffer;gain.gain.value=volumes.voice;
+      source.connect(gain);gain.connect(context.destination);voiceSource=source;voiceGain=gain;
+      source.onended=()=>{gain.disconnect();if(voiceSource===source)voiceSource=null;};source.start();
+    } catch {if(request===voiceRequest)speech(text);}
   }
   function speech(text) {
     if(!window.speechSynthesis||!volumes.voice||document.hidden)return;
@@ -100,10 +111,10 @@ const gameAudio = (() => {
   function setVolume(category,value) {
     if(!(category in volumes))return;
     volumes[category]=Math.max(0,Math.min(1,Number(value)));try{localStorage.setItem('paper-poker-audio',JSON.stringify(volumes));}catch{}
-    applyVolumes();if(category==='voice'){if(voiceTrack)voiceTrack.volume=volumes.voice;if(!volumes.voice)window.speechSynthesis?.cancel();}
+    applyVolumes();if(category==='voice'){if(voiceGain)voiceGain.gain.value=volumes.voice;if(!volumes.voice)stopVoice();}
   }
-  document.addEventListener('pointerdown',unlock,{passive:true});document.addEventListener('keydown',unlock);
+  document.addEventListener('pointerdown',unlock,{passive:true});document.addEventListener('touchend',unlock,{passive:true});document.addEventListener('keydown',unlock);
   document.addEventListener('click',e=>{if(e.target.closest('button:not(:disabled)')){unlock();effect('click');}},true);
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const track of Object.values(tracks))track.pause();voiceTrack?.pause();window.speechSynthesis?.cancel();}else startMusic();});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const track of Object.values(tracks))track.pause();stopVoice();}else startMusic();});
   return {volumes, setVolume, effect, speak, observe};
 })();
