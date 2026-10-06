@@ -86,8 +86,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
 def model_move(config, g, seat):
-    moves = g.candidates(seat)[:50]
-    if g.last and g.last_seat != seat: moves.append({'action': 'pass'})
+    if g.priority:
+        moves = [{'action': 'priority-play', 'special': m['action'], 'ids': m['ids'], **({'wildcard': m['wildcard']} if 'wildcard' in m else {})} for m in g.priority_moves(seat)[:50]] + [{'action': 'priority-decline'}]
+    else:
+        moves = g.candidates(seat)[:50]
+        if g.last and g.last_seat != seat: moves.append({'action': 'pass'})
     if not moves: return {'action': 'pass'}
     endpoint = validate_endpoint(config['endpoint'])
     if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
@@ -126,6 +129,7 @@ def bot_loop():
             for room in list(ROOMS.values()):
                 g = room.get('game')
                 if not g or g.phase == 'over' or room['code'] in BOT_BUSY: continue
+                if g.priority and g.priority['pending']: continue
                 for seat, p in enumerate(room['players']):
                     if not p.get('bot'): continue
                     move = g.bot_action(seat)
@@ -325,7 +329,8 @@ class Handler(BaseHTTPRequestHandler):
                 if len(room['players']) >= MODES[room['mode']]: raise RuleError('房间已满。')
                 model = b.get('model', False) is True
                 if model and not room.get('modelConfig'): raise RuleError('请先配置模型API。')
-                room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': ('模型' if model else '墨客') + ' · ' + str(len(room['players']) + 1), 'bot': True, 'model': model, 'connected': True})
+                number = next(n for n in range(1, MODES[room['mode']]) if str(n) + '号' not in [p['name'] for p in room['players'] if p.get('bot')])
+                room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': str(number) + '号', 'bot': True, 'model': model, 'connected': True})
                 room['game'] = None
             elif path == '/api/remove':
                 if not host: raise RuleError('只有房主可以移除AI。')
@@ -339,7 +344,7 @@ class Handler(BaseHTTPRequestHandler):
                 if room['game'] and room['game'].phase != 'over': raise RuleError('游戏已经开始。')
                 prev = room.get('game')
                 previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores} if prev and prev.mode != 'landlord' else None
-                room['game'] = Game(room['mode'], room['players'], room['options'], previous)
+                room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')

@@ -15,6 +15,49 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_finished_lead_passes_to_opposite_partner(self):
+        for mode in ('basic', 'standard'):
+            g=table(mode);g.hands[0]=cards([6],prefix='a')
+            g.action(0,'play',['a0'])
+            for seat in (3,2,1):g.action(seat,'pass')
+            self.assertEqual(g.turn,2);self.assertIsNone(g.last)
+            self.assertIsNone(g.seat_plays[0])
+            self.assertTrue(all(g.seat_plays[s]['passed'] for s in (1,2,3)))
+            g.action(2,'play',['20'])
+        g=table();g.turn=3;g.hands[3]=cards([15,15,9],prefix='d');g.hands[0]=cards([15],prefix='a')
+        g.action(3,'play',['d0','d1']);g.action(0,'dot',['a0'])
+        self.assertEqual(g.turn,2);self.assertIsNone(g.last);self.assertIsNone(g.seat_plays[0])
+
+    def test_cross_then_hook_can_intercept_out_of_turn(self):
+        for mode in ('basic', 'standard'):
+            g=table(mode);g.hands[0]=cards([5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,10],prefix='b')
+            g.action(0,'play',['a0']);g.action(3,'cross',['d0','d1'])
+            self.assertEqual(g.turn,2)
+            g.action(1,'hook',['b0'])
+            self.assertEqual(g.last['special'],'hook');self.assertEqual(g.last_seat,1)
+
+    def test_priority_pause_and_multiplayer_agreement(self):
+        for mode in ('basic', 'standard'):
+            g=table(mode);g.interactive=True
+            g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
+            g.action(0,'play',['a0'])
+            self.assertIn(1,g.priority['pending'])
+            with self.assertRaises(RuleError):g.action(3,'play',['30'])
+            self.assertEqual(g.view(3)['priority']['moves'],[])
+            g.action(1,'priority-play',['b0','b1'],special='cross')
+            self.assertEqual(g.negotiation['target'],3);self.assertEqual(len(g.hands[1]),3)
+            g.action(3,'reject');self.assertIsNone(g.priority);self.assertEqual(len(g.hands[1]),3)
+            g.open_priority();g.action(1,'priority-play',['b0','b1'],special='cross');g.action(3,'accept')
+            self.assertEqual(g.last_seat,1);self.assertEqual(len(g.hands[1]),1)
+
+    def test_display_pass_replaces_cards_and_next_round_hides_finished(self):
+        g=table();g.hands[0]=cards([6],prefix='a')
+        g.hands[3]=cards([7,10,13],prefix='d');g.hands[2]=cards([8,11,14],prefix='c');g.hands[1]=cards([9,12,15],prefix='b')
+        g.action(0,'play',['a0']);g.action(3,'play',['d0']);g.action(2,'play',['c0']);g.action(1,'play',['b0'])
+        self.assertIsNotNone(g.seat_plays[0])
+        g.action(3,'play',['d1']);self.assertIsNone(g.seat_plays[0])
+        g.action(2,'pass');self.assertEqual(g.seat_plays[2]['kind'],'不出');self.assertEqual(g.seat_plays[2]['cards'],[])
+
     def test_counterclockwise_turns_and_bidding(self):
         for mode in MODES:
             g=table(mode);last_seat=len(g.players)-1
@@ -239,7 +282,7 @@ class Rules(unittest.TestCase):
         for mode in MODES:
             for options in ({}, {'advancedHui':True,'advancedDead':True,'dlc':True}):
                 with self.subTest(mode=mode,options=options):
-                    g=Game(mode,[{'name':str(i)} for i in range(MODES[mode])],options)
+                    g=Game(mode,[{'name':str(i),'bot':True} for i in range(MODES[mode])],options,interactive=True)
                     initial=len(g.cards)
                     for step in range(1000):
                         if g.phase=='over':break

@@ -94,6 +94,27 @@ class ServerIntegration(unittest.TestCase):
         for i in range(1,humans):self.assertEqual(self.request(self.clients[i],'join',{'code':code})[0],200)
         return code
 
+    def test_solo_priority_waits_before_any_bot_or_model_dispatch(self):
+        for mode in ('basic','standard'):
+            server.ROOMS.clear()
+            code=self.new_room(mode,1)
+            for _ in range(3):self.request(self.clients[0],'bot',{})
+            room=server.ROOMS[code]
+            self.assertEqual([p['name'] for p in room['players'][1:]],['1号','2号','3号'])
+            self.request(self.clients[0],'start',{})
+            g=room['game'];g.phase='play';g.turn=0
+            g.hands=[[{'id':str(s)+'-'+str(i),'rank':r,'suit':'H'} for i,r in enumerate(ranks)] for s,ranks in enumerate(([5,5,8],[7,9],[8,10],[5,5,9]))]
+            g.action(0,'play',['0-0'])
+            g.action(3,'priority-play',['3-0','3-1'],special='cross')
+            self.assertEqual(g.priority['pending'],[0])
+            state=self.request(self.clients[0],'state')[1]['room']['game']
+            self.assertTrue(any(m['action']=='hook' for m in state['priority']['moves']))
+            with patch.object(server.time,'sleep',side_effect=[None,StopIteration]),patch.object(server.threading.Thread,'start') as dispatch,patch.object(g,'bot_action') as bot:
+                with self.assertRaises(StopIteration):server.bot_loop()
+                dispatch.assert_not_called();bot.assert_not_called()
+            status,_=self.request(self.clients[0],'action',{'action':'priority-play','special':'hook','ids':['0-1'],'revision':room['revision']})
+            self.assertEqual(status,200);self.assertEqual(g.last['special'],'hook')
+
     def test_rooms_authority_and_privacy(self):
         code=self.new_room()
         self.assertEqual(self.request(self.clients[3],'join',{'code':code})[0],400)
@@ -121,7 +142,7 @@ class ServerIntegration(unittest.TestCase):
             g=room['game']
             if g.phase=='over':break
             for seat in range(4):
-                move=g.bot_action(seat)
+                move={'action':'priority-decline'} if g.priority and seat in g.priority['pending'] else g.bot_action(seat)
                 if move:
                     move={k:v for k,v in move.items() if k in ('action','ids','target','rank','value','wildcard')}
                     move['revision']=room['revision']
