@@ -86,7 +86,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
 def model_move(config, g, seat):
-    if g.priority:
+    if g.priority and seat in g.priority['bots']:
         moves = [{'action': 'priority-play', 'special': m['action'], 'ids': m['ids'], **({'wildcard': m['wildcard']} if 'wildcard' in m else {})} for m in g.priority_moves(seat)[:50]] + [{'action': 'priority-decline'}]
     else:
         moves = g.candidates(seat)[:50]
@@ -129,7 +129,7 @@ def bot_loop():
             for room in list(ROOMS.values()):
                 g = room.get('game')
                 if not g or g.phase == 'over' or room['code'] in BOT_BUSY: continue
-                if g.priority and g.priority['pending']: continue
+                if g.priority and g.priority['pending'] and g.solo(): continue
                 for seat, p in enumerate(room['players']):
                     if not p.get('bot'): continue
                     move = g.bot_action(seat)
@@ -348,7 +348,8 @@ class Handler(BaseHTTPRequestHandler):
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
-                moves = room['game'].candidates(seat)
+                g = room['game']
+                moves = g.priority_moves(seat) if g.priority and g.solo() and seat in g.priority['pending'] else [] if g.priority and g.solo() else g.candidates(seat)
                 return self.respond({'moves': moves[:80]})
             elif path == '/api/action':
                 if not room['game']: raise RuleError('对局尚未开始。')

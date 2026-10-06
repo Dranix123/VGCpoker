@@ -180,6 +180,7 @@ class Game:
         self.negotiation = None
         self.interactive = interactive
         self.priority = None
+        self.claims = {}
         self.display_seen = set()
         self.announce('牌已发出。' + ('请叫分。' if mode == 'landlord' else '可亮黑桃3，确认后开始。' if mode == 'basic' else '可升变、亮黑桃3，确认后开始。'))
 
@@ -208,6 +209,13 @@ class Game:
     def priority_moves(self, seat):
         return [m for m in self.candidates(seat) if m['action'] in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')]
 
+    def solo(self):
+        return sum(not p.get('bot') for p in self.players) <= 1
+
+    def snapshot(self):
+        import copy
+        return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last')}
+
     def open_priority(self):
         self.priority = None
         if not self.interactive or self.mode == 'landlord' or self.phase != 'play' or not self.last: return
@@ -215,6 +223,8 @@ class Game:
         eligible = [s for s in seats if s not in self.finished and self.priority_moves(s)]
         if eligible:
             self.priority = {'pending': [s for s in eligible if not self.players[s].get('bot')], 'bots': [s for s in eligible if self.players[s].get('bot')]}
+            if not self.solo():
+                for seat in self.priority['pending']: self.claims[seat] = {'snapshot': self.snapshot(), 'actors': [], 'moves': self.priority_moves(seat), 'order': self.play_number}
 
     def select(self, seat, ids):
         if not isinstance(ids, list) or len(set(ids)) != len(ids): raise RuleError('请选择不重复的牌。')
@@ -222,11 +232,46 @@ class Game:
         if any(i not in by_id for i in ids): raise RuleError('这些牌不在你的手中。')
         return [by_id[i] for i in ids]
 
+    def infer_action(self, seat, cards, wildcard=None, priority_only=False):
+        specials = ('dead4', 'dead', 'cross', 'hook', 'dot', 'press')
+        for action in specials + (() if priority_only else ('play', 'hui')):
+            try:
+                self.validate_play(seat, cards, action, wildcard)
+                return action
+            except RuleError: pass
+        raise RuleError('所选牌无法在当前局面出牌。')
+
     def action(self, seat, action, ids=None, **args):
         if self.phase == 'over': raise RuleError('本局已结束。')
         if seat in self.finished: raise RuleError('你已完成出牌。')
         if self.negotiation and action not in ('accept', 'reject'): raise RuleError('请先处理截牌协商。')
-        if self.priority and action not in ('priority-play', 'priority-decline', 'accept', 'reject'): raise RuleError('请先决定是否优先管牌。')
+        if action == 'auto':
+            if self.phase != 'play': raise RuleError('请先完成开局。')
+            cards = self.select(seat, ids or [])
+            wildcard = args.get('wildcard')
+            def urgent(card):
+                assigned = wildcard.get(card['id'], 14) if isinstance(wildcard, dict) else wildcard
+                return card['rank'] == 18 or card['rank'] == 14 and card['suit'] == 'S' and assigned == 18
+            if any(urgent(c) for c in cards): action = 'urgent'
+            else:
+                try: special = self.infer_action(seat, cards, wildcard, priority_only=bool(self.priority) and self.solo())
+                except RuleError:
+                    if seat not in self.claims: raise
+                    self.action(seat, 'negotiate', ids, wildcard=wildcard)
+                    return
+                if self.priority and special in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and seat in self.priority['pending'] + self.priority['bots']:
+                    action = 'priority-play'; args['special'] = special
+                else: action = special
+        if action == 'pass' and (seat in self.claims or self.priority and seat in self.priority['pending']):
+            last = self.last
+            self.claims.pop(seat, None)
+            if self.priority and seat in self.priority['pending']: self.action(seat, 'priority-decline')
+            if seat != self.turn or self.last_seat == seat: return
+            window = self.priority; self.priority = None
+            self.action(seat, 'pass')
+            if self.last is last: self.priority = window
+            return
+        if self.priority and self.solo() and action not in ('priority-play', 'priority-decline', 'accept', 'reject'): raise RuleError('请先决定是否优先管牌。')
         if action == 'bid':
             if self.phase != 'bid' or self.turn != seat: raise RuleError('还没轮到你叫分。')
             value = int(args.get('value', 0))
@@ -279,8 +324,9 @@ class Game:
         if action in ('priority-play', 'priority-decline'):
             window = self.priority
             group = 'bots' if self.players[seat].get('bot') else 'pending'
-            if not window or seat not in window[group] or group == 'bots' and window['pending']: raise RuleError('没有轮到你响应的优先管牌机会。')
+            if not window or seat not in window[group] or group == 'bots' and window['pending'] and self.solo(): raise RuleError('没有轮到你响应的优先管牌机会。')
             if action == 'priority-decline':
+                self.claims.pop(seat, None)
                 window[group].remove(seat)
                 if not window['pending'] and not window['bots']: self.priority = None
                 return
@@ -299,6 +345,7 @@ class Game:
             if not n or seat != n['target']: raise RuleError('没有需要你处理的协商。')
             self.negotiation = None
             if action == 'accept':
+                self.claims = {}
                 if n['snapshot']:
                     for key, value in n['snapshot'].items(): setattr(self, key, value)
                 self.priority = None
@@ -306,16 +353,22 @@ class Game:
                 self.action(n['seat'], n['action'], n['ids'], **n['args'])
             else:
                 self.announce(self.players[seat]['name'] + '拒绝截牌协商。')
+                self.claims.pop(n['seat'], None)
                 if n.get('priority'): self.action(n['seat'], 'priority-decline')
             return
         if action == 'negotiate':
-            h = self.history
-            if len(self.finished) >= 2 or not h or not h['snapshot']['finished'] or h['snapshot']['last_seat'] not in h['snapshot']['finished'] or h['seat'] == seat:
-                raise RuleError('只有上家出完、下一家刚出牌且少于两人完成时可以协商。')
+            claim = self.claims.get(seat)
+            h = {'seat': claim['actors'][-1], 'snapshot': claim['snapshot']} if claim and claim['actors'] else self.history
+            if claim and not claim['actors']:
+                special = self.infer_action(seat, self.select(seat, ids or []), args.get('wildcard'), priority_only=True)
+                self.action(seat, 'priority-play', ids, special=special, wildcard=args.get('wildcard'))
+                return
+            if len(self.finished) >= 2 or not h or h['seat'] == seat or not claim and (not h['snapshot']['finished'] or h['snapshot']['last_seat'] not in h['snapshot']['finished']):
+                raise RuleError('这次优先管牌机会已结束，或当前不能协商。')
             import copy
             before = copy.deepcopy(self)
             for key, value in h['snapshot'].items(): setattr(before, key, copy.deepcopy(value))
-            special = args.get('special', 'cross')
+            special = args.get('special') or before.infer_action(seat, self.select(seat, ids or []), args.get('wildcard'), priority_only=True)
             if special not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('请选择可截牌的特殊出法。')
             before.validate_play(seat, self.select(seat, ids or []), special, args.get('wildcard'))
             self.negotiation = {'target': h['seat'], 'seat': seat, 'action': special, 'ids': ids, 'args': args, 'snapshot': copy.deepcopy(h['snapshot'])}
@@ -330,7 +383,7 @@ class Game:
             if active <= self.passes:
                 self.turn = self.last_seat if self.last_seat not in self.finished else self.inherit_lead(self.last_seat)
                 self.last = None; self.passes = set(); self.hui_used = False; self.history = None
-                self.display_seen.clear()
+                self.display_seen.clear(); self.claims = {}
                 for finished in self.finished: self.seat_plays[finished] = None
             else: self.turn = self.next_seat(seat)
             return
@@ -348,7 +401,7 @@ class Game:
                 return card['rank'] == 18 or card['id'] in wild_ids and assigned == 18
             if len(cards) != 2 or sum(is_urgent(c) for c in cards) != 1 or target == seat or target not in range(len(self.players)) or target in self.finished:
                 raise RuleError('选择一张急牌、一张非急牌和一位仍在场的玩家。')
-            self.history = None
+            self.history = None; self.claims = {}
             self.remove(seat, cards)
             given = next(c for c in cards if not is_urgent(c))
             substituted = any(c['id'] in wild_ids and is_urgent(c) for c in cards)
@@ -360,8 +413,10 @@ class Game:
             # Urgent consumes cards, not the current lead or response opportunity.
             return
         combo, direct = self.validate_play(seat, cards, action, args.get('wildcard'))
-        import copy
-        self.history = {'seat': seat, 'snapshot': {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last')}}
+        self.history = {'seat': seat, 'snapshot': self.snapshot()}
+        for claimant, claim in list(self.claims.items()):
+            if seat not in claim['actors']: claim['actors'].append(seat)
+            if claimant == seat or len(claim['actors']) >= 2: del self.claims[claimant]
         if self.last and self.last.get('direct') and self.last_seat == seat and action == 'play': self.hui_used = False
         self.remove(seat, cards)
         self.last = {**combo, 'cards': cards, 'special': action, 'direct': direct}
@@ -578,11 +633,14 @@ class Game:
         if self.negotiation:
             return {'action': 'accept'} if self.negotiation['target'] == seat else None
         if self.priority:
-            if self.priority['pending'] or seat not in self.priority['bots']: return None
-            moves = self.priority_moves(seat)
-            if not moves: return {'action': 'priority-decline'}
-            move = min(moves, key=lambda m: (len(self.hands[seat]) != m['n'], m['power'], -m['n'], m['value']))
-            return {'action': 'priority-play', 'special': move['action'], 'ids': move['ids'], **({'wildcard': move['wildcard']} if 'wildcard' in move else {})}
+            if self.priority['pending'] and self.solo(): return None
+            if seat not in self.priority['bots']:
+                if self.solo(): return None
+            else:
+                moves = self.priority_moves(seat)
+                if not moves: return {'action': 'priority-decline'}
+                move = min(moves, key=lambda m: (len(self.hands[seat]) != m['n'], m['power'], -m['n'], m['value']))
+                return {'action': 'priority-play', 'special': move['action'], 'ids': move['ids'], **({'wildcard': move['wildcard']} if 'wildcard' in move else {})}
         if self.phase == 'bid':
             if seat != self.turn: return None
             value = 3 if sum(c['rank'] >= 15 for c in self.hands[seat]) >= 5 else (self.bid + 1 if self.bid < 2 else 0)
@@ -700,10 +758,14 @@ class Game:
         return best
 
     def view(self, seat):
+        response = None
+        if self.phase == 'play' and seat not in self.finished:
+            if seat in self.claims: response = {'key': self.claims[seat]['order'], 'moves': self.claims[seat]['moves']}
+            elif self.priority and seat in self.priority['pending']: response = {'key': self.play_number, 'moves': self.priority_moves(seat)}
         return {'mode': self.mode, 'phase': self.phase, 'main': self.main, 'scores': self.scores, 'turn': self.turn, 'landlord': self.landlord, 'bid': self.bid,
                 'bottom': self.bottom if self.phase != 'bid' else [], 'hand': sorted(self.hands[seat], key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])),
                 'counts': [len(h) for h in self.hands], 'finished': self.finished, 'last': self.last, 'lastSeat': self.last_seat,
-                'seatPlays': self.seat_plays, 'playNumber': self.play_number,
+                'seatPlays': self.seat_plays, 'playNumber': self.play_number, 'response': response,
                 'winner': self.winner, 'log': self.log, 'reveals': self.reveals, 'ready': list(self.rps), 'promotions': self.promotions,
                 'negotiation': {k: self.negotiation[k] for k in ('seat', 'target', 'priority') if k in self.negotiation} if self.negotiation else None,
                 'priority': {'pending': self.priority['pending'], 'moves': self.priority_moves(seat) if seat in self.priority['pending'] else [], 'requiresAgreement': sum(not p.get('bot') for p in self.players) > 1 and seat != self.turn and not self.players[self.turn].get('bot')} if self.priority else None,

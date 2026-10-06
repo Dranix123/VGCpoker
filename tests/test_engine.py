@@ -16,6 +16,62 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_auto_recognizes_normal_and_special_plays(self):
+        for mode in ('basic','standard'):
+            g=table(mode);g.hands[0]=cards([5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,10],prefix='b')
+            g.action(0,'auto',['a0']);self.assertEqual(g.last['special'],'play')
+            g.action(3,'auto',['d0','d1']);self.assertEqual(g.last['special'],'cross')
+            g.action(1,'auto',['b0']);self.assertEqual(g.last['special'],'hook')
+        g=table(options={'advancedDead':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,10],prefix='d');g.hands[1]=cards([7]*3+[10],prefix='b');g.hands[2]=cards([7]*4+[10],prefix='c')
+        g.action(0,'auto',['a0','a1']);g.action(3,'auto',['d0']);self.assertEqual(g.last['special'],'dot')
+        g.action(1,'auto',['b0','b1','b2']);self.assertEqual(g.last['special'],'dead')
+        g.action(2,'auto',['c0','c1','c2','c3']);self.assertEqual(g.last['special'],'dead4')
+        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,10],prefix='d');g.hands[2]=cards([15,9],prefix='c')
+        g.action(0,'auto',['a0','a1']);g.action(3,'auto',['d0']);g.action(2,'auto',['c0']);self.assertEqual(g.last['special'],'press')
+        g=table();g.action(0,'auto',['01']);g.action(3,'auto',['32']);self.assertEqual(g.last['special'],'play')
+        g=table();g.action(0,'auto',['01']);g.action(3,'auto',['30']);self.assertEqual(g.last['special'],'hui')
+        g=table();g.hands[0]=cards([18,6,9],prefix='a');g.action(0,'auto',['a0','a1'],target=1)
+        self.assertEqual(g.turn,0);self.assertIsNone(g.last);self.assertTrue(any(c['id']=='a1' for c in g.hands[1]))
+        g=table('landlord');g.action(0,'auto',['00']);self.assertEqual(g.last['special'],'play')
+
+    def test_auto_priority_keeps_multiplayer_agreement(self):
+        g=table();g.interactive=True;g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
+        g.action(0,'auto',['a0']);g.action(1,'auto',['b0','b1'])
+        self.assertEqual(g.negotiation['action'],'cross');self.assertEqual(len(g.hands[1]),3)
+        g.action(3,'accept');self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1)
+
+    def test_solo_pass_declines_priority_through_normal_controls(self):
+        g=table('basic');g.interactive=True
+        for seat in (1,2,3):g.players[seat]['bot']=True
+        g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d')
+        g.action(0,'auto',['a0']);g.action(3,'priority-play',['d0','d1'],special='cross')
+        self.assertEqual(g.priority['pending'],[0]);self.assertIsNone(g.bot_action(2))
+        g.action(0,'pass');self.assertIsNone(g.priority);self.assertEqual(g.turn,2)
+        self.assertEqual(len(g.hands[0]),2)
+
+    def test_multiplayer_priority_expires_after_two_players_play(self):
+        for mode in ('basic','standard'):
+            def start():
+                g=table(mode);g.interactive=True
+                g.hands[0]=cards([5,9],prefix='a');g.hands[1]=cards([5,5,10],prefix='b')
+                g.hands[3]=cards([6]*4+[9],prefix='d');g.hands[2]=cards([7]*4+[10],prefix='c')
+                g.action(0,'auto',['a0']);return g
+            g=start();g.action(3,'auto',['d0','d1','d2','d3'])
+            self.assertIn(1,g.claims);self.assertEqual(g.claims[1]['actors'],[3])
+            response=g.view(1)['response'];self.assertEqual(response['key'],1);self.assertEqual(response['moves'][0]['ids'],['b0','b1'])
+            self.assertIsNone(g.view(2)['response'])
+            g.action(1,'auto',['b0','b1']);self.assertEqual(g.negotiation['target'],3)
+            g.action(3,'accept');self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[3]),5)
+            g=start();g.action(3,'auto',['d0','d1','d2','d3']);g.action(2,'auto',['c0','c1','c2','c3'])
+            self.assertNotIn(1,g.claims)
+            with self.assertRaises(RuleError):g.action(1,'negotiate',['b0','b1'])
+
+    def test_multiplayer_decline_does_not_stop_normal_turn(self):
+        g=table('basic');g.interactive=True;g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
+        g.action(0,'auto',['a0']);self.assertIsNotNone(g.view(1)['response'])
+        g.action(1,'pass');self.assertIsNone(g.view(1)['response']);self.assertEqual(g.turn,3)
+        g.action(3,'auto',['30']);self.assertEqual(g.last_seat,3)
+
     def test_basic_opening_spade_three_and_random_fallback(self):
         players=[{'name':str(i),'bot':i!=0} for i in range(4)]
         g=Game('basic',players);self.assertEqual(g.phase,'setup')
@@ -64,7 +120,6 @@ class Rules(unittest.TestCase):
             g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
             g.action(0,'play',['a0'])
             self.assertIn(1,g.priority['pending'])
-            with self.assertRaises(RuleError):g.action(3,'play',['30'])
             self.assertEqual(g.view(3)['priority']['moves'],[])
             g.action(1,'priority-play',['b0','b1'],special='cross')
             self.assertEqual(g.negotiation['target'],3);self.assertEqual(len(g.hands[1]),3)

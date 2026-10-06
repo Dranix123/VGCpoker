@@ -112,7 +112,7 @@ class ServerIntegration(unittest.TestCase):
             with patch.object(server.time,'sleep',side_effect=[None,StopIteration]),patch.object(server.threading.Thread,'start') as dispatch,patch.object(g,'bot_action') as bot:
                 with self.assertRaises(StopIteration):server.bot_loop()
                 dispatch.assert_not_called();bot.assert_not_called()
-            status,_=self.request(self.clients[0],'action',{'action':'priority-play','special':'hook','ids':['0-1'],'revision':room['revision']})
+            status,_=self.request(self.clients[0],'action',{'action':'auto','ids':['0-1'],'revision':room['revision']})
             self.assertEqual(status,200);self.assertEqual(g.last['special'],'hook')
 
     def test_rooms_authority_and_privacy(self):
