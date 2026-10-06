@@ -1,5 +1,6 @@
 import http.cookiejar
 import json
+import re
 import tempfile
 import threading
 import unittest
@@ -45,6 +46,18 @@ class ServerIntegration(unittest.TestCase):
 
     def setUp(self):
         server.ROOMS.clear()
+
+    def test_static_assets_are_versioned_and_never_cached(self):
+        with urllib.request.urlopen(self.url+'/') as response:
+            self.assertEqual(response.headers['Cache-Control'],'no-store')
+            self.assertEqual(response.headers['CDN-Cache-Control'],'no-store')
+            html=response.read().decode()
+        for asset in ('app.js','style.css'):
+            url=re.search(r'/'+re.escape(asset)+r'\?v=[0-9a-f]{12}',html).group(0)
+            with urllib.request.urlopen(self.url+url) as response:
+                self.assertEqual(response.headers['Cache-Control'],'no-store')
+                self.assertEqual(response.headers['CDN-Cache-Control'],'no-store')
+                self.assertEqual(response.read(),(server.ROOT/'public'/asset).read_bytes())
 
     def test_account_settings_and_session_revocation(self):
         client=self.clients[3]

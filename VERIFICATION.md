@@ -31,7 +31,7 @@
 | 设置统一管理 API 与账号 | 设置 / `/api/account` / `/api/model-settings` | 密码修改撤销其他会话、昵称更新房间、密钥不返回浏览器、配置继承与清除测试 |
 | Git 管理 | `.git` | 本地提交记录与 `.gitignore` 排除数据库、密钥、浏览器验收文件 |
 
-自动测试：`python3 -m unittest discover -s tests -v`，当前 44 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
+自动测试：`python3 -m unittest discover -s tests -v`，当前 45 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
 
 设计与玩法约定详见 `README.md` 和游戏内玩法手册。服务器重启会结束未完成的内存房间；SQL 账号、积分、已完成战绩保留。Cloudflare 域名连接由用户配置，源站使用 `http://localhost:4141`。
 
@@ -54,3 +54,7 @@
 补充歧义测试：原进阶死压机会经过一人出牌后，即使同一组选牌也能作为普通炸弹管住现牌，点击出牌仍按原标记机会自动协商，接受后恢复并执行进阶死压。
 
 浏览器补充验收多人局：同点叉牌后，本人手牌自动标记，界面无「申请截牌协商」按钮；尚无人后续出牌时直接点「出牌」成功勾牌，未出现协商请求。截图 `output/playwright/direct-priority-play.jpg`，控制台无错误/警告。
+
+静态缓存修复：公网旧 JS 响应含 `cache-control: max-age=14400`，截图仍展示已删除的出牌方式框，导致旧前端发送显式普通出牌而撞上优先窗口。HTML 动态注入 JS/CSS 内容哈希版本，静态响应统一 `Cache-Control: no-store` 与 `CDN-Cache-Control: no-store`。HTTP 测试覆盖版本 URL、内容一致性与两种禁缓存头。
+
+基础版浏览器复现截图：3号单张4 → 1号叉44，本人14张手牌中的4自动选中，直接点击出牌后显示勾4、剩13张。确认资源 URL 使用内容哈希，截图 `output/playwright/cache-fixed-hook.jpg`。
