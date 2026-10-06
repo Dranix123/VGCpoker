@@ -422,6 +422,7 @@ class Game:
             if seat not in claim['actors']: claim['actors'].append(seat)
             if claimant == seat or len(claim['actors']) >= 2: del self.claims[claimant]
         if self.last and self.last.get('direct') and self.last_seat == seat and action == 'play': self.hui_used = False
+        if action in ('cross', 'hook'): self.claims = {}
         self.remove(seat, cards)
         self.last = {**combo, 'cards': cards, 'special': action, 'direct': direct}
         self.play_number += 1
@@ -449,6 +450,8 @@ class Game:
         special = action != 'play'
         if old and old.get('direct') and seat == self.turn and not special:
             old = None
+        if old and old.get('special') == 'cross' and action != 'hook': raise RuleError('叉牌只能用同点单牌勾。')
+        if old and old.get('special') == 'hook': raise RuleError('勾牌不能再管，由勾牌者继续出牌。')
         if seat != self.turn:
             advanced_intercept = old and (action == 'dead4' and old.get('special') == 'dead' or action == 'dead' and old.get('special') == 'dot' or action == 'press' and old.get('special') == 'dot' and old.get('direct'))
             priority_intercept = old and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')
@@ -465,8 +468,10 @@ class Game:
             chain = old.get('special')
             direct = False
             ok = False
-            if action == 'cross': ok = old['n'] == 1 and chain in ('play', 'hui', 'hook') and len(cards) == 2 and matched
-            elif action == 'hook': ok = old['n'] == 2 and chain == 'cross' and len(cards) == 1 and matched
+            if action == 'cross': ok = old['n'] == 1 and chain in ('play', 'hui') and len(cards) == 2 and matched
+            elif action == 'hook':
+                ok = old['n'] == 2 and chain == 'cross' and len(cards) == 1 and matched
+                direct = True
             elif action == 'dot':
                 ok = old.get('baseKind', old['kind']) == '对子' and chain not in ('cross', 'hook') and len(cards) == 1 and matched
                 direct = rank in (15, self.main)

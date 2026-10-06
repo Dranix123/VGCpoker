@@ -136,6 +136,28 @@ class Rules(unittest.TestCase):
         g.action(3,'play',['d0','d1']);g.action(0,'dot',['a0'])
         self.assertEqual(g.turn,2);self.assertIsNone(g.last);self.assertIsNone(g.seat_plays[0])
 
+    def test_cross_only_hook_and_unanswered_cross_keeps_lead(self):
+        for mode in ('basic','standard','trio'):
+            g=table(mode);last=len(g.players)-1
+            g.hands[0]=cards([5,8],prefix='a');g.hands[last]=cards([5,5,9],prefix='d')
+            g.action(0,'auto',['a0']);g.action(last,'auto',['d0','d1'])
+            target=g.turn;g.hands[target]=cards([10]*4+[11],prefix='x')
+            with self.assertRaises(RuleError):g.action(target,'auto',['x0','x1','x2','x3'])
+            with self.assertRaises(RuleError):g.action(target,'auto',['x4'])
+            for _ in range(len(g.players)-1):g.action(g.turn,'pass')
+            self.assertEqual(g.turn,last);self.assertIsNone(g.last)
+            g.action(last,'auto',['d2']);self.assertEqual(g.last['ranks'],[9])
+
+    def test_hook_takes_unbeatable_free_lead(self):
+        for mode in ('basic','standard'):
+            g=table(mode);g.interactive=True
+            g.hands[0]=cards([5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,4],prefix='b');g.hands[2]=cards([5,5]+[10]*4+[11],prefix='c')
+            g.action(0,'auto',['a0']);g.action(3,'auto',['d0','d1']);g.action(1,'auto',['b0'])
+            self.assertEqual(g.turn,1);self.assertIsNone(g.priority);self.assertEqual(g.claims,{})
+            with self.assertRaises(RuleError):g.action(2,'cross',['c0','c1'])
+            with self.assertRaises(RuleError):g.action(2,'play',['c2','c3','c4','c5'])
+            g.action(1,'auto',['b1']);self.assertEqual(g.last['ranks'],[4]);self.assertEqual(g.last['special'],'play')
+
     def test_cross_then_hook_can_intercept_out_of_turn(self):
         for mode in ('basic', 'standard'):
             g=table(mode);g.hands[0]=cards([5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,10],prefix='b')
@@ -232,8 +254,9 @@ class Rules(unittest.TestCase):
         g.action(0,'play',['a0']);g.action(3,'cross',['b0','b1']);g.action(2,'hook',['c0'])
         self.assertEqual(g.last['special'],'hook')
         with self.assertRaises(RuleError):g.action(1,'play',['10'])
-        g.hands[1]=cards([9]*4+[10],prefix='d');g.action(1,'play',['d0','d1','d2','d3'])
-        self.assertEqual(g.last['kind'],'炸弹')
+        g.hands[1]=cards([9]*4+[10],prefix='d')
+        with self.assertRaises(RuleError):g.action(1,'play',['d0','d1','d2','d3'])
+        self.assertEqual(g.turn,2);g.action(2,'auto',['c1']);self.assertEqual(g.last['ranks'],[10])
 
     def test_dot_press_direct_lead(self):
         g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,9],prefix='b');g.hands[2]=cards([15,8,9],prefix='c')
