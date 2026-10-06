@@ -201,16 +201,16 @@ class Handler(BaseHTTPRequestHandler):
         if not file.is_relative_to(ROOT / 'public') or not file.is_file(): return self.respond({'error': '页面不存在。'}, 404)
         content = file.read_bytes()
         if file.name == 'index.html':
-            for asset in ('app.js', 'style.css'):
+            for asset in ('app.js', 'audio.js', 'style.css'):
                 version = hashlib.sha256((ROOT / 'public' / asset).read_bytes()).hexdigest()[:12]
                 content = content.replace(('/' + asset + '"').encode(), ('/' + asset + '?v=' + version + '"').encode())
         self.send_response(200)
-        self.send_header('Content-Type', {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}.get(file.suffix, 'application/octet-stream'))
+        self.send_header('Content-Type', {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4'}.get(file.suffix, 'application/octet-stream'))
         self.send_header('Content-Length', str(len(content)))
         self.send_header('Cache-Control', 'no-store')
         self.send_header('CDN-Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self'; frame-ancestors 'none'; base-uri 'none'")
         self.end_headers(); self.wfile.write(content)
 
     def do_POST(self):

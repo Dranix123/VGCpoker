@@ -17,6 +17,15 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_initial_hand_counts_survive_play_for_music_threshold(self):
+        g=Game('standard',[{'name':str(i)} for i in range(4)])
+        counts=[len(hand) for hand in g.hands]
+        g.hands[0]=g.hands[0][:3]
+        self.assertEqual(g.view(0)['initialCounts'],counts)
+        g=Game('landlord',[{'name':str(i)} for i in range(3)])
+        g.action(0,'bid',value=3)
+        self.assertEqual(g.view(0)['initialCounts'],[20,17,17])
+
     def test_auto_recognizes_normal_and_special_plays(self):
         for mode in ('basic','standard'):
             g=table(mode);g.hands[0]=cards([5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,10],prefix='b')

@@ -52,7 +52,7 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(response.headers['Cache-Control'],'no-store')
             self.assertEqual(response.headers['CDN-Cache-Control'],'no-store')
             html=response.read().decode()
-        for asset in ('app.js','style.css'):
+        for asset in ('app.js','audio.js','style.css'):
             url=re.search(r'/'+re.escape(asset)+r'\?v=[0-9a-f]{12}',html).group(0)
             with urllib.request.urlopen(self.url+url) as response:
                 self.assertEqual(response.headers['Cache-Control'],'no-store')

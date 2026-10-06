@@ -1,0 +1,5 @@
+{
+  "music": {"menu": null, "table": null, "tension": null},
+  "effects": {"click": null, "play": null, "deal": null, "win": null, "lose": null},
+  "voices": {"pass": null}
+}

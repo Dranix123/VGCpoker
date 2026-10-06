@@ -5,7 +5,7 @@ const names = {landlord:'斗地主',standard:'4A4A4',trio:'4A4A4 · 三人',basi
 const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急'};
 const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
-let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '', connected = false;
+let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
 let responseKey='', pollTimer, toastTimer, screen='home', settingsTab='account';
 const modal = $('#modal');
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3500); }
@@ -34,15 +34,13 @@ async function sync() {
   try {
     const next = await api('state');
     const oldRoom = state.room?.code, oldMatch = state.room?.matchId;
-    state = next; connected = true;
+    state = next;
     if (oldRoom !== state.room?.code || oldMatch !== state.room?.matchId) {selected.clear(); wildcard='';wildcardMap={};}
     markResponse();
     const available = new Set(state.room?.game?.hand.map(c=>c.id) || []);
     selected = new Set([...selected].filter(id=>available.has(id)));
     render();
-  } catch(e) {connected = false;}
-  $('#connection').classList.toggle('offline', !connected);
-  $('#connection').innerHTML = `<i></i>${connected?'牌桌在线':'连接中…'}`;
+  } catch {}
 }
 async function poll() {await sync(); pollTimer = setTimeout(poll, document.hidden ? 2500 : 850);}
 function showModal(kind, content) {modalKind=kind; $('#modal-content').innerHTML=content; if(!modal.open) modal.showModal();}
@@ -56,12 +54,9 @@ function card(c, interactive=false, g=null) {
 }
 function render() {
   const u=state.user,r=state.room,g=r?.game;
-  $('#account').innerHTML = u ? `${esc(u.name)} <span>♠</span>` : '登录 / 注册 <span>↗</span>';
-  $('#account').dataset.action = u?'settings':'auth';
   document.body.classList.toggle('home-screen',!r&&screen==='home');
   document.body.classList.toggle('in-game',!!g);
-  $('#breadcrumb').innerHTML = `俱乐部 <span>/</span> ${r?`${esc(names[r.mode])} <span>/</span> ${g?'牌桌':'房间'}`:'游戏大厅'}`;
-  if(!r)$('#breadcrumb').textContent=({home:'',create:'创建房间 / 选择玩法',single:'单人模式 / 选择玩法',settings:'设置'})[screen];
+  gameAudio.observe(r);
   const key = JSON.stringify([u,r,screen,settingsTab,state.preferences]);
   if(key===renderedKey)return;
   renderedKey=key;
@@ -83,17 +78,18 @@ function lobby() {
 }
 function flowScreen(){
  const single=screen==='single';
- return `<div class="flow-heading"><button class="text-button" data-action="home">← 返回主菜单</button><h1>${single?'单人模式':'创建房间'}</h1></div><div class="mode-layout"><section class="mode-grid">${[['landlord','01','经典斗地主','三人 / 54 张','叫分争地主，联手定胜负。','♠'],['standard','02','4A4A4 标准版','四人 / 110 张 / 2.4','勾叉点压，见招拆招。','4A'],['trio','03','4A4A4 三人版','三人 / 86 张','各自为战，争先出完。','♧'],['basic','04','4A4 基础版','四人 / 54 张','基础勾叉，三张起炸。','4']].map(([m,,t,n,,mark])=>`<button class="mode-card" data-action="choose-mode" data-mode="${m}"><span class="mode-symbol">${mark}</span><h2>${t}</h2><div class="mode-foot"><small>${n}</small><span>选择 →</span></div></button>`).join('')}</section><aside class="flow-aside">${single?`<div class="side-panel"><h3>AI 对手</h3><button class="text-button" data-action="settings-api">模型 API 设置 ↗</button><p>单人模式不计积分。</p></div>`:`<div class="side-panel"><h3>加入房间</h3><form id="join-form"><input id="join-code" class="join-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="— — —" aria-label="六位房间号" autocomplete="off"><button class="secondary full" type="submit">加入房间 →</button></form><div class="divider"></div><p>仅全真人对局计分。</p></div>`}</aside></div>`;
+ return `<div class="flow-heading"><button class="menu-back" data-action="home">← 返回主菜单</button><h1>${single?'单人模式':'创建房间'}</h1></div><div class="mode-layout"><section class="mode-grid">${[['landlord','01','经典斗地主','三人 / 54 张','叫分争地主，联手定胜负。','♠'],['standard','02','4A4A4 标准版','四人 / 110 张 / 2.4','勾叉点压，见招拆招。','4A'],['trio','03','4A4A4 三人版','三人 / 86 张','各自为战，争先出完。','♧'],['basic','04','4A4 基础版','四人 / 54 张','基础勾叉，三张起炸。','4']].map(([m,,t,n,,mark])=>`<button class="mode-card" data-action="choose-mode" data-mode="${m}"><span class="mode-symbol">${mark}</span><h2>${t}</h2><div class="mode-foot"><small>${n}</small><span>选择 →</span></div></button>`).join('')}</section><aside class="flow-aside">${single?`<div class="side-panel"><h3>AI 对手</h3><button class="text-button" data-action="settings-api">模型 API 设置 ↗</button><p>单人模式不计积分。</p></div>`:`<div class="side-panel"><h3>加入房间</h3><form id="join-form"><input id="join-code" class="join-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="— — —" aria-label="六位房间号" autocomplete="off"><button class="secondary full" type="submit">加入房间 →</button></form><div class="divider"></div><p>仅全真人对局计分。</p></div>`}</aside></div>`;
 }
 function settingsScreen(){
  const u=state.user, pref=state.preferences||{};
- const tabs=[['account','账号信息'],['api','模型 API'],['archive','积分与战绩']];
+ const tabs=[['account','账号信息'],['audio','声音'],['api','模型 API'],['archive','积分与战绩']];
  let content='';
- if(!u)content='<h2>请先登录</h2><p class="modal-desc">登录后管理账号、保存模型 API 和查看战绩。</p><button class="primary" data-action="auth">登录 / 注册 →</button>';
+ if(settingsTab==='audio')content=`<h2>声音</h2><div class="audio-controls">${[['effects','音效'],['music','音乐'],['voice','语音']].map(([key,label])=>`<label><span>${label}<output id="volume-${key}">${Math.round(gameAudio.volumes[key]*100)}%</output></span><input type="range" min="0" max="100" value="${Math.round(gameAudio.volumes[key]*100)}" data-volume="${key}" aria-label="${label}音量"></label>`).join('')}</div><div class="phase-actions"><button class="secondary" data-action="preview-effect">试听音效</button><button class="secondary" data-action="preview-voice">试听语音</button></div>`;
+ else if(!u)content='<h2>请先登录</h2><p class="modal-desc">登录后管理账号、保存模型 API 和查看战绩。</p><button class="primary" data-action="auth">登录 / 注册 →</button>';
  else if(settingsTab==='account')content=`<h2>账号信息</h2><p class="modal-desc">${esc(u.rank)} · ${u.points} 积分 · ${u.games} 场真人对局</p><form class="form" id="account-form"><label>玩家昵称<input name="name" value="${esc(u.name)}" required minlength="2" maxlength="18" autocomplete="username"></label><label>当前密码<input name="currentPassword" type="password" required autocomplete="current-password" placeholder="保存信息时验证身份"></label><label>新密码<input name="newPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="留空表示保留当前密码"></label><p class="form-note">修改密码后，其他设备的登录会话将退出。</p><p class="form-error"></p><button class="primary" type="submit">保存账号信息 →</button></form><div class="divider"></div><button class="text-button" data-action="logout">退出账号 ↗</button>`;
  else if(settingsTab==='api')content=`<h2>模型 API</h2><p class="modal-desc">${pref.configured?'已配置 · 密钥已保存到本次服务的内存中':'兼容 Chat Completions 的 HTTPS API。'}</p><form class="form" id="api-settings-form"><label>API 基础地址<input name="endpoint" type="url" required value="${esc(pref.endpoint||'')}" placeholder="https://api.example.com/v1"></label><label>模型名称<input name="model" required maxlength="100" value="${esc(pref.model||'')}" placeholder="模型 ID"></label><label>API 密钥<input name="key" type="password" ${pref.configured?'':'required'} autocomplete="off" placeholder="${pref.configured?'密钥已保存；留空表示不更换':'输入你的 API Key'}"></label><p class="form-note">模型只看到自己的手牌与公开局面。无效回答或请求失败时使用规则 AI。密钥不会返回浏览器或写入数据库，服务重启后需要重新配置。模型提供商可能按请求收费。</p><p class="form-error"></p><button class="primary" type="submit">保存模型配置 →</button></form>${pref.configured?'<div class="divider"></div><button class="text-button" data-action="clear-api">清除 API 配置 ↗</button>':''}`;
  else content=`<h2>积分与战绩</h2><p class="modal-desc">仅全真人对局计分。</p><div class="profile-stats"><div><strong>${u.points}</strong><small>${u.rank}</small></div><div><strong>${u.games}</strong><small>真人对局</small></div><div><strong>${u.games?Math.round(u.wins/u.games*100):0}%</strong><small>获胜比例</small></div></div><div class="phase-actions"><button class="secondary" data-action="profile">最近战绩 →</button><button class="secondary" data-action="leaderboard">查看积分榜 →</button></div>`;
- return `<div class="flow-heading"><button class="text-button" data-action="home">← 返回主菜单</button><h1>设置</h1></div><div class="settings-layout"><nav class="settings-tabs">${tabs.map(([k,t])=>`<button class="${settingsTab===k?'active':''}" data-action="settings-tab" data-tab="${k}">${t}<span>→</span></button>`).join('')}<div class="divider"></div><button data-action="rules">玩法手册 <span>↗</span></button></nav><section class="settings-content">${content}</section></div>`;
+ return `<div class="flow-heading"><button class="menu-back" data-action="home">← 返回主菜单</button><h1>设置</h1></div><div class="settings-layout"><nav class="settings-tabs">${tabs.map(([k,t])=>`<button class="${settingsTab===k?'active':''}" data-action="settings-tab" data-tab="${k}">${t}<span>→</span></button>`).join('')}<div class="divider"></div><button data-action="rules">玩法手册 <span>↗</span></button></nav><section class="settings-content">${content}</section></div>`;
 }
 function showSettingsModal(){showModal('settings',settingsScreen(),'SETTINGS');}
 function navigate(next){screen=next;renderedKey='';render();window.scrollTo({top:0});}
@@ -185,6 +181,8 @@ document.addEventListener('click',async e=>{
  const action=b.dataset.action;
  try{
  switch(action){
+ case 'preview-effect':gameAudio.effect('play');break;
+ case 'preview-voice':gameAudio.speak('三带一对');break;
  case 'close':closeModal();break;
  case 'auth':showAuth();break;
  case 'auth-login':showAuth('login');break;
@@ -234,6 +232,7 @@ document.addEventListener('click',async e=>{
  }
  }catch(error){toast(error.message);}
 });
+document.addEventListener('input',e=>{const key=e.target.dataset.volume;if(key){gameAudio.setVolume(key,e.target.value/100);$('#volume-'+key).textContent=e.target.value+'%';}});
 document.addEventListener('change',e=>{
  if(e.target.id==='wildcard'){wildcard=e.target.value;wildcardMap={};}
 });
