@@ -1,5 +1,6 @@
 import unittest
 from collections import Counter
+from unittest.mock import patch
 from engine import Game, MODES, RuleError, classify, deck, interpretations
 
 
@@ -15,6 +16,27 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_basic_opening_spade_three_and_random_fallback(self):
+        players=[{'name':str(i),'bot':i!=0} for i in range(4)]
+        g=Game('basic',players);self.assertEqual(g.phase,'setup')
+        g.hands=[cards([6],prefix=str(i)) for i in range(4)]
+        g.hands[2]=cards([3],'S','s')
+        self.assertEqual(g.bot_action(2),{'action':'reveal'})
+        g.action(2,'reveal')
+        for seat in range(4):g.action(seat,'confirm')
+        self.assertEqual(g.turn,2);self.assertEqual(g.phase,'play')
+        for chosen in range(4):
+            g=Game('basic',players)
+            with patch('engine.random.randrange',return_value=chosen) as choose:
+                for seat in range(4):g.action(seat,'confirm')
+                choose.assert_called_once_with(4)
+            self.assertEqual(g.turn,chosen)
+        g=Game('basic',players,previous={'first':3})
+        for seat in range(4):g.action(seat,'confirm')
+        self.assertEqual(g.turn,3)
+        g=Game('basic',players);g.hands[0]=cards([7]*6,prefix='a')
+        with self.assertRaises(RuleError):g.action(0,'promote',rank=7)
+
     def test_finished_lead_passes_to_opposite_partner(self):
         for mode in ('basic', 'standard'):
             g=table(mode);g.hands[0]=cards([6],prefix='a')

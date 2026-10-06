@@ -174,14 +174,14 @@ class Game:
         self.landlord, self.bid, self.bids = None, 0, []
         self.promotions, self.reveals, self.rps = {}, [], {}
         self.urgent_last = []
-        self.phase = 'bid' if mode == 'landlord' else ('play' if mode == 'basic' else 'setup')
+        self.phase = 'bid' if mode == 'landlord' else 'setup'
         self.winner = None
         self.history = None
         self.negotiation = None
         self.interactive = interactive
         self.priority = None
         self.display_seen = set()
-        self.announce('牌已发出。' + ('请叫分。' if mode == 'landlord' else '可升变、亮黑桃3，确认后开始。'))
+        self.announce('牌已发出。' + ('请叫分。' if mode == 'landlord' else '可亮黑桃3，确认后开始。' if mode == 'basic' else '可升变、亮黑桃3，确认后开始。'))
 
     def announce(self, text):
         self.log.append(text)
@@ -244,7 +244,7 @@ class Game:
         if action in ('promote', 'reveal', 'confirm', 'rps'):
             if self.phase not in ('setup', 'rps'): raise RuleError('开局阶段已结束。')
             if action == 'promote':
-                if self.phase != 'setup': raise RuleError('升变阶段已结束。')
+                if self.phase != 'setup' or self.mode == 'basic': raise RuleError('当前不能升变。')
                 rank = int(args.get('rank', 0))
                 if rank not in RANKS or sum(c['rank'] == rank for c in self.hands[seat]) < 6: raise RuleError('升变需要至少六张原生同数值牌。')
                 self.promotions[seat] = rank
@@ -259,7 +259,7 @@ class Game:
                     self.rps = {}
                     if self.first is None and len(self.reveals) > 1: self.phase = 'rps'; self.announce('亮牌玩家请猜拳。')
                     else:
-                        self.turn = self.first if self.first is not None else (self.reveals[0] if self.reveals else 0)
+                        self.turn = self.first if self.first is not None else (self.reveals[0] if self.reveals else random.randrange(len(self.players)))
                         self.phase = 'play'
             elif action == 'rps':
                 value = args.get('value')
@@ -589,7 +589,7 @@ class Game:
             return {'action': 'bid', 'value': value}
         if self.phase == 'setup':
             if seat in self.rps: return None
-            if seat not in self.promotions:
+            if self.mode != 'basic' and seat not in self.promotions:
                 counts = Counter(c['rank'] for c in self.hands[seat])
                 declared = max(self.promotions.values(), default=None)
                 current = declared if declared is not None else self.main
