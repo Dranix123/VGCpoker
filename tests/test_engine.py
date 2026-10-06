@@ -136,6 +136,25 @@ class Rules(unittest.TestCase):
         g.action(3,'play',['d0','d1']);g.action(0,'dot',['a0'])
         self.assertEqual(g.turn,2);self.assertIsNone(g.last);self.assertIsNone(g.seat_plays[0])
 
+    def test_bot_reserves_cards_for_urgent_gifts(self):
+        g=table();g.interactive=True
+        for p in g.players:p['bot']=True
+        g.turn=2;g.hands[2]=cards([5,9],prefix='c');g.hands[3]=cards([5,5,8],prefix='d');g.hands[0]=cards([5,18,18],prefix='a')
+        g.action(2,'play',['c0']);g.action(3,'priority-play',['d0','d1'],special='cross')
+        self.assertEqual(g.bot_action(0),{'action':'priority-decline'})
+        g=table();g.hands[0]=cards([6,7,18,18,18],prefix='a')
+        move=g.bot_action(0);self.assertEqual(move['action'],'urgent');g.action(0,**move)
+        self.assertEqual(sum(c['rank']!=18 for c in g.hands[0]),1)
+
+    def test_basic_rejects_three_with_single_but_standard_allows_it(self):
+        self.assertIsNone(classify([6,6,6,8],'basic'))
+        self.assertEqual(classify([6,6,6,8],'standard')['kind'],'三带一')
+        g=table('basic');g.hands[0]=cards([6,6,6,8,9],prefix='a')
+        with self.assertRaises(RuleError):g.action(0,'auto',['a0','a1','a2','a3'])
+        self.assertFalse(any(set(m['ids'])=={'a0','a1','a2','a3'} for m in g.candidates(0)))
+        g=table();g.hands[0]=cards([6,6,6,8,9],prefix='a')
+        g.action(0,'auto',['a0','a1','a2','a3']);self.assertEqual(g.last['kind'],'三带一')
+
     def test_cross_only_hook_and_unanswered_cross_keeps_lead(self):
         for mode in ('basic','standard','trio'):
             g=table(mode);last=len(g.players)-1

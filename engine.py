@@ -57,7 +57,7 @@ def classify(ranks, mode='landlord', main=3):
         value = strength(keys[0], main, mode)
         if n >= minimum: return result('炸弹', value, n if mode != 'landlord' else 1)
         return result({1: '单张', 2: '对子', 3: '三张'}.get(n, '无效'), value)
-    if n == 4 and vals == [1, 3]: return result('三带一', strength(next(r for r in keys if counts[r] == 3), main, mode))
+    if mode != 'basic' and n == 4 and vals == [1, 3]: return result('三带一', strength(next(r for r in keys if counts[r] == 3), main, mode))
     if n == 5 and vals == [2, 3]: return result('三带二', strength(next(r for r in keys if counts[r] == 3), main, mode))
     sequence = keys[-1] < 15 and not (mode != 'landlord' and main in keys) and keys == list(range(keys[0], keys[-1] + 1))
     if sequence and len(set(vals)) == 1:
@@ -638,6 +638,11 @@ class Game:
                 if given: output.append({'action': 'urgent', 'ids': [wild[0]['id'], given['id']], 'target': targets[0], 'wildcard': {wild[0]['id']: 18}, 'label': '黑桃A代急牌', 'power': 1, 'value': 0, 'n': 2})
         return sorted(output, key=lambda x: (x['power'], -x['n'], x['value']))
 
+    def keeps_urgent_playable(self, seat, move):
+        remaining = [c for c in self.hands[seat] if c['id'] not in move.get('ids', [])]
+        urgent = sum(c['rank'] == 18 for c in remaining)
+        return urgent <= 1 or len(remaining) - urgent >= urgent - 1
+
     def bot_action(self, seat):
         if self.negotiation:
             return {'action': 'accept'} if self.negotiation['target'] == seat else None
@@ -646,7 +651,7 @@ class Game:
             if seat not in self.priority['bots']:
                 if self.solo(): return None
             else:
-                moves = self.priority_moves(seat)
+                moves = [m for m in self.priority_moves(seat) if self.keeps_urgent_playable(seat, m)]
                 if not moves: return {'action': 'priority-decline'}
                 move = min(moves, key=lambda m: (len(self.hands[seat]) != m['n'], m['power'], -m['n'], m['value']))
                 return {'action': 'priority-play', 'special': move['action'], 'ids': move['ids'], **({'wildcard': move['wildcard']} if 'wildcard' in move else {})}
@@ -685,6 +690,7 @@ class Game:
                 {'action': 'urgent', 'ids': [urgent[0]['id'], c['id']], 'target': target, 'power': -1, 'value': 0, 'n': 2}
                 for c in hand if c['rank'] != 18
                 for target in range(len(self.players)) if target != seat and target not in self.finished]
+        moves = [m for m in moves if self.keeps_urgent_playable(seat, m)]
         if not moves: return {'action': 'pass'}
         for move in moves:
             if len(move['ids']) == len(hand): return move
