@@ -254,6 +254,10 @@ class Game:
                 return card['rank'] == 18 or card['rank'] == 14 and card['suit'] == 'S' and assigned == 18
             if any(urgent(c) for c in cards): action = 'urgent'
             else:
+                claim = self.claims.get(seat)
+                if claim and claim['actors'] and any(set(m['ids']) == set(ids or []) for m in claim['moves']):
+                    self.action(seat, 'negotiate', ids, wildcard=wildcard)
+                    return
                 try: special = self.infer_action(seat, cards, wildcard, priority_only=bool(self.priority) and self.solo())
                 except RuleError:
                     if seat not in self.claims: raise
@@ -333,10 +337,6 @@ class Game:
             special = args.get('special')
             if special not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('请选择优先出法。')
             self.validate_play(seat, self.select(seat, ids or []), special, args.get('wildcard'))
-            humans = sum(not p.get('bot') for p in self.players)
-            if humans > 1 and self.turn != seat and not self.players[self.turn].get('bot'):
-                self.negotiation = {'target': self.turn, 'seat': seat, 'action': special, 'ids': ids, 'args': {'wildcard': args.get('wildcard')}, 'snapshot': None, 'priority': True}
-                return
             self.priority = None
             self.action(seat, special, ids, wildcard=args.get('wildcard'))
             return
@@ -354,7 +354,6 @@ class Game:
             else:
                 self.announce(self.players[seat]['name'] + '拒绝截牌协商。')
                 self.claims.pop(n['seat'], None)
-                if n.get('priority'): self.action(n['seat'], 'priority-decline')
             return
         if action == 'negotiate':
             claim = self.claims.get(seat)
@@ -767,6 +766,6 @@ class Game:
                 'counts': [len(h) for h in self.hands], 'finished': self.finished, 'last': self.last, 'lastSeat': self.last_seat,
                 'seatPlays': self.seat_plays, 'playNumber': self.play_number, 'response': response,
                 'winner': self.winner, 'log': self.log, 'reveals': self.reveals, 'ready': list(self.rps), 'promotions': self.promotions,
-                'negotiation': {k: self.negotiation[k] for k in ('seat', 'target', 'priority') if k in self.negotiation} if self.negotiation else None,
+                'negotiation': {k: self.negotiation[k] for k in ('seat', 'target') if k in self.negotiation} if self.negotiation else None,
                 'priority': {'pending': self.priority['pending'], 'moves': self.priority_moves(seat) if seat in self.priority['pending'] else [], 'requiresAgreement': sum(not p.get('bot') for p in self.players) > 1 and seat != self.turn and not self.players[self.turn].get('bot')} if self.priority else None,
                 'options': self.options, 'openingFirst': self.first, 'nextMain': self.next_main, 'urgentLast': self.urgent_last}

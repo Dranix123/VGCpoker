@@ -34,11 +34,19 @@ class Rules(unittest.TestCase):
         self.assertEqual(g.turn,0);self.assertIsNone(g.last);self.assertTrue(any(c['id']=='a1' for c in g.hands[1]))
         g=table('landlord');g.action(0,'auto',['00']);self.assertEqual(g.last['special'],'play')
 
-    def test_auto_priority_keeps_multiplayer_agreement(self):
+    def test_auto_priority_before_any_followup_plays_immediately(self):
         g=table();g.interactive=True;g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
         g.action(0,'auto',['a0']);g.action(1,'auto',['b0','b1'])
-        self.assertEqual(g.negotiation['action'],'cross');self.assertEqual(len(g.hands[1]),3)
-        g.action(3,'accept');self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1)
+        self.assertIsNone(g.negotiation);self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1)
+
+    def test_existing_priority_selection_requests_undo_even_if_normal_bomb_is_legal(self):
+        g=table(options={'advancedDead':True});g.interactive=True;g.turn=3
+        g.hands[3]=cards([7,7,8],prefix='d');g.hands[0]=cards([7]*3+[6]*4+[9],prefix='a');g.hands[1]=cards([7]*4+[9],prefix='b')
+        g.action(3,'auto',['d0','d1']);g.action(0,'auto',['a0','a1','a2'])
+        self.assertEqual(g.last['special'],'dead')
+        g.action(0,'auto',['a3','a4','a5','a6']);g.action(1,'auto',['b0','b1','b2','b3'])
+        self.assertEqual(g.negotiation['target'],0);self.assertEqual(g.negotiation['action'],'dead4')
+        g.action(0,'accept');self.assertEqual(g.last['special'],'dead4');self.assertEqual(len(g.hands[0]),5)
 
     def test_solo_pass_declines_priority_through_normal_controls(self):
         g=table('basic');g.interactive=True
@@ -64,7 +72,7 @@ class Rules(unittest.TestCase):
             g.action(3,'accept');self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[3]),5)
             g=start();g.action(3,'auto',['d0','d1','d2','d3']);g.action(2,'auto',['c0','c1','c2','c3'])
             self.assertNotIn(1,g.claims)
-            with self.assertRaises(RuleError):g.action(1,'negotiate',['b0','b1'])
+            with self.assertRaises(RuleError):g.action(1,'auto',['b0','b1'])
 
     def test_multiplayer_decline_does_not_stop_normal_turn(self):
         g=table('basic');g.interactive=True;g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
@@ -114,18 +122,20 @@ class Rules(unittest.TestCase):
             g.action(1,'hook',['b0'])
             self.assertEqual(g.last['special'],'hook');self.assertEqual(g.last_seat,1)
 
-    def test_priority_pause_and_multiplayer_agreement(self):
+    def test_priority_after_one_followup_accept_or_reject(self):
         for mode in ('basic', 'standard'):
-            g=table(mode);g.interactive=True
-            g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
-            g.action(0,'play',['a0'])
-            self.assertIn(1,g.priority['pending'])
-            self.assertEqual(g.view(3)['priority']['moves'],[])
-            g.action(1,'priority-play',['b0','b1'],special='cross')
-            self.assertEqual(g.negotiation['target'],3);self.assertEqual(len(g.hands[1]),3)
-            g.action(3,'reject');self.assertIsNone(g.priority);self.assertEqual(len(g.hands[1]),3)
-            g.open_priority();g.action(1,'priority-play',['b0','b1'],special='cross');g.action(3,'accept')
-            self.assertEqual(g.last_seat,1);self.assertEqual(len(g.hands[1]),1)
+            for accept in (False, True):
+                g=table(mode);g.interactive=True
+                g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b');g.hands[3]=cards([6,10],prefix='d')
+                g.action(0,'auto',['a0'])
+                self.assertEqual(g.view(3)['priority']['moves'],[])
+                g.action(3,'auto',['d0']);g.action(1,'auto',['b0','b1'])
+                self.assertEqual(g.negotiation['target'],3);self.assertEqual(len(g.hands[1]),3)
+                g.action(3,'accept' if accept else 'reject')
+                if accept:
+                    self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1);self.assertEqual(len(g.hands[3]),2)
+                else:
+                    self.assertEqual(g.last_seat,3);self.assertEqual(len(g.hands[1]),3);self.assertNotIn(1,g.claims)
 
     def test_display_pass_replaces_cards_and_next_round_hides_finished(self):
         g=table();g.hands[0]=cards([6],prefix='a')
