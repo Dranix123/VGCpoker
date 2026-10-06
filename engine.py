@@ -212,6 +212,9 @@ class Game:
     def solo(self):
         return sum(not p.get('bot') for p in self.players) <= 1
 
+    def priority_paused(self):
+        return bool(self.priority and self.solo() and any(seat != self.turn for seat in self.priority['pending']))
+
     def snapshot(self):
         import copy
         return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last')}
@@ -258,14 +261,16 @@ class Game:
                 if claim and claim['actors'] and any(set(m['ids']) == set(ids or []) for m in claim['moves']):
                     self.action(seat, 'negotiate', ids, wildcard=wildcard)
                     return
-                try: special = self.infer_action(seat, cards, wildcard, priority_only=bool(self.priority) and self.solo())
+                try: special = self.infer_action(seat, cards, wildcard)
                 except RuleError:
                     if seat not in self.claims: raise
                     self.action(seat, 'negotiate', ids, wildcard=wildcard)
                     return
                 if self.priority and special in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and seat in self.priority['pending'] + self.priority['bots']:
                     action = 'priority-play'; args['special'] = special
-                else: action = special
+                else:
+                    if self.priority and self.solo() and seat in self.priority['pending']: self.priority = None
+                    action = special
         if action == 'pass' and (seat in self.claims or self.priority and seat in self.priority['pending']):
             last = self.last
             self.claims.pop(seat, None)
@@ -275,7 +280,7 @@ class Game:
             self.action(seat, 'pass')
             if self.last is last: self.priority = window
             return
-        if self.priority and self.solo() and action not in ('priority-play', 'priority-decline', 'accept', 'reject'): raise RuleError('请先决定是否优先管牌。')
+        if self.priority_paused() and action not in ('priority-play', 'priority-decline', 'accept', 'reject'): raise RuleError('请先决定是否优先管牌。')
         if action == 'bid':
             if self.phase != 'bid' or self.turn != seat: raise RuleError('还没轮到你叫分。')
             value = int(args.get('value', 0))
@@ -328,7 +333,7 @@ class Game:
         if action in ('priority-play', 'priority-decline'):
             window = self.priority
             group = 'bots' if self.players[seat].get('bot') else 'pending'
-            if not window or seat not in window[group] or group == 'bots' and window['pending'] and self.solo(): raise RuleError('没有轮到你响应的优先管牌机会。')
+            if not window or seat not in window[group] or group == 'bots' and self.priority_paused(): raise RuleError('没有轮到你响应的优先管牌机会。')
             if action == 'priority-decline':
                 self.claims.pop(seat, None)
                 window[group].remove(seat)
@@ -632,7 +637,7 @@ class Game:
         if self.negotiation:
             return {'action': 'accept'} if self.negotiation['target'] == seat else None
         if self.priority:
-            if self.priority['pending'] and self.solo(): return None
+            if self.priority_paused(): return None
             if seat not in self.priority['bots']:
                 if self.solo(): return None
             else:

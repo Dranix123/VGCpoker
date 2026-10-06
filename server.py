@@ -129,7 +129,7 @@ def bot_loop():
             for room in list(ROOMS.values()):
                 g = room.get('game')
                 if not g or g.phase == 'over' or room['code'] in BOT_BUSY: continue
-                if g.priority and g.priority['pending'] and g.solo(): continue
+                if g.priority_paused(): continue
                 for seat, p in enumerate(room['players']):
                     if not p.get('bot'): continue
                     move = g.bot_action(seat)
@@ -355,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
                 g = room['game']
-                moves = g.priority_moves(seat) if g.priority and g.solo() and seat in g.priority['pending'] else [] if g.priority and g.solo() else g.candidates(seat)
+                moves = [] if g.priority and g.solo() and seat not in g.priority['pending'] else g.candidates(seat)
                 return self.respond({'moves': moves[:80]})
             elif path == '/api/action':
                 if not room['game']: raise RuleError('对局尚未开始。')

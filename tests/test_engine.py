@@ -48,6 +48,28 @@ class Rules(unittest.TestCase):
         self.assertEqual(g.negotiation['target'],0);self.assertEqual(g.negotiation['action'],'dead4')
         g.action(0,'accept');self.assertEqual(g.last['special'],'dead4');self.assertEqual(len(g.hands[0]),5)
 
+    def test_solo_can_choose_normal_single_instead_of_cross(self):
+        for mode in ('basic','standard'):
+            for cross in (False,True):
+                g=table(mode);g.interactive=True;g.turn=1
+                for seat in (1,2,3):g.players[seat]['bot']=True
+                g.hands[1]=cards([5,9],prefix='b');g.hands[0]=cards([5,5,8],prefix='a')
+                g.action(1,'auto',['b0']);self.assertEqual(g.priority['pending'],[0]);self.assertFalse(g.priority_paused())
+                with self.assertRaises(RuleError):g.action(0,'auto',['a0','a2'])
+                self.assertEqual(g.priority['pending'],[0])
+                g.action(0,'auto',['a0','a1'] if cross else ['a2'])
+                self.assertEqual(g.last['special'],'cross' if cross else 'play');self.assertEqual(g.last['ranks'],[5,5] if cross else [8])
+                self.assertIsNone(g.view(0)['response'])
+
+    def test_solo_priority_does_not_pause_when_human_is_normal_next(self):
+        g=table('basic');g.interactive=True;g.turn=1
+        for seat in (1,2,3):g.players[seat]['bot']=True
+        g.hands[1]=cards([5,9],prefix='b');g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,5,10],prefix='d')
+        g.action(1,'auto',['b0']);self.assertEqual(g.turn,0);self.assertIn(0,g.priority['pending']);self.assertFalse(g.priority_paused())
+        move=g.bot_action(3);self.assertEqual(move['action'],'priority-play')
+        g.action(3,**move);self.assertEqual(g.last['special'],'cross');self.assertEqual(g.turn,2)
+        self.assertTrue(g.priority_paused());self.assertIsNone(g.bot_action(2))
+
     def test_solo_pass_declines_priority_through_normal_controls(self):
         g=table('basic');g.interactive=True
         for seat in (1,2,3):g.players[seat]['bot']=True

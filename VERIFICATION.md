@@ -31,7 +31,7 @@
 | 设置统一管理 API 与账号 | 设置 / `/api/account` / `/api/model-settings` | 密码修改撤销其他会话、昵称更新房间、密钥不返回浏览器、配置继承与清除测试 |
 | Git 管理 | `.git` | 本地提交记录与 `.gitignore` 排除数据库、密钥、浏览器验收文件 |
 
-自动测试：`python3 -m unittest discover -s tests -v`，当前 45 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
+自动测试：`python3 -m unittest discover -s tests -v`，当前 47 项通过。JavaScript 语法：`node --check public/app.js` 通过。新版浏览器控制台检查 0 错误、0 警告。
 
 设计与玩法约定详见 `README.md` 和游戏内玩法手册。服务器重启会结束未完成的内存房间；SQL 账号、积分、已完成战绩保留。Cloudflare 域名连接由用户配置，源站使用 `http://localhost:4141`。
 
@@ -58,3 +58,9 @@
 静态缓存修复：公网旧 JS 响应含 `cache-control: max-age=14400`，截图仍展示已删除的出牌方式框，导致旧前端发送显式普通出牌而撞上优先窗口。HTML 动态注入 JS/CSS 内容哈希版本，静态响应统一 `Cache-Control: no-store` 与 `CDN-Cache-Control: no-store`。HTTP 测试覆盖版本 URL、内容一致性与两种禁缓存头。
 
 基础版浏览器复现截图：3号单张4 → 1号叉44，本人14张手牌中的4自动选中，直接点击出牌后显示勾4、剩13张。确认资源 URL 使用内容哈希，截图 `output/playwright/cache-fixed-hook.jpg`。
+
+单人暂停选择修复：合法普通跟牌同样可结束优先响应等待，基础/标准单张5面前可选55叉或单张8普通跟牌；非法混合选牌不解除暂停。独立悬浮提示保持到选择完成，不再随3.5秒普通消息定时消失或被错误消息覆盖。提示按钮同时提供普通跟牌。
+
+顺次真人回合不触发全局暂停：仍正常提供特殊牌标记，其他规则 AI 可响应优先机会；真人属于跨回合优先响应时才暂停并阻止 AI 调用。专项覆盖顺次回合机器人可叉、随后跨回合勾机会正确暂停。
+
+浏览器复现单张5、本人55与8局面：悬浮提示持续显示，55自动选中；清空后改选8，直接出牌成功为单张8、提示消失。截图 `output/playwright/normal-eight-response.jpg`，控制台无错误/警告。
