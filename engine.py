@@ -58,18 +58,15 @@ def classify(ranks, mode='landlord', main=3):
         if n >= minimum: return result('炸弹', value, n if mode != 'landlord' else 1)
         return result({1: '单张', 2: '对子', 3: '三张'}.get(n, '无效'), value)
     if mode == 'landlord' and n == 4 and vals == [1, 3]: return result('三带一', strength(next(r for r in keys if counts[r] == 3), main, mode))
-    if mode == 'landlord' and n == 5 and vals == [2, 3]: return result('三带二', strength(next(r for r in keys if counts[r] == 3), main, mode))
+    if mode == 'landlord' and n == 5 and vals == [2, 3]: return result('三带一对', strength(next(r for r in keys if counts[r] == 3), main, mode))
     if mode not in ('landlord', 'basic'):
         numerals = {1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十'}
         for rank in keys:
             body = counts[rank]
             wings = [counts[r] for r in keys if r != rank]
             if body < 3 or not 1 <= len(wings) <= body - 2 or len(set(wings)) != 1 or wings[0] not in (1, 2): continue
-            if body == 3:
-                kind = '三带一' if wings[0] == 1 else '三带二'
-            else:
-                units = '两' if wings[0] == 2 and len(wings) == 2 else numerals.get(len(wings), str(len(wings)))
-                kind = numerals.get(body, str(body)) + '带' + units + ('对' if wings[0] == 2 else '')
+            units = '两' if wings[0] == 2 and len(wings) == 2 else numerals.get(len(wings), str(len(wings)))
+            kind = numerals.get(body, str(body)) + '带' + units + ('对' if wings[0] == 2 else '')
             return result(kind, strength(rank, main, mode))
     sequence = keys[-1] < 15 and not (mode != 'landlord' and main in keys) and keys == list(range(keys[0], keys[-1] + 1))
     if sequence and len(set(vals)) == 1:

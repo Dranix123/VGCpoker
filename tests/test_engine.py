@@ -183,6 +183,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(classify([6]*3+[7]*3, 'basic')['kind'], '飞机')
 
     def test_carried_shapes_and_candidates(self):
+        for ranks, label in (([6]*3+[8], '三带一'), ([6]*3+[8,8], '三带一对'), ([6]*4+[8,9], '四带二'), ([6]*4+[8,8,9,9], '四带两对')):
+            self.assertEqual(classify(ranks,'standard')['kind'],label)
         g=table();g.hands[0]=cards([6]*5+[8,8,9,9,10,10,12],prefix='a')
         moves=g.candidates(0)
         for kind in ('五带一', '五带二', '五带三', '五带一对', '五带两对', '五带三对'):
@@ -297,7 +299,7 @@ class Rules(unittest.TestCase):
 
     def test_classic_combinations(self):
         cases = [([4], '单张'), ([4,4], '对子'), ([4,4,4], '三张'), ([4,4,4,7], '三带一'),
-                 ([4,4,4,7,7], '三带二'), ([3,4,5,6,7], '顺子'), ([3,3,4,4,5,5], '连对'),
+                 ([4,4,4,7,7], '三带一对'), ([3,4,5,6,7], '顺子'), ([3,3,4,4,5,5], '连对'),
                  ([3,3,3,4,4,4], '飞机'), ([3,3,3,4,4,4,6,7], '飞机带单'),
                  ([3,3,3,4,4,4,6,6,7,7], '飞机带对'), ([4,4,4,4,5,6], '四带二'),
                  ([4,4,4,4,5,5,6,6], '四带两对'), ([4,4,4,4], '炸弹'), ([16,17], '王炸')]
@@ -318,7 +320,7 @@ class Rules(unittest.TestCase):
         wild = cards([14,14], 'S', 'w')
         self.assertTrue(any(c['kind']=='炸弹' for c in interpretations(cards([7,7])+wild,'standard',3)))
         self.assertTrue(any(c['kind']=='顺子' for c in interpretations(cards([5,6,7])+wild,'standard',3)))
-        self.assertTrue(any(c['kind']=='三带二' for c in interpretations(cards([7,7,8])+wild,'standard',3)))
+        self.assertTrue(any(c['kind']=='三带一对' for c in interpretations(cards([7,7,8])+wild,'standard',3)))
         self.assertFalse(interpretations(wild[:1], 'standard', 3, 7))
         self.assertEqual(interpretations(wild[:1], 'standard', 3)[0]['ranks'],[14])
         for mode in ('standard','trio'):
