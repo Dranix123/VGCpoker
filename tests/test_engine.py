@@ -477,6 +477,30 @@ class Rules(unittest.TestCase):
         g.action(1,'dead4',['d0','d1','d2','d3']);self.assertEqual(g.turn,1)
         g.action(1,'play',['d4']);self.assertEqual(g.last['kind'],'单张')
 
+    def test_hui_excludes_kings_two_and_main_on_both_sides(self):
+        for mode in ('standard', 'trio'):
+            for advanced in (False, True):
+                cases = [([5], [15]), ([15], [5]), ([5], [7]), ([7], [5]), ([16], [17]), ([17], [16])]
+                if advanced:
+                    cases += [([5,5], [15,15]), ([15,15], [5,5]), ([5,5], [7,7]), ([7,7], [5,5]), ([16,16], [17,17]), ([5,6,7,8,9], [3,4,5,6,7])]
+                for lead, reply in cases:
+                    with self.subTest(mode=mode, advanced=advanced, lead=lead, reply=reply):
+                        g=table(mode, {'advancedHui':advanced});g.main=7
+                        source=cards(lead, 'J' if lead[0]>=16 else 'H', 'a')
+                        response=cards(reply, 'J' if reply[0]>=16 else 'H', 'b')
+                        g.hands[0]=source+cards([10],prefix='x');g.hands[-1]=response+cards([11],prefix='y')
+                        g.action(0,'play',[c['id'] for c in source])
+                        with self.assertRaises(RuleError):g.validate_play(len(g.players)-1,response,'hui')
+                        self.assertFalse(any(m['action']=='hui' and set(m['ids'])=={c['id'] for c in response} for m in g.candidates(len(g.players)-1)))
+
+    def test_hui_cannot_use_wildcard_to_bypass_excluded_ranks(self):
+        g=table(options={'advancedHui':True});g.main=7
+        g.hands[0]=cards([5,5,9],'S','a');g.hands[3]=cards([14,14,9],'S','b')
+        g.action(0,'play',['a0','a1'])
+        for rank in (7,15):
+            with self.assertRaises(RuleError):g.validate_play(3,g.hands[3][:2],'hui',rank)
+        self.assertEqual(g.validate_play(3,g.hands[3][:2],'hui',4)[0]['kind'],'回')
+
     def test_hui_once_and_follow(self):
         g=table();g.hands[0]=cards([7,9],prefix='a');g.hands[3]=cards([5,10],prefix='b');g.hands[2]=cards([8,10],prefix='c');g.hands[1]=cards([6,10],prefix='d')
         g.action(0,'play',['a0']);g.action(3,'hui',['b0']);g.action(2,'play',['c0'])

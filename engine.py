@@ -543,10 +543,10 @@ class Game:
                 ok = self.options.get('advancedDead', False) and chain == 'dead' and len(cards) == 4 and matched
                 direct = True
             elif action == 'hui':
-                suit_ok = len({c['suit'] for c in cards + old['cards']}) == 1
-                eligible = chain not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and not self.hui_used
-                matched = next((c for c in combos if c['kind'] == old.get('baseKind', old['kind']) and c['n'] == old['n']), None)
-                ok = eligible and suit_ok and matched and (self.options.get('advancedHui', False) or old['n'] == 1 and old['ranks'][0] < 15 and old['ranks'][0] != self.main)
+                suit_ok = len({c['suit'] for c in cards + old['cards']}) == 1 and all(c['rank'] < 15 and c['rank'] != self.main for c in cards + old['cards'])
+                eligible = chain not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and not self.hui_used and all(r < 15 and r != self.main for r in old['ranks'])
+                matched = next((c for c in combos if c['kind'] == old.get('baseKind', old['kind']) and c['n'] == old['n'] and all(r < 15 and r != self.main for r in c['ranks'])), None)
+                ok = eligible and suit_ok and matched and (self.options.get('advancedHui', False) or old['n'] == 1)
             if not ok: raise RuleError('所选牌不满足' + {'cross': '叉', 'hook': '勾', 'dot': '点', 'press': '压', 'dead': '死压', 'dead4': '进阶死压', 'hui': '回'}[action] + '的条件。')
             c = matched or combos[0]
             return {**c, 'baseKind': c['kind'], 'kind': {'cross': '叉', 'hook': '勾', 'dot': '点', 'press': '压', 'dead': '死压', 'dead4': '进阶死压', 'hui': '回'}[action]}, direct
