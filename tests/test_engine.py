@@ -178,6 +178,8 @@ class Rules(unittest.TestCase):
         for seat in (1,2,3):g.players[seat]['bot']=True
         g.hands[1]=cards([5,9],prefix='b');g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,5,10],prefix='d')
         g.action(1,'auto',['b0']);self.assertEqual(g.turn,0);self.assertIn(0,g.priority['pending']);self.assertFalse(g.priority_paused())
+        self.assertIsNone(g.bot_action(3))
+        g.action(0,'pass')
         move=g.bot_action(3);self.assertEqual(move['action'],'priority-play')
         g.action(3,**move);self.assertEqual(g.last['special'],'cross');self.assertEqual(g.turn,2)
         self.assertTrue(g.priority_paused());self.assertIsNone(g.bot_action(2))
@@ -342,15 +344,45 @@ class Rules(unittest.TestCase):
             self.assertEqual(g.turn,last);self.assertIsNone(g.last)
             g.action(last,'auto',['d2']);self.assertEqual(g.last['ranks'],[9])
 
-    def test_hook_takes_unbeatable_free_lead(self):
+    def test_hook_can_be_crossed_and_hooked_repeatedly(self):
         for mode in ('basic','standard'):
             g=table(mode);g.interactive=True
-            g.hands[0]=cards([5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,4],prefix='b');g.hands[2]=cards([5,5]+[10]*4+[11],prefix='c')
+            g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,5,9],prefix='d');g.hands[1]=cards([5,4],prefix='b');g.hands[2]=cards([5,5]+[10]*4+[11],prefix='c')
             g.action(0,'auto',['a0']);g.action(3,'auto',['d0','d1']);g.action(1,'auto',['b0'])
-            self.assertEqual(g.turn,1);self.assertIsNone(g.priority);self.assertEqual(g.claims,{})
-            with self.assertRaises(RuleError):g.action(2,'cross',['c0','c1'])
+            self.assertEqual(g.turn,1);self.assertIn(2,g.priority['pending'])
             with self.assertRaises(RuleError):g.action(2,'play',['c2','c3','c4','c5'])
-            g.action(1,'auto',['b1']);self.assertEqual(g.last['ranks'],[4]);self.assertEqual(g.last['special'],'play')
+            g.action(2,'auto',['c0','c1']);self.assertEqual(g.last['special'],'cross')
+            g.action(0,'auto',['a1']);self.assertEqual(g.last['special'],'hook')
+            self.assertIsNone(g.priority)
+            g.action(0,'auto',['a2']);self.assertEqual(g.last['ranks'],[8]);self.assertEqual(g.last['special'],'play')
+
+    def test_five_carries_pair_as_two_single_cards(self):
+        for mode in ('standard','trio'):
+            combo=classify([6]*5+[8,8,9],mode)
+            self.assertEqual(combo['kind'],'五带三')
+            self.assertIsNone(classify([6]*4+[8,8,9],mode))
+            g=table(mode);g.hands[0]=cards([6]*5+[8,8,9,12],prefix='a')
+            self.assertTrue(any(m['label']=='五带三' and set(m['ids'])=={'a'+str(i) for i in range(8)} for m in g.candidates(0)))
+            g.action(0,'auto',['a'+str(i) for i in range(8)]);self.assertEqual(g.last['kind'],'五带三')
+            chosen=cards([6]*4+[8,8,9],prefix='a')+cards([14],'S','w')
+            self.assertTrue(any(c['kind']=='五带三' for c in interpretations(chosen,mode,3)))
+            g=table(mode);g.hands[0]=chosen+cards([12],prefix='z')
+            self.assertTrue(any(m['label']=='五带三' and set(m['ids'])=={c['id'] for c in chosen} for m in g.candidates(0)))
+
+    def test_ai_priority_waits_for_human_in_multiplayer(self):
+        for special,lead,human,bot in (('cross',[5],[5,5],[5,5]),('dot',[5,5],[5],[5]),('hook',[5,5],[5],[5])):
+            g=table();g.interactive=True;g.players[3]['bot']=True
+            g.hands[1]=cards(lead+[9],prefix='b');g.hands[0]=cards(human+[8],prefix='a');g.hands[3]=cards(bot+[10],prefix='d')
+            g.turn=1
+            if special=='hook':
+                g.last={'kind':'单张','n':1,'power':0,'value':5,'ranks':[5],'cards':cards([5],prefix='x'),'special':'play'};g.last_seat=2
+                g.action(1,'cross',['b0','b1'])
+            else:g.action(1,'play',['b'+str(i) for i in range(len(lead))])
+            self.assertIn(0,g.priority['pending']);self.assertIn(3,g.priority['bots'])
+            self.assertFalse(g.priority_paused());self.assertIsNone(g.bot_action(3))
+            with self.assertRaises(RuleError):g.action(3,'priority-play',['d'+str(i) for i in range(len(bot))],special=special)
+            g.action(0,'pass')
+            self.assertEqual(g.bot_action(3)['action'],'priority-play')
 
     def test_cross_then_hook_can_intercept_out_of_turn(self):
         for mode in ('basic', 'standard'):
@@ -500,6 +532,36 @@ class Rules(unittest.TestCase):
         for rank in (7,15):
             with self.assertRaises(RuleError):g.validate_play(3,g.hands[3][:2],'hui',rank)
         self.assertEqual(g.validate_play(3,g.hands[3][:2],'hui',4)[0]['kind'],'回')
+
+    def test_wildcard_declared_suit_controls_hui_and_candidates(self):
+        for mode in ('standard','trio'):
+            g=table(mode,{'advancedHui':True});seat=len(g.players)-1
+            g.hands[0]=cards([8,8,10],'H','a')
+            g.hands[seat]=cards([5,9],'H','b')+cards([14],'S','w')
+            g.action(0,'play',['a0','a1'])
+            selected=g.select(seat,['b0','w0'])
+            with self.assertRaises(RuleError):g.validate_play(seat,selected,'hui',{'w0':{'rank':5,'suit':'S'}})
+            declaration={'w0':{'rank':5,'suit':'H'}}
+            self.assertEqual(g.validate_play(seat,selected,'hui',declaration)[0]['suits'],['H','H'])
+            self.assertTrue(any(m['action']=='hui' and set(m['ids'])=={'b0','w0'} and m['wildcard']==declaration for m in g.candidates(seat)))
+            g.action(seat,'auto',['b0','w0'],wildcard=declaration)
+            self.assertEqual(g.last['special'],'hui');self.assertEqual(g.last['suits'],['H','H'])
+            self.assertEqual(g.hands[seat][0]['rank'],9)
+
+    def test_hui_uses_previous_wildcard_suit_and_validates_declarations(self):
+        g=table(options={'advancedHui':True})
+        g.hands[0]=cards([8,10],'H','a')+cards([14],'S','w');g.hands[3]=cards([5,5,9],'H','b')
+        g.action(0,'play',['a0','w0'],wildcard={'w0':{'rank':8,'suit':'H'}})
+        self.assertEqual(g.last['cards'][1]['suit'],'S')
+        g.action(3,'hui',['b0','b1']);self.assertEqual(g.last['special'],'hui')
+        selected=cards([5],'H','a')+cards([14],'S','w')
+        for value in ({'rank':5,'suit':'J'},{'rank':17,'suit':'H'},{'rank':5,'suit':'H','extra':1}):
+            self.assertFalse(interpretations(selected,'standard',3,{'w0':value}))
+        self.assertFalse(interpretations(selected,'standard',3,{'a0':{'rank':5,'suit':'H'}}))
+        g=table();g.hands[0]=cards([14],'S','w')+cards([6,9],'H','a')
+        g.action(0,'auto',['w0','a0'],target=1,wildcard={'w0':{'rank':18,'suit':'H'}})
+        self.assertTrue(any(c['id']=='a0' for c in g.hands[1]))
+        self.assertEqual(g.turn,0)
 
     def test_hui_once_and_follow(self):
         g=table();g.hands[0]=cards([7,9],prefix='a');g.hands[3]=cards([5,10],prefix='b');g.hands[2]=cards([8,10],prefix='c');g.hands[1]=cards([6,10],prefix='d')

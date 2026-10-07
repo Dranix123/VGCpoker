@@ -115,7 +115,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
 def model_move(config, g, seat):
-    if g.priority and seat in g.priority['bots']:
+    if g.priority and not g.priority['pending'] and seat in g.priority['bots']:
         moves = [{'action': 'priority-play', 'special': m['action'], 'ids': m['ids'], **({'wildcard': m['wildcard']} if 'wildcard' in m else {})} for m in g.priority_moves(seat)[:50]] + [{'action': 'priority-decline'}]
     else:
         moves = g.candidates(seat)[:50]
