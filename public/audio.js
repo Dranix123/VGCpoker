@@ -41,7 +41,7 @@ const gameAudio = (() => {
     if(!context){const AudioContext=window.AudioContext||window.webkitAudioContext;if(AudioContext)context=new AudioContext();}
     context?.resume().catch(()=>{});
     if(!unlocked&&context){const silent=context.createBufferSource();silent.buffer=context.createBuffer(1,1,context.sampleRate);silent.connect(context.destination);silent.start();}
-    unlocked=true;ready.then(startMusic);
+    unlocked=true;ready.then(()=>{startMusic();processAnnouncement(latestRoom);});
   }
   function synth(name) {
     if(!context||!volumes.effects||document.hidden)return;
@@ -59,6 +59,8 @@ const gameAudio = (() => {
       const source=context.createBufferSource(), filter=context.createBiquadFilter();source.buffer=noise;filter.type='highpass';filter.frequency.value=1600;source.connect(filter);filter.connect(gain);source.start();
     }
     setTimeout(()=>gain.disconnect(),1300);
+    const duration=Math.max(...(sequences[name]||[]).map(([,delay,length])=>delay+length),0);
+    return new Promise(resolve=>setTimeout(resolve,duration*1000+40));
   }
   function audioBuffer(path) {
     if(!buffers.has(path))buffers.set(path,fetch(path).then(r=>{if(!r.ok)throw Error();return r.arrayBuffer();}).then(b=>context.decodeAudioData(b)));
@@ -66,55 +68,78 @@ const gameAudio = (() => {
   }
   async function effect(name) {
     if(!unlocked||document.hidden||!volumes.effects)return;
-    const path=manifest.effects[name];if(!path){synth(name);return;}
+    const path=manifest.effects[name];if(!path)return synth(name);
     try {
       const buffer=await audioBuffer(path);if(!volumes.effects||document.hidden)return;
-      const source=context.createBufferSource(),gain=context.createGain();source.buffer=buffer;gain.gain.value=volumes.effects;source.connect(gain);gain.connect(context.destination);source.onended=()=>gain.disconnect();source.start();
-    } catch {synth(name);}
+      const source=context.createBufferSource(),gain=context.createGain();source.buffer=buffer;gain.gain.value=volumes.effects;source.connect(gain);gain.connect(context.destination);await new Promise(resolve=>{source.onended=()=>{gain.disconnect();resolve();};source.start();});
+    } catch {return synth(name);}
   }
-  let voiceSource, voiceGain, voiceRequest=0;
-  function stopVoice(){voiceRequest++;voiceSource?.stop();voiceSource=null;window.speechSynthesis?.cancel();}
+  let voiceSource, voiceGain, voiceRequest=0, voiceResolve;
+  function stopVoice(){voiceRequest++;voiceSource?.stop();voiceSource=null;window.speechSynthesis?.cancel();voiceResolve?.();voiceResolve=null;}
   async function speak(text, key=text) {
     if(!unlocked||document.hidden||!volumes.voice)return;
     stopVoice();const request=voiceRequest, path=manifest.voices[key];
-    if(!path||!context){speech(text);return;}
+    if(!path||!context)return speech(text);
     try {
       const buffer=await audioBuffer(path);
       if(request!==voiceRequest||!volumes.voice||document.hidden)return;
       const source=context.createBufferSource(),gain=context.createGain();source.buffer=buffer;gain.gain.value=volumes.voice;
       source.connect(gain);gain.connect(context.destination);voiceSource=source;voiceGain=gain;
-      source.onended=()=>{gain.disconnect();if(voiceSource===source)voiceSource=null;};source.start();
-    } catch {if(request===voiceRequest)speech(text);}
+      await new Promise(resolve=>{voiceResolve=resolve;source.onended=()=>{gain.disconnect();if(voiceSource===source)voiceSource=null;resolve();};source.start();});
+    } catch {if(request===voiceRequest)return speech(text);}
   }
   function speech(text) {
     if(!window.speechSynthesis||!volumes.voice||document.hidden)return;
     const line=new SpeechSynthesisUtterance(text);line.lang='zh-CN';line.volume=volumes.voice;line.rate=1.15;
     const chinese=window.speechSynthesis.getVoices().find(v=>v.lang.startsWith('zh'));if(chinese)line.voice=chinese;
-    window.speechSynthesis.speak(line);
+    return new Promise(resolve=>{voiceResolve=resolve;line.onend=resolve;line.onerror=resolve;window.speechSynthesis.speak(line);setTimeout(resolve,10000);});
   }
   function observe(room) {
+    latestRoom=room;
     const g=room?.game, match=g?`${room.code}/${room.matchId}`:'';
     if(!g){previous=null;initialCounts=[];setMusic('menu');return;}
     const fresh=previous?.match!==match;
-    if(fresh){initialCounts=(g.initialCounts||g.counts).slice();if(g.phase!=='over'){effect('deal');document.body.classList.add('dealing');setTimeout(()=>document.body.classList.remove('dealing'),1100);}}
-    if(!fresh) {
+    if(fresh){initialCounts=(g.initialCounts||g.counts).slice();if(g.phase!=='over'){if(!room.audioEvent)effect('deal');document.body.classList.add('dealing');setTimeout(()=>document.body.classList.remove('dealing'),1100);}}
+    if(!fresh&&!room.audioEvent) {
       const changed=(g.seatPlays||[]).map((play,seat)=>({play,seat})).filter(({play,seat})=>play&&JSON.stringify(play)!==previous.plays[seat]);
       changed.sort((a,b)=>a.play.order-b.play.order);
-      for(const {play} of changed){if(play.passed)speak('不出','pass');else {effect('play');const rank=({11:'杰',12:'圈',13:'凯',14:'A',15:'二',16:'小王',17:'大王'})[play.ranks[0]]||play.ranks[0];speak(play.kind==='单张'?String(rank):play.kind==='对子'?'一对'+rank:play.kind,['单张','对子'].includes(play.kind)?play.kind+'-'+play.ranks[0]:play.kind);}}
+      for(const {play} of changed){if(play.passed)speak('不出','pass');else {effect('play');const rank=({11:'勾',12:'圈',13:'凯',14:'尖',15:'二',16:'小王',17:'大王'})[play.ranks[0]]||play.ranks[0];speak(play.kind==='单张'?String(rank):play.kind==='对子'?'一对'+rank:play.kind,['单张','对子'].includes(play.kind)?play.kind+'-'+play.ranks[0]:play.kind);}}
       if(g.phase==='over'&&previous.phase!=='over')effect(g.winner.includes(room.seat)?'win':'lose');
     }
     // Once the match reaches the endgame, keep tension music until settlement.
     const tense=!fresh&&previous.tense||g.counts.some((n,s)=>initialCounts[s]>0&&n<=initialCounts[s]*.3);
     setMusic(g.phase==='over'?'menu':tense?'tension':'table',fresh);
     previous={match,phase:g.phase,tense,plays:(g.seatPlays||[]).map(p=>JSON.stringify(p))};
+    processAnnouncement(room);
   }
   function setVolume(category,value) {
     if(!(category in volumes))return;
     volumes[category]=Math.max(0,Math.min(1,Number(value)));try{localStorage.setItem('paper-poker-audio',JSON.stringify(volumes));}catch{}
     applyVolumes();if(category==='voice'){if(voiceGain)voiceGain.gain.value=volumes.voice;if(!volumes.voice)stopVoice();}
   }
+  let latestRoom, playingEvent='', completedEvent='', eventJob=false;
+  async function processAnnouncement(room){
+    const event=room?.audioEvent;
+    if(!event||!room.game||!unlocked||document.hidden||eventJob)return;
+    const key=`${room.code}/${room.matchId}/${event.id}`;
+    if(key===completedEvent)return;
+    eventJob=true;
+    try{
+      if(key!==playingEvent){
+        playingEvent=key;
+        for(const item of event.items){
+          if(document.hidden){playingEvent='';return;}
+          if(item.effect)await effect(item.effect==='result'?(room.game.winner.includes(room.seat)?'win':'lose'):item.effect);
+          if(item.voice){const rank=Number(item.voice.split('-')[1]), letter={11:'勾',12:'圈',13:'凯',14:'尖',15:'二',16:'小王',17:'大王'}[rank]||rank;const text=item.voice.startsWith('单张-')?String(letter):item.voice.startsWith('对子-')?'一对'+letter:manifest.voiceText?.[item.voice]||(item.voice==='pass'?'不出':item.voice);await speak(text,item.voice);}
+        }
+      }
+      if(document.hidden){playingEvent='';return;}
+      const response=await fetch('/api/audio-ack',{method:'POST',headers:{'Content-Type':'application/json','X-Poker-Audio':'1'},body:JSON.stringify({event:event.id})});
+      if(response.ok)completedEvent=key;
+    }catch {}finally{eventJob=false;}
+  }
   document.addEventListener('pointerdown',unlock,{passive:true});document.addEventListener('touchend',unlock,{passive:true});document.addEventListener('keydown',unlock);
   document.addEventListener('click',e=>{if(e.target.closest('button:not(:disabled)')){unlock();effect('click');}},true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const track of Object.values(tracks))track.pause();stopVoice();}else startMusic();});
-  return {volumes, setVolume, effect, speak, observe};
+  return {volumes, setVolume, effect, speak:(...args)=>eventJob?undefined:speak(...args), observe};
 })();

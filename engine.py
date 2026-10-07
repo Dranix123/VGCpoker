@@ -48,7 +48,7 @@ def classify(ranks, mode='landlord', main=3):
     if mode != 'landlord' and set(keys) <= {4, 14}:
         a, four = counts[14], counts[4]
         if a >= (1 if mode == 'basic' else 2) and four >= (2 if mode == 'basic' else 3) and four > a:
-            return result('4A4', a, 100 + n)
+            return result('4A4', a, 100 + (n if mode == 'basic' else 2 * a + 1))
     if all(r >= 16 for r in keys):
         if mode == 'landlord' and n == 2 and keys == [16, 17]: return result('王炸', 0, 2)
         if mode != 'landlord' and n >= 2:
@@ -68,7 +68,7 @@ def classify(ranks, mode='landlord', main=3):
             units = '两' if wings[0] == 2 and len(wings) == 2 else numerals.get(len(wings), str(len(wings)))
             kind = numerals.get(body, str(body)) + '带' + units + ('对' if wings[0] == 2 else '')
             return result(kind, strength(rank, main, mode))
-    sequence = keys[-1] < 15 and not (mode != 'landlord' and main in keys) and keys == list(range(keys[0], keys[-1] + 1))
+    sequence = keys[-1] < 15 and keys == list(range(keys[0], keys[-1] + 1))
     if sequence and len(set(vals)) == 1:
         v = vals[0]
         if (v == 1 and n >= (3 if mode == 'basic' else 5)) or (v == 2 and n >= (4 if mode == 'basic' else 6)) or (v == 3 and n >= 6):
@@ -78,7 +78,6 @@ def classify(ranks, mode='landlord', main=3):
         if n not in (width * 4, width * 5): continue
         for start in range(3, 15 - width + 1):
             seq = list(range(start, start + width))
-            if mode != 'landlord' and main in seq: continue
             if not all(counts[r] >= 3 for r in seq): continue
             rem = counts.copy()
             for r in seq: rem[r] -= 3
@@ -182,12 +181,14 @@ class Game:
         self.bottom = self.cards[-3:] if mode == 'landlord' else []
         dealing = self.cards[:-3] if self.bottom else self.cards
         offset = self.first or 0
-        for i, c in enumerate(dealing): self.hands[(i + offset) % len(players)].append(c)
+        direction = -1 if mode in ('basic', 'standard') and self.first is not None else 1
+        for i, c in enumerate(dealing): self.hands[(offset + direction * i) % len(players)].append(c)
         self.initial_counts = [len(hand) for hand in self.hands]
         self.turn = offset
         self.last, self.last_seat = None, None
         self.seat_plays = [None for _ in players]
         self.play_number = 0
+        self.last_voice_play = None
         self.passes, self.finished, self.log = set(), [], []
         self.hui_used = False
         self.landlord, self.bid, self.bids = None, 0, []
@@ -201,6 +202,22 @@ class Game:
         self.priority = None
         self.claims = {}
         self.display_seen = set()
+        self.round_complete = False
+        self.captured = []
+        self.tribute = None
+        captured = (previous or {}).get('captured', []) if mode in ('basic', 'standard') else []
+        if captured:
+            offers = []
+            for donor in captured:
+                strongest = max((c for c in self.hands[donor] if c['rank'] != 18), key=lambda c: strength(c['rank'], self.main, mode))
+                self.hands[donor].remove(strongest)
+                offers.append({'donor': donor, 'card': strongest, 'recipient': None, 'returned': False})
+            receivers = [self.first] if len(captured) == 1 else [s for s in range(len(players)) if s % 2 == self.first % 2]
+            self.tribute = {'offers': offers, 'receivers': receivers, 'stage': 'choose' if len(offers) == 2 else 'return'}
+            if len(offers) == 1:
+                offers[0]['recipient'] = self.first
+                self.hands[self.first].append(offers[0]['card'])
+            self.phase = 'tribute'
         self.announce('牌已发出。' + ('请叫分。' if mode == 'landlord' else '可亮黑桃3，确认后开始。' if mode == 'basic' else '可升变、亮黑桃3，确认后开始。'))
 
     def announce(self, text):
@@ -267,6 +284,26 @@ class Game:
         if self.phase == 'over': raise RuleError('本局已结束。')
         if seat in self.finished: raise RuleError('你已完成出牌。')
         if self.negotiation and action not in ('accept', 'reject'): raise RuleError('请先处理截牌协商。')
+        if self.phase == 'tribute':
+            tribute = self.tribute
+            if action == 'tribute-pick':
+                if tribute['stage'] != 'choose' or seat not in tribute['receivers'] or any(o['recipient'] == seat for o in tribute['offers']): raise RuleError('当前不能选择贡牌。')
+                offer = next((o for o in tribute['offers'] if o['donor'] == args.get('target') and o['recipient'] is None), None)
+                if not offer: raise RuleError('这张贡牌已被选走。')
+                offer['recipient'] = seat; self.hands[seat].append(offer['card'])
+                self.announce(self.players[seat]['name'] + '收取' + self.players[offer['donor']]['name'] + '的贡牌。')
+                if all(o['recipient'] is not None for o in tribute['offers']): tribute['stage'] = 'return'
+            elif action == 'tribute-return':
+                offer = next((o for o in tribute['offers'] if o['recipient'] == seat and not o['returned']), None)
+                if tribute['stage'] != 'return' or not offer: raise RuleError('当前不能还牌。')
+                chosen = self.select(seat, ids or [])
+                if len(chosen) != 1: raise RuleError('请选择一张牌返还。')
+                self.hands[seat].remove(chosen[0]); self.hands[offer['donor']].append(chosen[0]); offer['returned'] = True
+                self.announce(self.players[seat]['name'] + '向' + self.players[offer['donor']]['name'] + '还牌。')
+                if all(o['returned'] for o in tribute['offers']):
+                    self.tribute = None; self.phase = 'setup'; self.announce('进贡完成，请确认开局。')
+            else: raise RuleError('请先完成进贡和还牌。')
+            return
         if action == 'auto':
             if self.phase != 'play': raise RuleError('请先完成开局。')
             cards = self.select(seat, ids or [])
@@ -446,6 +483,7 @@ class Game:
         self.remove(seat, cards)
         self.last = {**combo, 'cards': cards, 'special': action, 'direct': direct}
         self.play_number += 1
+        self.last_voice_play = {'kind': combo['kind'], 'ranks': combo['ranks'], 'seat': seat}
         self.display_action(seat, {**self.last, 'order': self.play_number})
         self.last_seat = seat; self.passes = set()
         if action == 'hui': self.hui_used = True
@@ -557,10 +595,12 @@ class Game:
                     winning_team = order[0] % 2
                     partner = (order[0] + 2) % len(self.players)
                     caught = len(self.players) - order.index(partner) - 1
-                    self.scores[winning_team] += caught
+                    self.captured = order[order.index(partner) + 1:]
+                    self.scores[winning_team] = min(11, self.scores[winning_team] + caught)
                     self.winner = [s for s in range(len(self.players)) if s % 2 == winning_team]
                     score = self.scores[winning_team]
-                    self.next_main = RANKS[score % len(RANKS)]
+                    self.round_complete = self.main == 14
+                    self.next_main = 3 if self.round_complete else RANKS[score]
                 self.phase = 'over'
         if self.phase == 'over': self.announce('本局结束。')
 
@@ -582,7 +622,7 @@ class Game:
             for start in range(3, 15):
                 seq = []
                 for end in range(start, 15):
-                    if len(groups.get(end, [])) < multiple or self.mode != 'landlord' and end == self.main: break
+                    if len(groups.get(end, [])) < multiple: break
                     seq += groups[end][:multiple]
                     if end - start + 1 >= minimum:
                         sets.append(seq[:])
@@ -617,7 +657,7 @@ class Game:
                 for start in range(3, 15):
                     seq = []
                     for end in range(start, 15):
-                        if len(pool.get(end, [])) < multiple or self.mode != 'landlord' and end == self.main: break
+                        if len(pool.get(end, [])) < multiple: break
                         seq += pool[end][:multiple]
                         if end - start + 1 >= minimum: sets.append(seq[:])
         kings = [c for c in hand if c['rank'] in (16, 17)]
@@ -648,7 +688,6 @@ class Game:
                 for start in range(3, 15):
                     seq, needed = [], 0
                     for end in range(start, 15):
-                        if end == self.main: break
                         available = natural.get(end, [])[:multiple]
                         seq += available
                         needed += multiple - len(available)
@@ -691,6 +730,15 @@ class Game:
                 if not moves: return {'action': 'priority-decline'}
                 move = min(moves, key=lambda m: (len(self.hands[seat]) != m['n'], m['power'], -m['n'], m['value']))
                 return {'action': 'priority-play', 'special': move['action'], 'ids': move['ids'], **({'wildcard': move['wildcard']} if 'wildcard' in move else {})}
+        if self.phase == 'tribute':
+            tribute = self.tribute
+            if tribute['stage'] == 'choose' and seat in tribute['receivers'] and not any(o['recipient'] == seat for o in tribute['offers']):
+                offer = max((o for o in tribute['offers'] if o['recipient'] is None), key=lambda o: strength(o['card']['rank'], self.main, self.mode))
+                return {'action': 'tribute-pick', 'target': offer['donor']}
+            if tribute['stage'] == 'return' and any(o['recipient'] == seat and not o['returned'] for o in tribute['offers']):
+                returned = min(self.hands[seat], key=lambda c: strength(c['rank'], self.main, self.mode))
+                return {'action': 'tribute-return', 'ids': [returned['id']]}
+            return None
         if self.phase == 'bid':
             if seat != self.turn: return None
             value = 3 if sum(c['rank'] >= 15 for c in self.hands[seat]) >= 5 else (self.bid + 1 if self.bid < 2 else 0)
@@ -730,6 +778,14 @@ class Game:
         if not moves: return {'action': 'pass'}
         for move in moves:
             if len(move['ids']) == len(hand): return move
+        if self.mode == 'landlord' and not responding:
+            # If the whole hand partitions into two legal plays, preserve that exit.
+            exits = []
+            for move in moves:
+                used = set(move['ids'])
+                remaining = [c for c in hand if c['id'] not in used]
+                if interpretations(remaining, self.mode, self.main): exits.append(move)
+            if exits: return min(exits, key=lambda m: (m['power'], -m['n'], m['value']))
         safe_teammate = responding and allied(self.last_seat) and not self.last.get('direct') and not (danger <= self.last['n'] <= 2 and self.last['value'] < 15)
         minimum_bomb = 3 if self.mode == 'basic' else 4
         counts = Counter(c['rank'] for c in hand)
@@ -751,7 +807,7 @@ class Game:
                     for start in range(3, 15):
                         sequence = []
                         for rank in range(start, 15):
-                            if pool[rank] < multiple or pool[rank] >= minimum_bomb or self.mode != 'landlord' and rank == self.main: break
+                            if pool[rank] < multiple or pool[rank] >= minimum_bomb: break
                             sequence.append(rank)
                         if len(sequence) >= minimum:
                             for rank in sequence: pool[rank] -= multiple
@@ -820,4 +876,4 @@ class Game:
                 'winner': self.winner, 'log': self.log, 'reveals': self.reveals, 'ready': list(self.rps), 'promotions': self.promotions,
                 'negotiation': {k: self.negotiation[k] for k in ('seat', 'target') if k in self.negotiation} if self.negotiation else None,
                 'priority': {'pending': self.priority['pending'], 'moves': self.priority_moves(seat) if seat in self.priority['pending'] else [], 'requiresAgreement': sum(not p.get('bot') for p in self.players) > 1 and seat != self.turn and not self.players[self.turn].get('bot')} if self.priority else None,
-                'options': self.options, 'openingFirst': self.first, 'nextMain': self.next_main, 'urgentLast': self.urgent_last}
+                'roundComplete': self.round_complete, 'tribute': self.tribute, 'captured': self.captured, 'options': self.options, 'openingFirst': self.first, 'nextMain': self.next_main, 'urgentLast': self.urgent_last}

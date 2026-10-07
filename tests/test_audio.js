@@ -1,16 +1,16 @@
 'use strict';
 const test=require('node:test'), assert=require('node:assert/strict'), vm=require('node:vm'), fs=require('node:fs');
 async function fixture(music={menu:'/menu.mp3',table:'/table.mp3',tension:'/tension.mp3'}, voices={}) {
-  const tracks=[], spoken=[], tones=[], sources=[], events={}, storage={}, frames=new Map();let now=0,id=0;
+  const tracks=[], spoken=[], tones=[], sources=[], acknowledgements=[], events={}, storage={}, frames=new Map();let now=0,id=0;
   class Audio {constructor(src){this.src=src;this.paused=true;this.currentTime=0;this.duration=180;tracks.push(this);}play(){this.paused=false;return Promise.resolve();}pause(){this.paused=true;}addEventListener(){}}
-  const node=()=>({gain:{value:0,setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}},frequency:{value:0},connect(){},disconnect(){},start(){tones.push(this.frequency?.value);},stop(){this.stopped=true;}});
+  const node=()=>({gain:{value:0,setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}},frequency:{value:0},connect(){},disconnect(){},start(){tones.push(this.frequency?.value);},stop(){this.stopped=true;this.onended?.();}});
   class AudioContext {constructor(){this.currentTime=0;this.sampleRate=1000;this.destination={};}resume(){return Promise.resolve();}createGain(){return node();}createOscillator(){return node();}createBiquadFilter(){return node();}createBufferSource(){const source=node();sources.push(source);return source;}decodeAudioData(){return Promise.resolve({decoded:true});}createBuffer(){return {getChannelData:()=>new Float32Array(80)};}}
   const document={hidden:false,body:{classList:{add(){},remove(){}}},addEventListener:(key,fn)=>events[key]=fn};
-  const sandbox={Audio,document,window:{AudioContext,speechSynthesis:{cancel(){},getVoices:()=>[{lang:'zh-CN'}],speak:line=>spoken.push(line)}},SpeechSynthesisUtterance:class{constructor(text){this.text=text;}},localStorage:{getItem:key=>storage[key],setItem:(key,value)=>storage[key]=value},fetch:async()=>({ok:true,arrayBuffer:async()=>new ArrayBuffer(1),json:async()=>({music,effects:{},voices})}),performance:{now:()=>now},requestAnimationFrame:fn=>{frames.set(++id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id),setTimeout:()=>{},Map,Math,JSON};
+  const sandbox={Audio,document,window:{AudioContext,speechSynthesis:{cancel(){},getVoices:()=>[{lang:'zh-CN'}],speak:line=>{spoken.push(line);queueMicrotask(()=>line.onend?.());}}},SpeechSynthesisUtterance:class{constructor(text){this.text=text;}},localStorage:{getItem:key=>storage[key],setItem:(key,value)=>storage[key]=value},fetch:async(url,options)=>{if(url==='/api/audio-ack')acknowledgements.push(JSON.parse(options.body));return {ok:true,arrayBuffer:async()=>new ArrayBuffer(1),json:async()=>({music,effects:{},voices})};},performance:{now:()=>now},requestAnimationFrame:fn=>{frames.set(++id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id),setTimeout:fn=>{queueMicrotask(fn);},Map,Math,JSON};
   vm.createContext(sandbox);const audio=vm.runInContext(fs.readFileSync('public/audio.js','utf8')+'\ngameAudio;',sandbox);
   await new Promise(resolve=>setImmediate(resolve));events.pointerdown();await new Promise(resolve=>setImmediate(resolve));
   function advance(ms){now+=ms;const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn(now));}
-  return {audio,tracks,spoken,tones,sources,events,storage,document,advance};
+  return {audio,tracks,spoken,tones,sources,acknowledgements,events,storage,document,advance};
 }
 function room(counts=[10,10,10,10]){return {code:'123456',matchId:'one',seat:0,game:{phase:'play',counts,initialCounts:[10,10,10,10],seatPlays:[null,null,null,null],winner:[0,2]}};}
 test('music shares timeline and crossfades at 30% without restarting either track',async()=>{
@@ -43,11 +43,40 @@ test('category volumes persist, mute independently, and background playback paus
 
 test('recorded voice uses activated Web Audio without mobile system speech',async()=>{
   const f=await fixture({}, {pass:'/audio/voices/pass.mp3'});
-  await f.audio.speak('不出','pass');
+  const pending=f.audio.speak('不出','pass');await new Promise(resolve=>setImmediate(resolve));
   assert.equal(f.spoken.length,0);
   assert.equal(f.sources.at(-1).buffer.decoded,true);
-  const source=f.sources.at(-1);f.audio.setVolume('voice',0);assert.equal(source.stopped,true);
-  f.audio.setVolume('voice',.5);await f.audio.speak('不出','pass');
+  const source=f.sources.at(-1);f.audio.setVolume('voice',0);assert.equal(source.stopped,true);await pending;
+  f.audio.setVolume('voice',.5);const next=f.audio.speak('不出','pass');await new Promise(resolve=>setImmediate(resolve));
   f.document.hidden=true;f.events.visibilitychange();assert.equal(f.sources.at(-1).stopped,true);
-  assert.equal(typeof f.events.touchend,'function');
+  await next;assert.equal(typeof f.events.touchend,'function');
+});
+
+test('action acknowledgement waits for recorded voice completion and polling does not replay',async()=>{
+  const f=await fixture({}, {pass:'/audio/voices/pass.mp3'}),r=room();f.sources.length=0;
+  r.audioEvent={id:1,items:[{voice:'pass'}]};f.audio.observe(r);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.acknowledgements.length,0);
+  f.audio.observe(r);assert.equal(f.sources.length,1);
+  f.sources[0].onended();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.acknowledgements[0].event,1);
+  f.audio.observe(r);assert.equal(f.sources.length,1);
+  r.audioEvent={id:2,items:[{voice:'pass'},{voice:'pass'}]};f.audio.observe(r);
+  await new Promise(resolve=>setImmediate(resolve));f.sources[1].onended();
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.acknowledgements.length,1);
+  f.sources[2].onended();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.acknowledgements[1].event,2);
+});
+
+test('background interruption does not acknowledge unfinished narration',async()=>{
+  const f=await fixture({}, {pass:'/audio/voices/pass.mp3'}),r=room();f.sources.length=0;
+  r.audioEvent={id:1,items:[{voice:'pass'}]};f.audio.observe(r);
+  await new Promise(resolve=>setImmediate(resolve));
+  f.audio.speak('preview','pass');assert.equal(f.sources.length,1);
+  f.document.hidden=true;f.events.visibilitychange();
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.acknowledgements.length,0);
+  f.document.hidden=false;f.audio.observe(r);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.sources.length,2);
+  f.sources[1].onended();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.acknowledgements.length,1);
 });

@@ -66,11 +66,40 @@ def persist_result(room):
 def room_of(uid):
     return next((r for r in ROOMS.values() if any(p['id'] == uid for p in r['players'])), None)
 
+def audio_waiting(room):
+    event = room.get('audioEvent')
+    if not event: return False
+    active = {p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled') and time.time() - p.get('seen', 0) < 15}
+    return bool((set(event['listeners']) & active) - set(event['acknowledged']))
+
+def queue_audio(room, items):
+    room['audioSequence'] = room.get('audioSequence', 0) + 1
+    room['audioEvent'] = {'id': room['audioSequence'], 'items': items, 'listeners': [p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled')], 'acknowledged': []}
+
+def perform_game_action(room, seat, move):
+    if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
+    g = room['game']; previous = g.last_voice_play; old_phase = g.phase
+    g.action(seat, **move)
+    action = move['action']; items = []
+    labels = {'pass': 'pass', 'priority-decline': 'pass', 'bid': 'bid-' + str(move.get('value', 0)), 'reveal': 'reveal', 'confirm': 'confirm', 'rps': 'rps', 'promote': 'promote', 'urgent': 'urgent', 'auto': 'urgent', 'tribute-pick': 'tribute-pick', 'tribute-return': 'tribute-return', 'accept': 'accept', 'reject': 'reject', 'negotiate': 'negotiate'}
+    if action in ('accept', 'reject'): items.append({'voice': action})
+    if g.last_voice_play is not previous:
+        play = g.last_voice_play; kind = play['kind']
+        key = kind + '-' + str(play['ranks'][0]) if kind in ('单张', '对子') else kind
+        items += [{'effect': 'play'}, {'voice': key}]
+    elif g.negotiation and action not in ('accept', 'reject'):
+        items.append({'voice': 'negotiate'})
+    elif action not in ('accept', 'reject'):
+        items.append({'voice': labels.get(action, action)})
+        if action == 'promote': items.append({'voice': '单张-' + str(move['rank'])})
+    if g.phase == 'over' and old_phase != 'over': items.append({'effect': 'result'})
+    queue_audio(room, items)
+
 def room_view(room, uid):
     seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
     return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected')} for p in room['players']],
             'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': room['options'], 'rated': all(not p.get('bot') for p in room['players']),
-            'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
+            'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') else None, 'audioWaiting': audio_waiting(room), 'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
     parsed = urllib.parse.urlsplit(endpoint)
@@ -113,9 +142,9 @@ def tick_bot(code, seat, version, snapshot, config):
         except Exception: move = snapshot.bot_action(seat)
         with LOCK:
             room = ROOMS.get(code)
-            if room and room['revision'] == version and move:
+            if room and room['revision'] == version and move and not audio_waiting(room):
                 try:
-                    room['game'].action(seat, **move)
+                    perform_game_action(room, seat, move)
                     room['revision'] += 1
                     persist_result(room)
                 except RuleError: pass
@@ -128,7 +157,7 @@ def bot_loop():
         with LOCK:
             for room in list(ROOMS.values()):
                 g = room.get('game')
-                if not g or g.phase == 'over' or room['code'] in BOT_BUSY: continue
+                if not g or g.phase == 'over' or room['code'] in BOT_BUSY or audio_waiting(room): continue
                 if g.priority_paused(): continue
                 for seat, p in enumerate(room['players']):
                     if not p.get('bot'): continue
@@ -140,7 +169,7 @@ def bot_loop():
                         threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy()), daemon=True).start()
                     else:
                         try:
-                            g.action(seat, **move)
+                            perform_game_action(room, seat, move)
                             room['revision'] += 1
                             persist_result(room)
                         except RuleError as e: g.announce('AI出牌失败：' + str(e))
@@ -183,7 +212,7 @@ class Handler(BaseHTTPRequestHandler):
                     room = room_of(user['id'])
                     if room:
                         p = next(p for p in room['players'] if p['id'] == user['id'])
-                        p['connected'] = True; p['seen'] = time.time()
+                        p['connected'] = True; p['seen'] = time.time(); p['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
                         for p in room['players']:
                             if not p.get('bot'): p['connected'] = time.time() - p.get('seen', 0) < 15
                     return self.respond({'features': {'wildUrgent': True}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
@@ -306,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
             while code in ROOMS: code = ''.join(secrets.choice('0123456789') for _ in range(6))
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
             options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc')}
-            room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True}], 'options': options, 'game': None, 'revision': 1}
+            room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if uid in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[uid].copy()
             ROOMS[code] = room
         elif path == '/api/join':
@@ -317,12 +346,19 @@ class Handler(BaseHTTPRequestHandler):
             if room['game'] and room['game'].phase != 'over': raise RuleError('本房间正在对局。')
             if len(room['players']) >= MODES[room['mode']]: raise RuleError('房间已满。')
             room['game'] = None
-            room['players'].append({'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True})
+            room['players'].append({'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'})
             room['revision'] += 1
         else:
             if not room: raise RuleError('你还没有加入房间。')
             host = room['host'] == uid
             seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
+            room['players'][seat]['seen'] = time.time()
+            if self.headers.get('X-Poker-Audio') is not None: room['players'][seat]['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
+            if path == '/api/audio-ack':
+                event = room.get('audioEvent')
+                if event and b.get('event') == event['id'] and uid not in event['acknowledged']: event['acknowledged'].append(uid)
+                return self.respond({'ok': True})
+            if path in ('/api/start', '/api/action', '/api/resign') and audio_waiting(room): raise RuleError('等待本次行动播报完成。')
             if path == '/api/leave':
                 if room['game'] and room['game'].phase != 'over': raise RuleError('对局中请使用认输；可关闭网页并重新登录回到牌桌。')
                 room['players'].pop(seat); room['game'] = None
@@ -349,9 +385,11 @@ class Handler(BaseHTTPRequestHandler):
                 if len(room['players']) != MODES[room['mode']]: raise RuleError('请等待玩家加入或补充AI。')
                 if room['game'] and room['game'].phase != 'over': raise RuleError('游戏已经开始。')
                 prev = room.get('game')
-                previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores} if prev and prev.mode != 'landlord' else None
+                previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores, 'captured': prev.captured} if prev and prev.mode != 'landlord' else None
+                if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0, 0], 'captured': []}
                 room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
+                queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
                 g = room['game']
@@ -361,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not room['game']: raise RuleError('对局尚未开始。')
                 if b.get('revision') != room['revision']: raise RuleError('牌桌已变化，请按最新局面出牌。')
                 args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special')}
-                room['game'].action(seat, **args)
+                perform_game_action(room, seat, args)
                 persist_result(room)
             elif path == '/api/resign':
                 g = room.get('game')
@@ -369,7 +407,7 @@ class Handler(BaseHTTPRequestHandler):
                 if g.mode == 'landlord': g.winner = [s for s in range(len(g.players)) if (s == g.landlord) != (seat == g.landlord)]
                 elif g.mode == 'trio': g.winner = [s for s in range(len(g.players)) if s != seat]
                 else: g.winner = [s for s in range(len(g.players)) if s % 2 != seat % 2]
-                g.phase = 'over'; g.announce(user['username'] + '认输。'); persist_result(room)
+                g.phase = 'over'; g.announce(user['username'] + '认输。'); queue_audio(room, [{'voice': 'resign'}, {'effect': 'result'}]); persist_result(room)
             else: return self.respond({'error': '接口不存在。'}, 404)
             room['revision'] += 1
         return self.respond({'ok': True, 'room': room_view(room, uid) if any(p['id'] == uid for p in room['players']) else None})

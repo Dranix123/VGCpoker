@@ -383,3 +383,11 @@ footer{gap:24px}
 @media(prefers-reduced-motion:reduce){.dealing .hand .card,.dealing .seat{animation:none}}
 
 .home-screen footer [data-action="settings"]{display:none}
+
+.hand,.hand.dense{display:flex;flex-wrap:wrap;gap:22px 0;padding:24px 38px 12px 0;align-items:flex-end;overflow:visible}
+.hand .card,.hand.dense .card{width:64px;height:90px;flex:0 0 64px;margin:0 -38px 0 0}
+.hand .card+.card,.hand.dense .card+.card{margin-left:0}
+.hand .card:last-child{margin-right:0}
+.tribute-offers{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:18px 0}
+.tribute-offers button{font-size:12px;padding:10px}
+@media(max-width:720px){.hand,.hand.dense{padding-right:32px;gap:20px 0}.hand .card,.hand.dense .card{width:54px;height:78px;flex-basis:54px;margin-right:-32px}.hand .card-rank{font-size:16px;left:3px}.hand .card-suit{font-size:13px;left:3px}.hand .card:last-child{margin-right:0}.tribute-offers{margin:10px 0;gap:6px}.tribute-offers button{font-size:10px;padding:7px}}

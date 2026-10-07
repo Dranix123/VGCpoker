@@ -17,6 +17,94 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_next_deal_extra_cards_go_to_first_finisher_and_next_seat(self):
+        for mode in ('basic', 'standard'):
+            for first in range(4):
+                g = Game(mode, [{'name': str(i)} for i in range(4)], previous={'first': first})
+                minimum = len(g.cards) // 4
+                expected = [minimum] * 4
+                expected[first] += 1
+                expected[(first - 1) % 4] += 1
+                self.assertEqual(g.initial_counts, expected)
+                self.assertEqual(sum(g.initial_counts), len(g.cards))
+        self.assertEqual(Game('basic', [{'name': str(i)} for i in range(4)]).initial_counts, [14,14,13,13])
+
+    def test_4a4a4_level_counts_only_complete_core(self):
+        for mode in ('standard','trio'):
+            core=classify([4]*3+[14]*2,mode)
+            for extra in (1,2,5):
+                combo=classify([4]*(3+extra)+[14]*2,mode)
+                self.assertEqual((combo['power'],combo['value']),(core['power'],core['value']))
+            self.assertGreater(classify([4]*4+[14]*3,mode)['power'],core['power'])
+            self.assertIsNone(classify([4]*2+[14]*2,mode))
+            g=table(mode);g.hands[0]=cards([4]*3+[14]*2+[8],prefix='a');g.hands[-1]=cards([4]*5+[14]*2+[9],prefix='d')
+            g.action(0,'auto',['a'+str(i) for i in range(5)])
+            with self.assertRaises(RuleError):g.action(len(g.players)-1,'auto',['d'+str(i) for i in range(7)])
+
+    def test_main_rank_participates_in_sequences(self):
+        for mode in ('basic','standard','trio'):
+            for ranks,kind in (([3,4,5,6,7],'顺子'),([3,3,4,4,5,5],'连对'),([3]*3+[4]*3,'飞机')):
+                self.assertEqual(classify(ranks,mode,3)['kind'],kind)
+                g=table(mode);g.hands[0]=cards(ranks+[12],prefix='a')
+                ids=[c['id'] for c in g.hands[0][:-1]]
+                self.assertTrue(any(set(m['ids'])==set(ids) for m in g.candidates(0)))
+                g.action(0,'auto',ids);self.assertEqual(g.last['kind'],kind)
+
+    def test_tribute_single_and_double_before_setup(self):
+        for mode in ('basic','standard'):
+            for caught in ([1],[1,3]):
+                g=Game(mode,[{'name':str(i)} for i in range(4)],previous={'first':0,'main':5,'scores':[2,0],'captured':caught})
+                self.assertEqual(g.phase,'tribute')
+                with self.assertRaises(RuleError):g.action(0,'confirm')
+                for offer in g.tribute['offers']:
+                    donor=offer['donor'];maximum=max([offer['card']]+[c for c in g.hands[donor] if c['rank']!=18],key=lambda c: (15.5 if c['rank']==5 else c['rank']))
+                    self.assertEqual(offer['card']['rank'],maximum['rank'])
+                    self.assertNotEqual(offer['card']['rank'],18)
+                if len(caught)==2:
+                    g.action(2,'tribute-pick',target=3)
+                    with self.assertRaises(RuleError):g.action(0,'tribute-pick',target=3)
+                    g.action(0,'tribute-pick',target=1)
+                offers=list(g.tribute['offers'])
+                for offer in offers:
+                    recipient=offer['recipient'];donor=offer['donor'];card=g.hands[recipient][0]
+                    with self.assertRaises(RuleError):g.action(donor,'tribute-return',[card['id']])
+                    g.action(recipient,'tribute-return',[card['id']])
+                    self.assertIn(card,g.hands[donor])
+                self.assertEqual(g.phase,'setup');self.assertIsNone(g.tribute)
+                self.assertEqual([len(h) for h in g.hands],g.initial_counts)
+
+    def test_capture_persists_and_ai_completes_tribute(self):
+        for order,captured in (((0,2,1,3),[1,3]),((0,3,2,1),[1]),((0,1,3,2),[])):
+            g=table()
+            for seat in order:
+                g.hands[seat]=[];g.finish(seat)
+                if g.phase=='over':break
+            self.assertEqual(g.captured,captured)
+            following=Game('standard',[{'name':str(i),'bot':True} for i in range(4)],previous={'first':0,'main':g.next_main,'scores':g.scores,'captured':captured})
+            for _ in range(5):
+                if following.phase!='tribute':break
+                for seat in range(4):
+                    move=following.bot_action(seat)
+                    if move:following.action(seat,**move);break
+            self.assertEqual(following.phase,'setup')
+
+    def test_grade_caps_at_ace_then_completes_round(self):
+        g=table();g.main=13;g.scores=[10,0]
+        g.hands[0]=[];g.finish(0);g.hands[2]=[];g.finish(2)
+        self.assertEqual(g.scores,[11,0]);self.assertEqual(g.next_main,14);self.assertFalse(g.round_complete)
+        following=Game('standard',g.players,previous={'first':0,'main':14,'scores':g.scores})
+        following.phase='play';following.hands[0]=[];following.finish(0);following.hands[2]=[];following.finish(2)
+        self.assertTrue(following.round_complete);self.assertEqual(following.next_main,3)
+
+    def test_landlord_keeps_two_play_exit_after_bomb(self):
+        g=table('landlord');g.landlord=0;g.hands[0]=cards([12]*4+[3,4,5,6,7,8,8,9,9,10,10],prefix='a')
+        g.action(0,'play',['a0','a1','a2','a3'])
+        g.action(2,'pass');g.action(1,'pass')
+        first=g.bot_action(0);self.assertIn(first['label'],('顺子','连对'))
+        g.action(0,**first);g.action(2,'pass');g.action(1,'pass')
+        second=g.bot_action(0);g.action(0,**second)
+        self.assertEqual(g.phase,'over');self.assertEqual(g.winner,[0])
+
     def test_basic_short_sequences_and_hints(self):
         for ranks,kind in (([6,7,8],'顺子'),([6,6,7,7],'连对')):
             self.assertEqual(classify(ranks,'basic')['kind'],kind)
@@ -27,7 +115,7 @@ class Rules(unittest.TestCase):
             g.action(0,'auto',ids);self.assertEqual(g.last['kind'],kind)
             g=table('basic');g.hands[0]=cards(ranks,prefix='a')
             self.assertEqual(set(g.bot_action(0)['ids']),set(ids))
-        for ranks in ([6,7],[6,6],[14,15,16],[3,4,5],[6,6,8,8]):
+        for ranks in ([6,7],[6,6],[14,15,16],[6,6,8,8]):
             combo=classify(ranks,'basic')
             self.assertTrue(combo is None or combo['kind'] not in ('顺子','连对'))
 
@@ -329,13 +417,13 @@ class Rules(unittest.TestCase):
         for ranks, kind in cases:
             with self.subTest(ranks=ranks): self.assertEqual(classify(ranks)['kind'], kind)
         self.assertIsNone(classify([11,12,13,14,15]))
-        self.assertIsNone(classify([3,4,5,6,7], 'standard', 3))
+        self.assertEqual(classify([3,4,5,6,7], 'standard', 3)['kind'],'顺子')
         self.assertGreater(classify([3], 'standard', 3)['value'], classify([15], 'standard', 3)['value'])
 
     def test_bomb_order(self):
         groups = [[5]*4, [16,17], [5]*5, [5]*6, [16,17,17], [5]*7, [5]*8, [16,16,17,17], [5]*9, [5]*10, [4,4,4,14,14], [4]*4+[14]*2]
         powers = [classify(r, 'standard')['power'] for r in groups]
-        self.assertEqual(powers, sorted(set(powers)))
+        self.assertEqual(powers, sorted(powers));self.assertEqual(powers[-1],powers[-2])
         self.assertEqual(classify([5]*3, 'basic')['kind'], '炸弹')
         self.assertEqual(classify([4,14,4], 'basic')['kind'], '4A4')
 
@@ -421,7 +509,7 @@ class Rules(unittest.TestCase):
         g.action(0,'rps',value='scissors');g.action(1,'rps',value='paper')
         self.assertEqual(g.turn,0)
         low=classify([4]*5+[14]*2,'standard');high=classify([4]*4+[14]*3,'standard')
-        self.assertEqual(low['power'],high['power']);self.assertLess(low['value'],high['value'])
+        self.assertLess(low['power'],high['power']);self.assertLess(low['value'],high['value'])
 
     def test_urgent_and_announcements(self):
         g=table();g.hands[0]=cards([18,6,9],prefix='a')
@@ -499,8 +587,8 @@ class Rules(unittest.TestCase):
                 self.assertEqual(following.scores,expected)
 
     def test_team_main_tracks_each_team_across_rounds(self):
-        g=table();g.scores=[12,5]
-        for order, expected, next_main in (((0,2,1,3),[14,5],4),((1,0,3,2),[14,6],9),((0,1,3,2),[14,6],4)):
+        g=table();g.scores=[8,5]
+        for order, expected, next_main in (((0,2,1,3),[10,5],13),((1,0,3,2),[10,6],9),((0,1,3,2),[10,6],13)):
             g=Game('standard',g.players,previous={'main':g.next_main,'scores':g.scores})
             g.phase='play'
             for seat in order:

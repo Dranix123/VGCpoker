@@ -63,10 +63,51 @@ class ServerIntegration(unittest.TestCase):
         with urllib.request.urlopen(self.url+'/audio/manifest.json') as response:
             voices=json.load(response)['voices']
         for key in ('pass','单张-8','对子-8','三带一对','连对'):
-            self.assertTrue((server.ROOT/'public'/voices[key].lstrip('/')).is_file())
+            self.assertTrue((server.ROOT/'public'/voices[key].split('?',1)[0].lstrip('/')).is_file())
         with urllib.request.urlopen(self.url+voices['pass']) as response:
             self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
             self.assertGreater(len(response.read()),500)
+
+    def test_audio_gate_requires_current_completion_acknowledgement(self):
+        client=self.clients[0];headers={'X-Poker-Audio':'1'}
+        self.request(client,'create',{'mode':'basic'},headers)
+        for _ in range(3):self.request(client,'bot',{})
+        status,data=self.request(client,'start',{},headers);self.assertEqual(status,200)
+        room=data['room'];self.assertTrue(room['audioWaiting'])
+        self.assertEqual(self.request(client,'action',{'action':'confirm','revision':room['revision']},headers)[0],400)
+        self.request(client,'audio-ack',{'event':-1},headers)
+        self.assertTrue(server.audio_waiting(server.ROOMS[room['code']]))
+        self.request(client,'audio-ack',{'event':room['audioEvent']['id']},headers)
+        self.assertFalse(server.audio_waiting(server.ROOMS[room['code']]))
+        status,data=self.request(client,'action',{'action':'confirm','revision':room['revision']},headers)
+        self.assertEqual(status,200);self.assertEqual(data['room']['audioEvent']['items'],[{'voice':'confirm'}])
+        server.ROOMS[room['code']]['players'][0]['seen']=0
+        self.assertFalse(server.audio_waiting(server.ROOMS[room['code']]))
+
+    def test_audio_gate_waits_for_all_foreground_players(self):
+        headers={'X-Poker-Audio':'1'}
+        _,data=self.request(self.clients[0],'create',{'mode':'basic'},headers)
+        code=data['room']['code']
+        for client in self.clients[1:]:self.request(client,'join',{'code':code},headers)
+        _,data=self.request(self.clients[0],'start',{},headers)
+        room=server.ROOMS[code];event=data['room']['audioEvent']['id']
+        for client in self.clients[:3]:
+            self.request(client,'audio-ack',{'event':event},headers)
+            self.assertTrue(server.audio_waiting(room))
+        self.request(self.clients[3],'audio-ack',{'event':event},headers)
+        self.assertFalse(server.audio_waiting(room))
+        server.queue_audio(room,[{'voice':'pass'}])
+        for client in self.clients[:3]:self.request(client,'audio-ack',{'event':room['audioEvent']['id']},headers)
+        self.request(self.clients[3],'state',headers={'X-Poker-Audio':'0'})
+        self.assertFalse(server.audio_waiting(room))
+
+    def test_ace_round_start_resets_grades_and_reveals(self):
+        client=self.clients[0];self.request(client,'create',{'mode':'standard'})
+        for _ in range(3):self.request(client,'bot',{})
+        self.request(client,'start',{})
+        room=server.room_of(self.users[0]['id']);g=room['game'];g.phase='over';g.round_complete=True;g.finished=[0,2,1,3];g.scores=[11,5];g.captured=[1,3]
+        self.assertEqual(self.request(client,'start',{})[0],200)
+        self.assertEqual(room['game'].main,3);self.assertEqual(room['game'].scores,[0,0]);self.assertIsNone(room['game'].first);self.assertIsNone(room['game'].tribute)
 
     def test_account_settings_and_session_revocation(self):
         client=self.clients[3]
