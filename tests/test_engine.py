@@ -369,6 +369,30 @@ class Rules(unittest.TestCase):
             g=table(mode);g.hands[0]=chosen+cards([12],prefix='z')
             self.assertTrue(any(m['label']=='五带三' and set(m['ids'])=={c['id'] for c in chosen} for m in g.candidates(0)))
 
+    def test_large_carried_singles_allow_repeated_attachment_ranks(self):
+        for mode in ('standard','trio'):
+            for body, wings, label in ((6,[8,8,9,10],'六带四'),(6,[8,8,8,9],'六带四'),(7,[8,8,9,9,10],'七带五'),(8,[8,8,8,9,9,10],'八带六')):
+                chosen=cards([6]*body+wings,prefix='a')
+                self.assertEqual(classify([6]*body+wings,mode)['kind'],label)
+                g=table(mode);g.hands[0]=chosen+cards([12],prefix='z')
+                self.assertTrue(any(m['label']==label and set(m['ids'])=={c['id'] for c in chosen} for m in g.candidates(0)))
+                g.action(0,'auto',[c['id'] for c in chosen]);self.assertEqual(g.last['kind'],label)
+                with self.assertRaises(RuleError):g.validate_play(len(g.players)-1,cards([7]*body+wings+[13]),'play')
+            chosen=cards([6]*5+[8,8,8,9],prefix='a')+cards([14],'S','w')
+            self.assertTrue(any(c['kind']=='六带四' for c in interpretations(chosen,mode,3)))
+
+    def test_pairs_can_follow_carried_singles_when_counted_as_single_cards(self):
+        for mode in ('standard','trio'):
+            g=table(mode);seat=len(g.players)-1
+            g.hands[0]=cards([6]*6+[8,9,10,11,12],prefix='a')
+            g.hands[seat]=cards([7]*6+[12,12,13,13,10],prefix='b')
+            g.action(0,'auto',['a'+str(i) for i in range(10)])
+            self.assertEqual(g.last['kind'],'六带四')
+            self.assertTrue(any(m['label']=='六带四' and set(m['ids'])=={'b'+str(i) for i in range(10)} for m in g.candidates(seat)))
+            g.action(seat,'auto',['b'+str(i) for i in range(10)])
+            self.assertEqual(g.last['kind'],'六带四')
+            self.assertEqual(classify([7]*6+[12,12,13,13],mode)['kind'],'六带两对')
+
     def test_ai_priority_waits_for_human_in_multiplayer(self):
         for special,lead,human,bot in (('cross',[5],[5,5],[5,5]),('dot',[5,5],[5],[5]),('hook',[5,5],[5],[5])):
             g=table();g.interactive=True;g.players[3]['bot']=True

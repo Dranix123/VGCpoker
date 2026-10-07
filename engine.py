@@ -36,7 +36,7 @@ def strength(rank, main=3, mode='standard'):
     if mode != 'landlord' and rank == main: return 15.5
     return rank
 
-def classify(ranks, mode='landlord', main=3):
+def classify(ranks, mode='landlord', main=3, single_wings=False):
     n = len(ranks)
     if not n or 18 in ranks: return None
     counts = Counter(ranks)
@@ -64,8 +64,8 @@ def classify(ranks, mode='landlord', main=3):
         for rank in keys:
             body = counts[rank]
             wings = [counts[r] for r in keys if r != rank]
-            if body < 3 or not wings or any(v not in (1, 2) for v in wings): continue
-            paired = all(v == 2 for v in wings)
+            if body < 3 or not wings: continue
+            paired = not single_wings and all(v == 2 for v in wings)
             count = len(wings) if paired else sum(wings)
             if not 1 <= count <= body - 2: continue
             units = '两' if paired and count == 2 else numerals.get(count, str(count))
@@ -98,6 +98,13 @@ def classify(ranks, mode='landlord', main=3):
         if n == 8 and rem == [2, 2]: return result('四带两对', strength(r, main, mode))
     return None
 
+def classifications(ranks, mode, main):
+    result = []
+    for singles in (False, True) if mode in ('standard', 'trio') else (False,):
+        combo = classify(ranks, mode, main, single_wings=singles)
+        if combo and combo not in result: result.append(combo)
+    return result
+
 def wildcard_rank(value):
     return value.get('rank') if isinstance(value, dict) else value
 
@@ -117,13 +124,11 @@ def interpretations(cards, mode, main, wildcard=None):
         else:
             if wildcard not in RANKS: return []
             for i in wild: ranks[i] = wildcard
-        combo = classify(ranks, mode, main)
-        if combo and isinstance(wildcard, dict):
-            combo['suits'] = [wildcard.get(c['id'], {}).get('suit', c['suit']) if isinstance(wildcard.get(c['id']), dict) else c['suit'] for c in cards]
-        return [combo] if combo else []
-    result = []
-    natural = classify(ranks, mode, main)
-    if natural: result.append(natural)
+        result = classifications(ranks, mode, main)
+        if isinstance(wildcard, dict):
+            for combo in result: combo['suits'] = [wildcard.get(c['id'], {}).get('suit', c['suit']) if isinstance(wildcard.get(c['id']), dict) else c['suit'] for c in cards]
+        return result
+    result = classifications(ranks, mode, main)
     if mode in ('landlord', 'basic') or len(cards) < 2 or not wild: return result
     fixed = Counter(ranks[i] for i in range(len(ranks)) if i not in wild)
     # Match target rank multisets to natural cards, then fill only missing ranks.
@@ -161,7 +166,7 @@ def interpretations(cards, mode, main, wildcard=None):
             extras = [r for r in RANKS if r not in body and r not in wing_fixed]
             target = body + Counter({r: 2 for r in wing_fixed}) + Counter({r: 2 for r in extras[:wings - len(wing_fixed)]})
         elif unique:
-            if sum(wing_fixed.values()) > wings or any(v > 2 for v in wing_fixed.values()): continue
+            if sum(wing_fixed.values()) > wings: continue
             extras = [r for r in RANKS if r not in body and r not in wing_fixed]
             target = body + wing_fixed + Counter(extras[:wings - sum(wing_fixed.values())])
         else:
@@ -175,8 +180,8 @@ def interpretations(cards, mode, main, wildcard=None):
         if len(missing) != len(wild) or any(r >= 16 for r in missing): continue
         rr = ranks[:]
         for i, r in zip(wild, missing): rr[i] = r
-        combo = classify(rr, mode, main)
-        if combo and combo not in result: result.append(combo)
+        for combo in classifications(rr, mode, main):
+            if combo not in result: result.append(combo)
     return result
 
 class RuleError(ValueError): pass
@@ -658,7 +663,7 @@ class Game:
                 if len(pairs) >= 2: sets.append(group[:4] + [c for g in pairs[:2] for c in g])
             else:
                 for size in range(4, len(group) + 1):
-                    for units in ([[g[0]] for g in others], [[c] for g in others for c in g[:2]], pairs):
+                    for units in ([[g[0]] for g in others], [[c] for g in others for c in g], pairs):
                         for count in range(1, min(size - 2, len(units)) + 1):
                             sets.append(group[:size] + [c for g in units[:count] for c in g])
         suit_groups = {}
@@ -695,7 +700,7 @@ class Game:
                     needed = max(1, size - len(group))
                     if needed > len(wild) or size - needed > len(group): continue
                     body = group[:size - needed] + wild[:needed]
-                    for units in ([[g[0]] for g in others], [[c] for g in others for c in g[:2]], [g[:2] for g in others if len(g) >= 2]):
+                    for units in ([[g[0]] for g in others], [[c] for g in others for c in g], [g[:2] for g in others if len(g) >= 2]):
                         for count in range(1, min(size - 2, len(units)) + 1):
                             sets.append(body + [c for g in units[:count] for c in g])
             for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
