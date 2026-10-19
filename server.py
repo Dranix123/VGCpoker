@@ -21,6 +21,7 @@ from admin import start_admin
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
 ROOMS, MODEL_CONFIG, ATTEMPTS = {}, {}, {}
+WATCHING = {}
 RESERVED_ROOM = '001255'
 LOCK = threading.RLock()
 BOT_BUSY = set()
@@ -99,6 +100,7 @@ def perform_game_action(room, seat, move):
     if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
     g = room['game']; previous = g.last_voice_play; old_phase = g.phase
     g.action(seat, **move)
+    room.pop('idleWait', None)
     action = move['action']; items = []
     labels = {'pass': 'pass', 'priority-decline': 'pass', 'bid': 'bid-' + str(move.get('value', 0)), 'reveal': 'reveal', 'confirm': 'confirm', 'rps': 'rps', 'promote': 'promote', 'urgent': 'urgent', 'auto': 'urgent', 'tribute-pick': 'tribute-pick', 'tribute-return': 'tribute-return', 'accept': 'accept', 'reject': 'reject', 'negotiate': 'negotiate'}
     if action in ('accept', 'reject'): items.append({'voice': action})
@@ -117,11 +119,24 @@ def perform_game_action(room, seat, move):
 
 CHAT_PHRASES = ('悲', '你能秒我？', '给阿姨倒一杯卡布奇诺')
 
+def matchable(room, mode=None):
+    return (room['code'] != RESERVED_ROOM and not room.get('single') and not room['options'].get('_alternate')
+            and room['options'].get('allowMatching') is True and (mode is None or room['mode'] == mode)
+            and (not room.get('game') or room['game'].phase == 'over') and len(room['players']) < MODES[room['mode']]
+            and any(p['id'] == room['host'] and not p.get('bot') and p.get('connected') and time.time() - p.get('seen', 0) < 15 for p in room['players']))
+
+def match_counts():
+    return {mode: sum(matchable(r, mode) for r in ROOMS.values()) for mode in MODES}
+
 def room_view(room, uid):
-    seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
+    seat = next((i for i, p in enumerate(room['players']) if p['id'] == uid), None)
+    spectator = seat is None
+    game = room['game'].view(seat) if room.get('game') else None
+    if spectator and game: game['response'] = None; game['priority'] = None
+
     return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay')} for p in room['players']],
-            'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
-            'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') else None, 'audioWaiting': audio_waiting(room), 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
+            'spectator': spectator, 'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
+            'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') and not spectator else None, 'audioWaiting': audio_waiting(room) if not spectator else False, 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': game, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
     parsed = urllib.parse.urlsplit(endpoint)
@@ -176,13 +191,40 @@ def tick_bot(code, seat, version, snapshot, config, match_id=None):
     finally:
         with LOCK: BOT_BUSY.discard(code)
 
+def update_autoplay(room):
+    g = room.get('game')
+    if not g or g.phase == 'over':
+        room.pop('idleWait', None)
+        return
+    now = time.time()
+    def take_over(seat):
+        player = room['players'][seat]
+        if player.get('bot') or player.get('autoplay') or seat in g.finished: return
+        player['autoplay'] = True
+        room['revision'] += 1
+        g.announce(player['name'] + '已自动托管。')
+    for seat, player in enumerate(room['players']):
+        if player['id'] == room['host'] and now - player.get('seen', 0) >= 15:
+            player['connected'] = False
+            take_over(seat)
+    if audio_waiting(room) or g.phase != 'play':
+        room.pop('idleWait', None)
+        return
+    waiting = [g.negotiation['target']] if g.negotiation else g.priority['pending'] if g.priority_paused() else [g.turn]
+    old = room.get('idleWait', {})
+    room['idleWait'] = {seat: old.get(seat, now) for seat in waiting if seat not in g.finished and not (room['players'][seat].get('bot') or room['players'][seat].get('autoplay'))}
+    for seat, since in room['idleWait'].items():
+        if now - since >= 60: take_over(seat)
+
 def bot_loop():
     while True:
         time.sleep(.9)
         with LOCK:
             for room in list(ROOMS.values()):
                 g = room.get('game')
-                if not g or g.phase == 'over' or room['code'] in BOT_BUSY or audio_waiting(room): continue
+                if not g or g.phase == 'over': continue
+                update_autoplay(room)
+                if room['code'] in BOT_BUSY or audio_waiting(room): continue
                 if g.priority_paused(): continue
                 if g.forced_pass():
                     perform_game_action(room, g.turn, {'action': 'pass'})
@@ -237,7 +279,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = self.session()
                 if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
                 if path == '/api/state':
-                    if not user: return self.respond({'user': None, 'room': None, 'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}})
+                    if not user: return self.respond({'user': None, 'room': None, 'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}})
                     if self.headers.get('X-Poker-Audio') != '0': STATS.activity(user['id'])
                     room = room_of(user['id'])
                     if room:
@@ -245,7 +287,11 @@ class Handler(BaseHTTPRequestHandler):
                         p['connected'] = True; p['seen'] = time.time(); p['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
                         for p in room['players']:
                             if not p.get('bot'): p['connected'] = time.time() - p.get('seen', 0) < 15
-                    return self.respond({'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    if not room:
+                        room = ROOMS.get(WATCHING.get(user['id']))
+                        if room and not room['options'].get('allowSpectators'): room = None
+                        if not room: WATCHING.pop(user['id'], None)
+                    return self.respond({'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
@@ -319,6 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         uid = user['id']
         if self.headers.get('X-Poker-Audio') != '0': STATS.activity(uid)
         if path == '/api/logout':
+            WATCHING.pop(uid, None)
             room = room_of(uid)
             if room and room['options'].get('_alternate'):
                 leave_room(room, uid); room['revision'] += 1
@@ -362,6 +409,22 @@ class Handler(BaseHTTPRequestHandler):
                     if p['id'] == uid: p['name'] = name; r['revision'] += 1
             return self.respond({'ok': True})
         room = room_of(uid)
+        if path == '/api/watch':
+            if room: raise RuleError('请先离开当前房间。')
+            target = ROOMS.get(str(b.get('code', '')).strip())
+            if not target or target.get('single') or not target['options'].get('allowSpectators'): raise RuleError('房间不存在或不允许观战。')
+            WATCHING[uid] = target['code']
+            return self.respond({'ok': True, 'room': room_view(target, uid)})
+        if path == '/api/leave' and not room and uid in WATCHING:
+            WATCHING.pop(uid, None)
+            return self.respond({'ok': True, 'room': None})
+        if path == '/api/match':
+            if room: raise RuleError('请先离开当前房间。')
+            mode = b.get('mode')
+            if mode not in MODES: raise RuleError('未知玩法。')
+            target = next((r for r in ROOMS.values() if matchable(r, mode)), None)
+            if not target: raise RuleError('暂无可匹配房间，可先创建房间。')
+            b = {'code': target['code']}; path = '/api/join'
         reserved = path == '/api/join' and str(b.get('code', '')).strip() == RESERVED_ROOM
         single = path == '/api/join' and b.get('single') is True
         if single and not reserved: raise RuleError('房间不存在，请检查六位房间号。')
@@ -375,14 +438,18 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
             options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc', 'tribute')}
             for key in ('advancedHui', 'advancedDead'): options[key] = mode in ('standard', 'trio') and b.get('options', {}).get(key, True) is True
+            for key in ('allowMatching', 'allowSpectators'): options[key] = not reserved and not b.get('single') and b.get('options', {}).get(key) is True
             if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
+            if b.get('single') is True: room['single'] = True
+            WATCHING.pop(uid, None)
             if uid in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[uid].copy()
             ROOMS[code] = room
             if single:
                 room['single'] = True
                 for number in range(1, 4): room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': str(number) + '号', 'bot': True, 'model': False, 'connected': True})
                 room['game'] = Game('standard', room['players'], options, interactive=True)
+                room.pop('idleWait', None)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
                 STATS.start(room)
                 queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])
@@ -395,6 +462,7 @@ class Handler(BaseHTTPRequestHandler):
             if room['game'] and room['game'].phase != 'over': raise RuleError('本房间正在对局。')
             if len(room['players']) >= MODES[room['mode']]: raise RuleError('房间已满。')
             room['game'] = None
+            WATCHING.pop(uid, None)
             room['players'].append({'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'})
             room['revision'] += 1
         else:
@@ -407,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(b.get('enabled'), bool): raise RuleError('托管状态无效。')
                 if b['enabled'] and (not room.get('game') or room['game'].phase == 'over'): raise RuleError('请在对局中开启托管。')
                 room['players'][seat]['autoplay'] = b['enabled']
+                room.get('idleWait', {}).pop(seat, None)
                 room['revision'] += 1
                 return self.respond({'ok': True, 'room': room_view(room, uid)})
             if path == '/api/chat':
@@ -448,6 +517,7 @@ class Handler(BaseHTTPRequestHandler):
                 previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores, 'captured': prev.captured} if prev and prev.mode != 'landlord' else None
                 if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0, 0], 'captured': []}
                 room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
+                room.pop('idleWait', None)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
                 STATS.start(room)
                 queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])

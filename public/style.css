@@ -435,3 +435,11 @@ footer{gap:24px}
  .seat.top .speech-bubble,.seat.bottom .speech-bubble{max-width:calc(50vw - 102px)}
  .seat.left .speech-bubble,.seat.right .speech-bubble{max-width:min(140px,calc(50vw - 20px))}
 }
+
+.mode-choice{display:flex;flex-direction:column;gap:10px;min-width:0}
+.mode-choice .mode-card{width:100%;flex:1}
+.match-button{width:100%;font-size:13px}
+#join-form [data-action="watch"]{margin-top:10px}
+.watch-waiting{padding:55px 20px;text-align:center;border:1px solid var(--line);border-radius:6px}
+.watch-waiting h2{font:24px var(--serif);margin-bottom:20px}
+.watch-waiting p{font-size:14px;color:var(--muted)}

@@ -104,7 +104,7 @@ const gameAudio = (() => {
       const changed=(g.seatPlays||[]).map((play,seat)=>({play,seat})).filter(({play,seat})=>play&&JSON.stringify(play)!==previous.plays[seat]);
       changed.sort((a,b)=>a.play.order-b.play.order);
       for(const {play} of changed){if(play.passed)speak('不出','pass');else {effect('play');const rank=({11:'勾',12:'圈',13:'凯',14:'尖',15:'二',16:'小王',17:'大王'})[play.ranks[0]]||play.ranks[0];speak(play.kind==='单张'?String(rank):play.kind==='对子'?'一对'+rank:play.kind,['单张','对子'].includes(play.kind)?play.kind+'-'+play.ranks[0]:play.kind);}}
-      if(g.phase==='over'&&previous.phase!=='over')effect(g.winner.includes(room.seat)?'win':'lose');
+      if(g.phase==='over'&&previous.phase!=='over'&&!room.spectator)effect(g.winner.includes(room.seat)?'win':'lose');
     }
     // Once the match reaches the endgame, keep tension music until settlement.
     const tense=!fresh&&previous.tense||g.counts.some((n,s)=>initialCounts[s]>0&&n<=initialCounts[s]*.3);

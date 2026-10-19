@@ -45,7 +45,7 @@ class ServerIntegration(unittest.TestCase):
         except urllib.error.HTTPError as e:return e.code,json.load(e)
 
     def setUp(self):
-        server.ROOMS.clear()
+        server.ROOMS.clear();server.WATCHING.clear()
 
     def test_usage_tracks_start_completion_and_abandonment(self):
         client=self.clients[0]
@@ -304,6 +304,121 @@ class ServerIntegration(unittest.TestCase):
                 self.assertEqual(status, 200)
                 for key in ('advancedHui', 'advancedDead'):
                     self.assertEqual(data['room']['options'][key], mode in ('standard', 'trio') and not options)
+
+    def test_automatic_autoplay_times_only_required_player_and_offline_host(self):
+        players=[{'id':i+1,'name':str(i),'seen':100,'connected':True} for i in range(4)]
+        g=Game('basic',players,interactive=True);g.phase='play';g.turn=1
+        room={'host':1,'players':players,'game':g,'revision':1}
+        for now in (100,159):
+            players[0]['seen']=now
+            with patch('server.time.time',return_value=now):server.update_autoplay(room)
+            self.assertFalse(players[1].get('autoplay'))
+        players[0]['seen']=160
+        with patch('server.time.time',return_value=160):server.update_autoplay(room)
+        self.assertTrue(players[1]['autoplay']);self.assertFalse(players[2].get('autoplay'));self.assertFalse(players[3].get('autoplay'))
+        self.assertEqual(room['revision'],2);self.assertFalse(players[1].get('bot'))
+        g.phase='setup';players[0]['seen']=200
+        with patch('server.time.time',return_value=214):server.update_autoplay(room)
+        self.assertFalse(players[0].get('autoplay'))
+        with patch('server.time.time',return_value=215):server.update_autoplay(room)
+        self.assertTrue(players[0]['autoplay'])
+
+    def test_idle_timeout_pauses_during_audio_and_resets_after_action(self):
+        players=[{'id':i+1,'name':str(i),'seen':100,'connected':True} for i in range(4)]
+        g=Game('basic',players,interactive=True);g.phase='play';g.turn=1
+        room={'host':1,'players':players,'game':g,'revision':1}
+        players[1]['audioEnabled']=True
+        server.queue_audio(room,[{'voice':'pass'}])
+        for now in (100,180):
+            players[0]['seen']=now;players[1]['seen']=now
+            with patch('server.time.time',return_value=now):server.update_autoplay(room)
+            self.assertNotIn('idleWait',room)
+        room['audioEvent']['acknowledged']=[2]
+        for now in (200,259):
+            players[0]['seen']=now
+            with patch('server.time.time',return_value=now):server.update_autoplay(room)
+            self.assertFalse(players[1].get('autoplay'))
+        players[0]['seen']=260
+        with patch('server.time.time',return_value=260):server.update_autoplay(room)
+        self.assertTrue(players[1]['autoplay'])
+        room['idleWait']={1:200}
+        card=g.hands[1][0]
+        server.perform_game_action(room,1,{'action':'play','ids':[card['id']]})
+        self.assertNotIn('idleWait',room)
+
+    def test_spectator_has_public_view_and_cannot_control_or_block_game(self):
+        host,viewer=self.clients[:2]
+        _,data=self.request(host,'create',{'mode':'landlord','options':{'allowSpectators':True}})
+        code=data['room']['code']
+        for _ in range(2):self.request(host,'bot',{})
+        room=server.ROOMS[code]
+        status,data=self.request(viewer,'watch',{'code':code})
+        self.assertEqual(status,200);self.assertTrue(data['room']['spectator']);self.assertIsNone(data['room']['seat'])
+        self.assertEqual(len(room['players']),3)
+        self.request(host,'start',{}, {'X-Poker-Audio':'1'})
+        status,data=self.request(viewer,'state',headers={'X-Poker-Audio':'1'})
+        watch=data['room'];self.assertTrue(watch['spectator']);self.assertEqual(watch['game']['hand'],[])
+        self.assertIsNone(watch['game']['response']);self.assertIsNone(watch['game']['priority'])
+        self.assertIsNone(watch['audioEvent']);self.assertFalse(watch['audioWaiting'])
+        self.assertNotIn(self.users[1]['id'],room['audioEvent']['listeners'])
+        for path,body in (('action',{'action':'pass','revision':room['revision']}),('autoplay',{'enabled':True}),('resign',{}),('start',{}),('bot',{}),('chat',{'text':'悲'})):
+            self.assertEqual(self.request(viewer,path,body)[0],400)
+        before=room['revision'];self.assertEqual(self.request(viewer,'leave',{})[0],200)
+        self.assertEqual(room['revision'],before);self.assertIsNotNone(room['game'])
+        self.assertIsNone(self.request(viewer,'state')[1]['room'])
+
+    def test_watch_permissions_closed_rooms_and_practice_rooms(self):
+        host,viewer=self.clients[:2]
+        _,data=self.request(host,'create',{'mode':'standard'})
+        code=data['room']['code']
+        self.assertFalse(data['room']['options']['allowSpectators'])
+        self.assertEqual(self.request(viewer,'watch',{'code':code})[0],400)
+        server.ROOMS[code]['options']['allowSpectators']=True
+        self.assertEqual(self.request(viewer,'watch',{'code':code})[0],200)
+        self.request(host,'leave',{})
+        self.assertIsNone(self.request(viewer,'state')[1]['room']);self.assertNotIn(self.users[1]['id'],server.WATCHING)
+        _,data=self.request(host,'create',{'mode':'basic','single':True,'options':{'allowMatching':True,'allowSpectators':True}})
+        self.assertFalse(data['room']['options']['allowMatching']);self.assertFalse(data['room']['options']['allowSpectators'])
+        self.assertEqual(self.request(viewer,'watch',{'code':data['room']['code']})[0],400)
+
+    def test_match_counts_and_join_filter_private_full_active_and_offline_rooms(self):
+        host,joiner=self.clients[:2]
+        _,data=self.request(host,'create',{'mode':'standard','options':{'allowMatching':True}})
+        code=data['room']['code'];room=server.ROOMS[code]
+        self.assertEqual(self.request(joiner,'state')[1]['matchCounts']['standard'],1)
+        self.assertEqual(self.request(joiner,'match',{'mode':'basic'})[0],400)
+        room['options']['allowMatching']=False
+        self.assertEqual(self.request(joiner,'state')[1]['matchCounts']['standard'],0)
+        self.assertEqual(self.request(joiner,'match',{'mode':'standard'})[0],400)
+        room['options']['allowMatching']=True
+        room['players'][0]['seen']=0
+        self.assertEqual(self.request(joiner,'state')[1]['matchCounts']['standard'],0)
+        self.request(host,'state')
+        status,data=self.request(joiner,'match',{'mode':'standard'})
+        self.assertEqual(status,200);self.assertEqual(data['room']['code'],code)
+        room['players'][0]['seen']=0
+        self.assertEqual(self.request(self.clients[2],'state')[1]['matchCounts']['standard'],0)
+        self.request(host,'state')
+        for _ in range(2):self.request(host,'bot',{})
+        self.assertEqual(self.request(self.clients[2],'state')[1]['matchCounts']['standard'],0)
+        self.request(host,'start',{})
+        self.assertEqual(self.request(self.clients[2],'match',{'mode':'standard'})[0],400)
+
+    def test_matching_cannot_overfill_room_or_expose_reserved_room(self):
+        from concurrent.futures import ThreadPoolExecutor
+        host=self.clients[0]
+        _,data=self.request(host,'create',{'mode':'landlord','options':{'allowMatching':True}})
+        code=data['room']['code']
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results=list(pool.map(lambda client:self.request(client,'match',{'mode':'landlord'})[0],self.clients[1:]))
+        self.assertEqual(sorted(results),[200,200,400]);self.assertEqual(len(server.ROOMS[code]['players']),3)
+        server.ROOMS.clear()
+        _,data=self.request(host,'join',{'code':'001255'})
+        self.assertEqual(data['room']['code'],'001255')
+        server.ROOMS['001255']['options']['allowMatching']=True
+        self.assertEqual(self.request(self.clients[1],'state')[1]['matchCounts']['standard'],0)
+        self.assertEqual(self.request(self.clients[1],'match',{'mode':'standard'})[0],400)
+        self.assertEqual(self.request(self.clients[1],'join',{'code':'001255'})[0],200)
 
     def test_four_players_can_display_messages_at_the_same_time(self):
         _,data=self.request(self.clients[0],'create',{'mode':'standard'})

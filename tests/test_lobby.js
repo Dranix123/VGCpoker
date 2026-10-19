@@ -1,8 +1,8 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('public/app.js','utf8');
-function flow(screen){
-  const context={screen};vm.createContext(context);
+function flow(screen,counts={}){
+  const context={screen,state:{matchCounts:counts}};vm.createContext(context);
   return vm.runInContext(source.slice(source.indexOf('function flowScreen(){'),source.indexOf('function settingsScreen(){'))+'\nflowScreen();',context);
 }
 test('single and multiplayer flows expose an unlabeled room-number entrance',()=>{
@@ -62,4 +62,44 @@ test('autoplay shows badges and cancellation while removing manual play controls
   for(let seat=0;seat<4;seat++)assert.ok(html.includes(`aria-label="${seat}的发言"`));
   assert.ok(!html.includes('table-chat'));
  }
+});
+
+
+test('multiplayer modes show matching counts and room-code spectating',()=>{
+ const html=flow('create',{landlord:2,standard:1});
+ assert.equal((html.match(/data-action="match"/g)||[]).length,4);
+ assert.ok(html.includes('匹配 · 2 个房间'));
+ assert.ok(html.includes('匹配 · 1 个房间'));
+ assert.ok(html.includes('data-action="watch"'));
+ assert.ok(!flow('single').includes('data-action="match"'));
+ assert.ok(!flow('single').includes('data-action="watch"'));
+});
+test('multiplayer creation exposes opt-in matching and spectator settings',()=>{
+ for(const screen of ['single','create']){
+  let html='';const context={screen,state:{preferences:{}},names:{},esc:String,showModal:(kind,content)=>{html=content;}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function showCreate('),source.indexOf('async function showLeaderboard('))+'\nshowCreate("standard");',context);
+  assert.equal(html.includes('name="joinPolicy"'),screen==='create');
+  assert.equal(html.includes('name="allowSpectators"'),screen==='create');
+  assert.ok(!/<input[^>]*name="allowSpectators"[^>]*checked/.test(html));
+ }
+});
+test('spectator table renders public seats without private hand or action controls',()=>{
+ const players=Array.from({length:4},(_,i)=>({id:i+1,name:String(i),connected:true}));
+ const r={seat:null,spectator:true,capacity:4,players,rated:true};
+ const g={mode:'basic',phase:'play',turn:0,finished:[],urgentLast:[],counts:[2,2,2,2],hand:[],scores:[0,0],log:[]};
+ const context={state:{user:{id:9}},esc:String,ranks:{},suits:{},selected:new Set(),roomHeading:()=>'',card:()=>'',r,g};vm.createContext(context);
+ vm.runInContext(source.slice(source.indexOf('function table('),source.indexOf('function showAuth(')),context);
+ for(const phase of ['play','over']){
+  g.phase=phase;g.winner=[0];const html=vm.runInContext('table(r,g)',context);
+  assert.ok(!html.includes('class="hand-area"'));
+  assert.ok(!html.includes('data-action="play"'));
+  assert.ok(!html.includes('data-action="autoplay"'));
+  assert.ok(!html.includes(' · 你'));
+  if(phase==='over'){assert.ok(html.includes('本局结束'));assert.ok(!html.includes('失败'));}
+ }
+ g.phase='play';g.negotiation={target:0,seat:1};
+ const html=vm.runInContext('table(r,g)',context);
+ assert.ok(!html.includes('data-action="accept"'));
+ assert.ok(!html.includes('data-action="reject"'));
 });

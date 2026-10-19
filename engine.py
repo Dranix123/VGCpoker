@@ -992,11 +992,11 @@ class Game:
 
     def view(self, seat):
         response = None
-        if self.phase == 'play' and seat not in self.finished:
+        if self.phase == 'play' and seat is not None and seat not in self.finished:
             if seat in self.claims: response = {'key': self.claims[seat]['order'], 'moves': self.claims[seat]['moves']}
             elif self.priority and seat in self.priority['pending']: response = {'key': self.play_number, 'moves': self.priority_moves(seat)}
         return {'mode': self.mode, 'phase': self.phase, 'main': self.main, 'scores': self.scores, 'turn': self.turn, 'landlord': self.landlord, 'bid': self.bid,
-                'bottom': self.bottom if self.phase != 'bid' else [], 'hand': sorted(self.hands[seat], key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])),
+                'bottom': self.bottom if self.phase != 'bid' else [], 'hand': sorted(self.hands[seat], key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])) if seat is not None else [],
                 'counts': [len(h) for h in self.hands], 'initialCounts': self.initial_counts, 'remainingHands': [sorted(h, key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit'])) for h in self.hands] if self.phase == 'over' else None, 'finished': self.finished, 'last': self.last, 'lastSeat': self.last_seat,
                 'seatPlays': self.seat_plays, 'playNumber': self.play_number, 'response': response,
                 'winner': self.winner, 'log': self.log, 'reveals': self.reveals, 'ready': list(self.rps), 'promotions': self.promotions,
