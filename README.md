@@ -1,4 +1,4 @@
-# 纸间 · Paper Club
+# VGC · Poker Club
 
 素描纸张风格的扑克牌网页游戏。Python 3.9+ 标准库服务端、SQLite 数据库、原生 JavaScript 前端，无需安装 npm 或 Python 依赖。
 
