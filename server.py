@@ -15,6 +15,8 @@ import socket
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from engine import Game, RuleError, MODES
+from analytics import Analytics
+from admin import start_admin
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
@@ -29,6 +31,8 @@ def db():
     connection.execute('PRAGMA foreign_keys = ON')
     return connection
 
+STATS = Analytics(db)
+
 def initialize():
     DB_PATH.parent.mkdir(exist_ok=True)
     with db() as c:
@@ -40,6 +44,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS rating_events(result_id TEXT NOT NULL REFERENCES results(id), user_id INTEGER NOT NULL REFERENCES users(id), delta INTEGER NOT NULL, PRIMARY KEY(result_id,user_id));
         ''')
         c.execute('DELETE FROM sessions WHERE expires < ?', (int(time.time()),))
+    STATS.initialize()
 
 def rank(points):
     return next(name for limit, name in ((800, '纸牌学徒'), (1100, '墨线新秀'), (1400, '银笔高手'), (1800, '黑金大师'), (2400, '牌桌宗师'), (10**9, '无冕传奇')) if points < limit)
@@ -47,7 +52,7 @@ def rank(points):
 def user_view(row):
     return {'id': row['id'], 'name': row['username'], 'points': row['points'], 'rank': rank(row['points']), 'wins': row['wins'], 'games': row['games']}
 
-def persist_result(room):
+def persist_result(room, reason='normal'):
     g = room['game']
     if g.phase != 'over' or room.get('settled'): return
     rated = all(not p.get('bot') for p in room['players'])
@@ -61,6 +66,7 @@ def persist_result(room):
                 change = delta if won else -delta
                 c.execute('UPDATE users SET points = MAX(0,points+?), games=games+1, wins=wins+? WHERE id=?', (change, int(won), player['id']))
                 c.execute('INSERT INTO rating_events VALUES(?,?,?)', (room['matchId'], player['id'], change))
+    STATS.finish(room, 'completed', reason)
     room['settled'] = True
     g.announce('真人对局已结算积分。' if rated else '练习对局：含AI玩家，本局不计积分。')
 
@@ -68,6 +74,7 @@ def room_of(uid):
     return next((r for r in ROOMS.values() if any(p['id'] == uid for p in r['players'])), None)
 
 def leave_room(room, uid):
+    if room.get('game') and room['game'].phase != 'over': STATS.finish(room, 'interrupted', 'leave')
     room['players'] = [p for p in room['players'] if p['id'] != uid]
     room['game'] = None; room.pop('audioEvent', None)
     humans = [p for p in room['players'] if not p.get('bot')]
@@ -150,9 +157,12 @@ def model_move(config, g, seat):
 
 def tick_bot(code, seat, version, snapshot, config, match_id=None):
     try:
+        began = time.monotonic(); failed = False
         try: move = model_move(config, snapshot, seat)
-        except Exception: move = snapshot.bot_action(seat)
+        except Exception: failed = True; move = snapshot.bot_action(seat)
+        seconds = time.monotonic() - began
         with LOCK:
+            STATS.ai(config.get('model', 'unknown'), failed, seconds)
             room = ROOMS.get(code)
             if room and room['revision'] == version and (match_id is None or room.get('matchId') == match_id) and move and not audio_waiting(room):
                 try:
@@ -221,6 +231,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
                 if path == '/api/state':
                     if not user: return self.respond({'user': None, 'room': None, 'features': {'wildUrgent': True}})
+                    if self.headers.get('X-Poker-Audio') != '0': STATS.activity(user['id'])
                     room = room_of(user['id'])
                     if room:
                         p = next(p for p in room['players'] if p['id'] == user['id'])
@@ -294,10 +305,12 @@ class Handler(BaseHTTPRequestHandler):
                 token = secrets.token_urlsafe(32)
                 c.execute('INSERT INTO sessions VALUES(?,?,?)', (token, user['id'], int(time.time()) + 7 * 86400))
             secure = '; Secure' if self.headers.get('X-Forwarded-Proto') == 'https' or self.headers.get('Origin', '').startswith('https://') else ''
+            STATS.activity(user['id'])
             return self.respond({'user': user_view(user)}, cookie='poker_session=' + token + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800' + secure)
         user = self.session()
         if not user: return self.respond({'error': '请先登录。'}, 401)
         uid = user['id']
+        if self.headers.get('X-Poker-Audio') != '0': STATS.activity(uid)
         if path == '/api/logout':
             room = room_of(uid)
             if room and room['options'].get('_alternate'):
@@ -363,6 +376,7 @@ class Handler(BaseHTTPRequestHandler):
                 for number in range(1, 4): room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': str(number) + '号', 'bot': True, 'model': False, 'connected': True})
                 room['game'] = Game('standard', room['players'], options, interactive=True)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
+                STATS.start(room)
                 queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])
         elif path == '/api/join':
             if room: raise RuleError('请先离开当前房间。')
@@ -413,6 +427,7 @@ class Handler(BaseHTTPRequestHandler):
                 if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0, 0], 'captured': []}
                 room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
+                STATS.start(room)
                 queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
@@ -431,17 +446,22 @@ class Handler(BaseHTTPRequestHandler):
                 if g.mode == 'landlord': g.winner = [s for s in range(len(g.players)) if (s == g.landlord) != (seat == g.landlord)]
                 elif g.mode == 'trio': g.winner = [s for s in range(len(g.players)) if s != seat]
                 else: g.winner = [s for s in range(len(g.players)) if s % 2 != seat % 2]
-                g.phase = 'over'; g.announce(user['username'] + '认输。'); queue_audio(room, [{'voice': 'resign'}, {'effect': 'result'}]); persist_result(room)
+                g.phase = 'over'; g.announce(user['username'] + '认输。'); queue_audio(room, [{'voice': 'resign'}, {'effect': 'result'}]); persist_result(room, reason='resign')
             else: return self.respond({'error': '接口不存在。'}, 404)
             room['revision'] += 1
         return self.respond({'ok': True, 'room': room_view(room, uid) if any(p['id'] == uid for p in room['players']) else None})
 
+def admin_snapshot():
+    with LOCK: return STATS.report(list(ROOMS.values()))
+
 def main():
-    initialize()
-    threading.Thread(target=bot_loop, daemon=True).start()
     port = int(os.getenv('PORT', '4141'))
     server = ThreadingHTTPServer((os.getenv('HOST', '127.0.0.1'), port), Handler)
-    print('纸牌俱乐部运行于 http://localhost:%s' % port, flush=True)
+    initialize()
+    admin = start_admin(admin_snapshot, DB_PATH.parent / 'admin-token', int(os.getenv('ADMIN_PORT', '4143')))
+    threading.Thread(target=bot_loop, daemon=True).start()
+    print('VGC 运行于 http://localhost:%s' % port, flush=True)
+    print('本机统计后台：http://localhost:%s（管理口令：data/admin-token）' % admin.server_port, flush=True)
     server.serve_forever()
 
 if __name__ == '__main__': main()

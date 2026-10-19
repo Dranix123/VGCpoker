@@ -47,6 +47,36 @@ class ServerIntegration(unittest.TestCase):
     def setUp(self):
         server.ROOMS.clear()
 
+    def test_usage_tracks_start_completion_and_abandonment(self):
+        client=self.clients[0]
+        self.request(client,'create',{'mode':'landlord'})
+        for _ in range(2):self.request(client,'bot',{})
+        self.assertEqual(self.request(client,'start',{})[0],200)
+        room=server.room_of(self.users[0]['id']);match=room['matchId']
+        self.assertEqual(self.request(client,'start',{})[0],400)
+        self.assertEqual(self.request(client,'resign',{})[0],200)
+        server.persist_result(room)
+        with server.db() as c:
+            row=c.execute('SELECT * FROM usage_matches WHERE id=?',(match,)).fetchone()
+            self.assertEqual((row['status'],row['channel'],row['humans'],row['bots'],row['reason']),('completed','single',1,2,'resign'))
+        self.request(client,'leave',{})
+        self.request(client,'join',{'code':'001255','single':True})
+        match=server.room_of(self.users[0]['id'])['matchId']
+        self.request(client,'leave',{})
+        with server.db() as c:
+            row=c.execute('SELECT * FROM usage_matches WHERE id=?',(match,)).fetchone()
+            self.assertEqual((row['status'],row['variant'],row['reason']),('interrupted','alternate','leave'))
+
+    def test_stats_are_private_and_background_polling_does_not_record_activity(self):
+        client=self.clients[0]
+        with patch.object(server.STATS,'activity') as activity:
+            self.request(client,'state',headers={'X-Poker-Audio':'0'});activity.assert_not_called()
+            self.request(client,'state',headers={'X-Poker-Audio':'1'});activity.assert_called_once_with(self.users[0]['id'])
+        self.assertEqual(self.request(client,'stats')[0],404)
+        for path in ('/admin','/admin/index.html','/../admin/index.html','/analytics.py'):
+            with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+path)
+            self.assertEqual(error.exception.code,404)
+
     def test_tribute_option_is_saved_and_controls_next_deal(self):
         client=self.clients[0]
         for mode in ('basic','standard'):

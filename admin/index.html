@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VGC · 运行统计</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main>
+<header><div><small>VGC / PRIVATE</small><h1>运行统计</h1><p id="updated">正在获取统计…</p></div><div class="actions"><button id="refresh">刷新</button><form action="/logout" method="post"><button>退出</button></form></div></header>
+<div id="error" role="status"></div><section id="overview" class="metrics"></section>
+<section class="panel"><div class="section-head"><h2>近 30 天</h2><span>北京时间 · 每 10 秒更新</span></div><div class="legend"><i class="users"></i>日活用户 <i class="single"></i>单人开局 <i class="multi"></i>联机开局</div><div id="trend" class="trend"></div><p>日活按登录账号去重；后台页面不会增加日活。在线与活跃牌局以最近 60 秒的前台活动判断。</p></section>
+<section class="panel"><div class="section-head"><h2>玩法分布</h2><span>一名真人为单人，两名及以上为联机，可包含 AI</span></div><div class="table-wrap"><table><thead><tr><th>玩法</th><th>类型</th><th>活跃牌局</th><th>今日开局</th><th>累计开局</th><th>完成</th><th>中断</th><th>真人参与人次</th><th>平均时长</th></tr></thead><tbody id="modes"></tbody></table></div></section>
+<section class="panel"><div class="section-head"><h2>每日明细</h2><span>活跃用户、注册与开局</span></div><div class="table-wrap daily"><table><thead><tr><th>日期</th><th>日活</th><th>新注册</th><th>开局</th><th>单人</th><th>联机</th></tr></thead><tbody id="daily"></tbody></table></div></section>
+<footer id="notes"></footer></main></body></html>
