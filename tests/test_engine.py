@@ -74,10 +74,19 @@ class Rules(unittest.TestCase):
                 self.assertTrue(any(set(m['ids'])==set(ids) for m in g.candidates(0)))
                 g.action(0,'auto',ids);self.assertEqual(g.last['kind'],kind)
 
+    def test_tribute_is_opt_in_and_disabled_for_alternate_rooms(self):
+        players=[{'name':str(i)} for i in range(4)]
+        previous={'first':0,'main':5,'scores':[2,0],'captured':[1,3]}
+        for mode in ('basic','standard'):
+            for options in ({},{'tribute':False},{'tribute':True,'_alternate':True}):
+                g=Game(mode,players,options=options,previous=previous)
+                self.assertEqual(g.phase,'setup');self.assertIsNone(g.tribute)
+                self.assertEqual([len(h) for h in g.hands],g.initial_counts)
+
     def test_tribute_single_and_double_before_setup(self):
         for mode in ('basic','standard'):
             for caught in ([1],[1,3]):
-                g=Game(mode,[{'name':str(i)} for i in range(4)],previous={'first':0,'main':5,'scores':[2,0],'captured':caught})
+                g=Game(mode,[{'name':str(i)} for i in range(4)],options={'tribute':True},previous={'first':0,'main':5,'scores':[2,0],'captured':caught})
                 self.assertEqual(g.phase,'tribute')
                 with self.assertRaises(RuleError):g.action(0,'confirm')
                 for offer in g.tribute['offers']:
@@ -104,7 +113,7 @@ class Rules(unittest.TestCase):
                 g.hands[seat]=[];g.finish(seat)
                 if g.phase=='over':break
             self.assertEqual(g.captured,captured)
-            following=Game('standard',[{'name':str(i),'bot':True} for i in range(4)],previous={'first':0,'main':g.next_main,'scores':g.scores,'captured':captured})
+            following=Game('standard',[{'name':str(i),'bot':True} for i in range(4)],options={'tribute':True},previous={'first':0,'main':g.next_main,'scores':g.scores,'captured':captured})
             for _ in range(5):
                 if following.phase!='tribute':break
                 for seat in range(4):

@@ -47,6 +47,36 @@ class ServerIntegration(unittest.TestCase):
     def setUp(self):
         server.ROOMS.clear()
 
+    def test_tribute_option_is_saved_and_controls_next_deal(self):
+        client=self.clients[0]
+        for mode in ('basic','standard'):
+            for enabled in (False,True):
+                server.ROOMS.clear()
+                _,data=self.request(client,'create',{'mode':mode,'options':{'tribute':enabled}})
+                self.assertEqual(data['room']['options']['tribute'],enabled)
+                for _ in range(3):self.request(client,'bot',{})
+                self.request(client,'start',{})
+                room=server.room_of(self.users[0]['id']);g=room['game']
+                self.assertEqual(g.phase,'setup')
+                g.phase='over';g.finished=[0,2,1,3];g.captured=[1,3]
+                status,data=self.request(client,'start',{})
+                self.assertEqual(status,200)
+                self.assertEqual(data['room']['game']['phase'],'tribute' if enabled else 'setup')
+
+    def test_reserved_room_never_enables_tribute(self):
+        client=self.clients[0]
+        for single in (False,True):
+            server.ROOMS.clear()
+            _,data=self.request(client,'join',{'code':'001255','single':single,'options':{'tribute':True}})
+            room=server.room_of(self.users[0]['id'])
+            self.assertFalse(data['room']['options']['tribute'])
+            if not single:
+                for _ in range(3):self.request(client,'bot',{})
+                self.request(client,'start',{})
+            g=room['game'];g.phase='over';g.finished=[0,2,1,3];g.captured=[1,3]
+            self.assertEqual(self.request(client,'start',{})[0],200)
+            self.assertEqual(room['game'].phase,'setup');self.assertIsNone(room['game'].tribute)
+
     def test_reserved_room_handoff_and_recreation(self):
         first,second,third=self.clients[:3]
         status,data=self.request(first,'join',{'code':'001255'})

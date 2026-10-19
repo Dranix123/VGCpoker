@@ -353,8 +353,8 @@ class Handler(BaseHTTPRequestHandler):
             while code in ROOMS or code == RESERVED_ROOM: code = ''.join(secrets.choice('0123456789') for _ in range(6))
             if reserved and not single: code = RESERVED_ROOM
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
-            options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc')}
-            if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, '_alternate': True}
+            options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc', 'tribute')}
+            if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if uid in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[uid].copy()
             ROOMS[code] = room

@@ -15,3 +15,12 @@ test('single and multiplayer flows expose an unlabeled room-number entrance',()=
     assert.ok(!html.includes('_alternate'));
   }
 });
+test('tribute is an unchecked option only for supported modes in either flow',()=>{
+  for(const screen of ['single','create'])for(const mode of ['basic','standard','trio','landlord']){
+    let html='';const context={screen,mode,state:{preferences:{}},names:{},esc:x=>x,showModal:(kind,content)=>{html=content;}};
+    vm.createContext(context);
+    vm.runInContext(source.slice(source.indexOf('function showCreate('),source.indexOf('\nasync function showLeaderboard('))+'\nshowCreate(mode);',context);
+    assert.equal(html.includes('name="tribute"'),['basic','standard'].includes(mode));
+    assert.ok(!/<input[^>]*name="tribute"[^>]*\bchecked\b/.test(html));
+  }
+});

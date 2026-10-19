@@ -223,7 +223,7 @@ class Game:
         self.round_complete = False
         self.captured = []
         self.tribute = None
-        captured = (previous or {}).get('captured', []) if mode in ('basic', 'standard') else []
+        captured = (previous or {}).get('captured', []) if mode in ('basic', 'standard') and self.options.get('tribute') is True and not self.options.get('_alternate') else []
         if captured:
             offers = []
             for donor in captured:
