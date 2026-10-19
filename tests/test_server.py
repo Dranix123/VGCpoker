@@ -47,6 +47,59 @@ class ServerIntegration(unittest.TestCase):
     def setUp(self):
         server.ROOMS.clear()
 
+    def test_reserved_room_handoff_and_recreation(self):
+        first,second,third=self.clients[:3]
+        status,data=self.request(first,'join',{'code':'001255'})
+        self.assertEqual(status,200);room=server.ROOMS['001255']
+        self.assertEqual(data['room']['mode'],'standard');self.assertTrue(data['room']['options']['advancedHui'])
+        self.assertNotIn('_alternate',data['room']['options'])
+        self.assertEqual(self.request(second,'join',{'code':'001255'})[0],200)
+        self.assertEqual(self.request(third,'join',{'code':'001255'})[0],200)
+        self.assertEqual(self.request(first,'leave',{})[0],200)
+        self.assertEqual(room['host'],self.users[1]['id'])
+        self.assertEqual(self.request(second,'leave',{})[0],200)
+        self.assertEqual(room['host'],self.users[2]['id'])
+        self.assertEqual(self.request(third,'leave',{})[0],200)
+        self.assertNotIn('001255',server.ROOMS)
+        self.assertEqual(self.request(second,'join',{'code':'001255'})[0],200)
+        self.assertEqual(server.ROOMS['001255']['host'],self.users[1]['id'])
+
+    def test_reserved_single_is_private_and_only_accepts_reserved_number(self):
+        first,second,third=self.clients[:3]
+        self.request(third,'create',{'mode':'basic'})
+        normal_code=server.room_of(self.users[2]['id'])['code']
+        self.assertEqual(self.request(first,'join',{'code':normal_code,'single':True})[0],400)
+        _,one=self.request(first,'join',{'code':'001255','single':True})
+        _,two=self.request(second,'join',{'code':'001255','single':True})
+        self.assertNotEqual(one['room']['code'],two['room']['code']);self.assertNotIn('001255',server.ROOMS)
+        for data in (one,two):
+            r=data['room'];self.assertEqual(r['mode'],'standard');self.assertEqual(len(r['players']),4)
+            self.assertEqual(sum(bool(p['bot']) for p in r['players']),3)
+            self.assertTrue(r['game']['options']['advancedHui']);self.assertNotIn('_alternate',r['game']['options'])
+            self.assertEqual(server.ROOMS[r['code']]['game'].pattern,(6,8))
+        self.request(third,'leave',{})
+        self.assertEqual(self.request(third,'join',{'code':one['room']['code']})[0],400)
+        self.assertEqual(self.request(third,'join',{'code':'001255'})[0],200)
+        self.assertEqual(self.request(first,'leave',{})[0],200)
+        self.assertNotIn(one['room']['code'],server.ROOMS)
+
+    def test_reserved_host_leaves_during_game_and_logs_out(self):
+        first,second=self.clients[:2]
+        self.request(first,'join',{'code':'001255'})
+        self.request(second,'join',{'code':'001255'})
+        for _ in range(2):self.request(first,'bot',{})
+        self.assertEqual(self.request(first,'start',{})[0],200)
+        room=server.ROOMS['001255'];self.assertEqual(room['game'].pattern,(6,8))
+        self.assertEqual(self.request(first,'leave',{})[0],200)
+        self.assertIsNone(room['game']);self.assertEqual(room['host'],self.users[1]['id'])
+        other=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        status,data=self.request(other,'register',{'name':'临时房主','password':'testpass123'})
+        self.assertEqual(status,200)
+        self.request(second,'leave',{});self.request(other,'join',{'code':'001255'})
+        self.request(first,'join',{'code':'001255'})
+        self.assertEqual(self.request(other,'logout',{})[0],200)
+        self.assertEqual(server.ROOMS['001255']['host'],self.users[0]['id'])
+
     def test_static_assets_are_versioned_and_never_cached(self):
         with urllib.request.urlopen(self.url+'/') as response:
             self.assertEqual(response.headers['Cache-Control'],'no-store')

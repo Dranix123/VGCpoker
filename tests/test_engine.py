@@ -17,6 +17,30 @@ def table(mode='standard', options=None):
 
 
 class Rules(unittest.TestCase):
+    def test_alternate_pattern_is_limited_to_selected_game(self):
+        g=table(options={'_alternate':True,'advancedHui':True})
+        g.hands[0]=cards([6,6,6,8,8,9],prefix='a')
+        self.assertEqual(g.pattern,(6,8))
+        combo=g.validate_play(0,g.hands[0][:5])[0]
+        self.assertEqual((combo['kind'],combo['power']),('4A4',105))
+        self.assertEqual(g.validate_play(0,cards([4,4,4,14,14]))[0]['power'],0)
+        self.assertTrue(any(m['power']==105 and set(m['ids'])=={'a'+str(i) for i in range(5)} for m in g.candidates(0)))
+        g.action(0,'auto',['a'+str(i) for i in range(5)]);self.assertEqual(g.last['power'],105)
+        self.assertNotIn('_alternate',g.view(0)['options'])
+        normal=table();self.assertEqual(normal.validate_play(0,cards([6,6,6,8,8]))[0]['power'],0)
+        self.assertEqual(normal.validate_play(0,cards([4,4,4,14,14]))[0]['power'],105)
+
+    def test_alternate_pattern_wildcards_and_core_ranking(self):
+        g=table(options={'_alternate':True,'advancedHui':True})
+        chosen=cards([6,6,8,8],prefix='a')+cards([14],'S','w')
+        g.hands[0]=chosen+cards([10],prefix='z')
+        self.assertEqual(g.validate_play(0,chosen,wildcard=6)[0]['power'],105)
+        self.assertTrue(any(m['power']==105 and set(m['ids'])=={c['id'] for c in chosen} for m in g.candidates(0)))
+        self.assertEqual(g.validate_play(0,cards([6]*5+[8]*2))[0]['power'],105)
+        self.assertEqual(g.validate_play(0,cards([6]*4+[8]*3))[0]['power'],107)
+        g.hands[0]=cards([8,8,10],'H','a');g.hands[3]=cards([5,5,9],'H','b')
+        g.action(0,'play',['a0','a1']);g.action(3,'hui',['b0','b1']);self.assertEqual(g.last['special'],'hui')
+
     def test_next_deal_extra_cards_go_to_first_finisher_and_next_seat(self):
         for mode in ('basic', 'standard'):
             for first in range(4):

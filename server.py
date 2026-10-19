@@ -19,6 +19,7 @@ from engine import Game, RuleError, MODES
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
 ROOMS, MODEL_CONFIG, ATTEMPTS = {}, {}, {}
+RESERVED_ROOM = '001255'
 LOCK = threading.RLock()
 BOT_BUSY = set()
 
@@ -66,6 +67,17 @@ def persist_result(room):
 def room_of(uid):
     return next((r for r in ROOMS.values() if any(p['id'] == uid for p in r['players'])), None)
 
+def leave_room(room, uid):
+    room['players'] = [p for p in room['players'] if p['id'] != uid]
+    room['game'] = None; room.pop('audioEvent', None)
+    humans = [p for p in room['players'] if not p.get('bot')]
+    if not humans: del ROOMS[room['code']]
+    elif room['host'] == uid:
+        room['host'] = humans[0]['id']
+        if room['options'].get('_alternate'):
+            room.pop('modelConfig', None)
+            if room['host'] in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[room['host']].copy()
+
 def audio_waiting(room):
     event = room.get('audioEvent')
     if not event: return False
@@ -98,7 +110,7 @@ def perform_game_action(room, seat, move):
 def room_view(room, uid):
     seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
     return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected')} for p in room['players']],
-            'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': room['options'], 'rated': all(not p.get('bot') for p in room['players']),
+            'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
             'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') else None, 'audioWaiting': audio_waiting(room), 'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
@@ -136,13 +148,13 @@ def model_move(config, g, seat):
         if not isinstance(index, int) or index not in range(len(moves)): raise ValueError('Invalid move')
         return moves[index]
 
-def tick_bot(code, seat, version, snapshot, config):
+def tick_bot(code, seat, version, snapshot, config, match_id=None):
     try:
         try: move = model_move(config, snapshot, seat)
         except Exception: move = snapshot.bot_action(seat)
         with LOCK:
             room = ROOMS.get(code)
-            if room and room['revision'] == version and move and not audio_waiting(room):
+            if room and room['revision'] == version and (match_id is None or room.get('matchId') == match_id) and move and not audio_waiting(room):
                 try:
                     perform_game_action(room, seat, move)
                     room['revision'] += 1
@@ -166,7 +178,7 @@ def bot_loop():
                     config = room.get('modelConfig') if p.get('model') else None
                     if config and g.phase == 'play' and not g.negotiation:
                         BOT_BUSY.add(room['code'])
-                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy()), daemon=True).start()
+                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId']), daemon=True).start()
                     else:
                         try:
                             perform_game_action(room, seat, move)
@@ -287,6 +299,9 @@ class Handler(BaseHTTPRequestHandler):
         if not user: return self.respond({'error': '请先登录。'}, 401)
         uid = user['id']
         if path == '/api/logout':
+            room = room_of(uid)
+            if room and room['options'].get('_alternate'):
+                leave_room(room, uid); room['revision'] += 1
             cookie = http.cookies.SimpleCookie(self.headers.get('Cookie', ''))
             with db() as c: c.execute('DELETE FROM sessions WHERE token=?', (cookie['poker_session'].value,))
             return self.respond({'ok': True}, cookie='poker_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')
@@ -327,22 +342,34 @@ class Handler(BaseHTTPRequestHandler):
                     if p['id'] == uid: p['name'] = name; r['revision'] += 1
             return self.respond({'ok': True})
         room = room_of(uid)
-        if path == '/api/create':
+        reserved = path == '/api/join' and str(b.get('code', '')).strip() == RESERVED_ROOM
+        single = path == '/api/join' and b.get('single') is True
+        if single and not reserved: raise RuleError('房间不存在，请检查六位房间号。')
+        if path == '/api/create' or reserved and (single or RESERVED_ROOM not in ROOMS):
             if room: raise RuleError('请先离开当前房间。')
-            mode = b.get('mode', 'landlord')
+            mode = 'standard' if reserved else b.get('mode', 'landlord')
             if mode not in MODES: raise RuleError('未知玩法。')
             code = ''.join(secrets.choice('0123456789') for _ in range(6))
-            while code in ROOMS: code = ''.join(secrets.choice('0123456789') for _ in range(6))
+            while code in ROOMS or code == RESERVED_ROOM: code = ''.join(secrets.choice('0123456789') for _ in range(6))
+            if reserved and not single: code = RESERVED_ROOM
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
             options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc')}
+            if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if uid in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[uid].copy()
             ROOMS[code] = room
+            if single:
+                room['single'] = True
+                for number in range(1, 4): room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': str(number) + '号', 'bot': True, 'model': False, 'connected': True})
+                room['game'] = Game('standard', room['players'], options, interactive=True)
+                room['settled'] = False; room['matchId'] = secrets.token_hex(16)
+                queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])
         elif path == '/api/join':
             if room: raise RuleError('请先离开当前房间。')
             code = str(b.get('code', '')).strip()
             room = ROOMS.get(code)
             if not room: raise RuleError('房间不存在，请检查六位房间号。')
+            if room.get('single'): raise RuleError('房间不可加入。')
             if room['game'] and room['game'].phase != 'over': raise RuleError('本房间正在对局。')
             if len(room['players']) >= MODES[room['mode']]: raise RuleError('房间已满。')
             room['game'] = None
@@ -360,11 +387,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond({'ok': True})
             if path in ('/api/start', '/api/action', '/api/resign') and audio_waiting(room): raise RuleError('等待本次行动播报完成。')
             if path == '/api/leave':
-                if room['game'] and room['game'].phase != 'over': raise RuleError('对局中请使用认输；可关闭网页并重新登录回到牌桌。')
-                room['players'].pop(seat); room['game'] = None
-                humans = [p for p in room['players'] if not p.get('bot')]
-                if not humans: del ROOMS[room['code']]
-                elif host: room['host'] = humans[0]['id']
+                if room['game'] and room['game'].phase != 'over' and not room['options'].get('_alternate'): raise RuleError('对局中请使用认输；可关闭网页并重新登录回到牌桌。')
+                leave_room(room, uid)
             elif path == '/api/bot':
                 if not host: raise RuleError('只有房主可以添加AI。')
                 if room['game'] and room['game'].phase != 'over': raise RuleError('对局中不能变更玩家。')
