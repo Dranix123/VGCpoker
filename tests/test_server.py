@@ -181,6 +181,26 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
             self.assertGreater(len(response.read()),500)
 
+    def test_wildcard_bomb_passes_back_to_airplane_or_pair_run(self):
+        client=self.clients[0]
+        for follow in ([11,11,11,12,12,12,8,10],[4,4,5,5,6,6]):
+            server.ROOMS.clear()
+            _,data=self.request(client,'create',{'mode':'standard'})
+            for _ in range(3):self.request(client,'bot',{})
+            _,data=self.request(client,'start',{})
+            room=server.ROOMS[data['room']['code']];g=room['game'];g.phase='play';g.turn=0
+            def hand(ranks,prefix):
+                return [{'id':prefix+str(i),'rank':r,'suit':'S' if r==14 else 'H'} for i,r in enumerate(ranks)]
+            g.hands[0]=hand([9,9,9,14]+follow+[7],'a')
+            for seat in (1,2,3):g.hands[seat]=hand([5,6,8],str(seat))
+            status,data=self.request(client,'action',{'action':'auto','ids':['a0','a1','a2','a3'],'wildcard':9,'revision':room['revision']})
+            self.assertEqual(status,200);self.assertEqual(g.last['power'],4)
+            for seat in (3,2,1):server.perform_game_action(room,seat,{'action':'pass'})
+            self.assertEqual(g.turn,0);self.assertIsNone(g.last)
+            status,data=self.request(client,'action',{'action':'auto','ids':['a'+str(i) for i in range(4,4+len(follow))],'revision':room['revision']})
+            self.assertEqual(status,200)
+            self.assertEqual(data['room']['game']['last']['kind'],'飞机带单' if len(follow)==8 else '连对')
+
     def test_three_jokers_hint_and_play_beat_five_and_six_card_bombs(self):
         client=self.clients[0]
         for size in (5,6):

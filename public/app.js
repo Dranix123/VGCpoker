@@ -168,7 +168,9 @@ function $$(s){return [...document.querySelectorAll(s)];}
 async function gameAction(action,extra={}){if(!state.room)return;return await mutation('action',{action,revision:state.room.revision,...extra});}
 function wildRank(value){return typeof value==='object'?value?.rank:value;}
 function wildcardPayload(){
-  const map=Object.fromEntries(Object.entries(wildcardMap).filter(([id])=>selected.has(id)));
+  const wildIds=new Set((state.room?.game?.hand||[]).filter(c=>selected.has(c.id)&&c.rank===14&&c.suit==='S').map(c=>c.id));
+  if(!wildIds.size)return undefined;
+  const map=Object.fromEntries(Object.entries(wildcardMap).filter(([id])=>wildIds.has(id)));
   const declaration=Object.keys(map).length?map:(wildcard?Number(wildcard):undefined);
   if(selected.size===1){const c=state.room?.game?.hand.find(c=>selected.has(c.id));if(c?.rank===14&&c.suit==='S'&&(typeof declaration==='object'?wildRank(declaration[c.id])===14:declaration===14))return undefined;}
   return declaration;
