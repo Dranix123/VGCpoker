@@ -520,6 +520,22 @@ class Game:
                 elif seat in self.finished and action == 'hook': self.turn = self.inherit_lead(seat)
         self.open_priority()
 
+    def body_groups(self, combo):
+        kind = combo.get('baseKind', combo['kind'])
+        if kind in ('飞机带单', '飞机带对'):
+            width = combo['n'] // (4 if kind == '飞机带单' else 5)
+            ranks = range(combo['value'] - width + 1, combo['value'] + 1)
+        elif '带' in kind:
+            ranks = [self.main if combo['value'] == 15.5 else combo['value']]
+        else: ranks = sorted(set(combo['ranks']))
+        return [[i for i, rank in enumerate(combo['ranks']) if rank == r] for r in ranks]
+
+    def hui_profile(self, combo, cards):
+        groups = self.body_groups(combo)
+        if any(combo['ranks'][i] >= 15 or combo['ranks'][i] == self.main for group in groups for i in group): return None
+        suits = combo.get('suits', [c['suit'] for c in cards])
+        return tuple(tuple(sorted(Counter(suits[i] for i in group).items())) for group in groups)
+
     def validate_play(self, seat, cards, action='play', wildcard=None):
         if not cards or any(c['rank'] == 18 for c in cards): raise RuleError('急牌请通过赠牌使用。')
         if action not in ('play', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'hui'): raise RuleError('未知出牌方式。')
@@ -563,9 +579,9 @@ class Game:
                 ok = self.options.get('advancedDead', False) and chain == 'dead' and len(cards) == 4 and matched
                 direct = True
             elif action == 'hui':
-                old_suits = old.get('suits', [c['suit'] for c in old['cards']])
-                eligible = chain not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and not self.hui_used and all(r < 15 and r != self.main for r in old['ranks'])
-                matched = next((c for c in combos if c['kind'] == old.get('baseKind', old['kind']) and c['n'] == old['n'] and all(r < 15 and r != self.main for r in c['ranks']) and len(set(c.get('suits', [card['suit'] for card in cards]) + old_suits)) == 1), None)
+                profile = self.hui_profile(old, old['cards'])
+                eligible = chain not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and not self.hui_used and profile is not None
+                matched = next((c for c in combos if c['kind'] == old.get('baseKind', old['kind']) and c['n'] == old['n'] and self.hui_profile(c, cards) == profile), None)
                 ok = eligible and matched and (self.options.get('advancedHui', False) or old['n'] == 1)
             if not ok: raise RuleError('所选牌不满足' + {'cross': '叉', 'hook': '勾', 'dot': '点', 'press': '压', 'dead': '死压', 'dead4': '进阶死压', 'hui': '回'}[action] + '的条件。')
             c = matched or combos[0]
@@ -732,9 +748,19 @@ class Game:
                     except RuleError: pass
             if self.last and self.mode in ('standard', 'trio') and any(c['rank'] == 14 and c['suit'] == 'S' for c in cards):
                 old_suits = self.last.get('suits', [c['suit'] for c in self.last['cards']])
-                if len(set(old_suits)) == 1:
-                    for combo in interpretations(cards, self.mode, self.main, pattern=self.pattern):
-                        declaration = {c['id']: {'rank': r, 'suit': old_suits[0]} for c, r in zip(cards, combo['ranks']) if c['rank'] == 14 and c['suit'] == 'S'}
+                old_groups = self.body_groups(self.last)
+                for combo in interpretations(cards, self.mode, self.main, pattern=self.pattern):
+                    groups = self.body_groups(combo)
+                    if len(groups) != len(old_groups): continue
+                    declaration = {c['id']: {'rank': r, 'suit': c['suit']} for c, r in zip(cards, combo['ranks']) if c['rank'] == 14 and c['suit'] == 'S'}
+                    for old_group, group in zip(old_groups, groups):
+                        expected = Counter(old_suits[i] for i in old_group)
+                        natural = Counter(cards[i]['suit'] for i in group if cards[i]['id'] not in declaration)
+                        missing = list((expected - natural).elements())
+                        wild_group = [i for i in group if cards[i]['id'] in declaration]
+                        if natural - expected or len(missing) != len(wild_group): break
+                        for i, suit in zip(wild_group, missing): declaration[cards[i]['id']]['suit'] = suit
+                    else:
                         try:
                             matched, direct = self.validate_play(seat, cards, 'hui', declaration)
                             output.append({'action': 'hui', 'ids': [c['id'] for c in cards], 'wildcard': declaration, 'label': matched['kind'], 'power': matched['power'], 'value': matched['value'], 'n': len(cards)})
