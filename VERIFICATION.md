@@ -124,3 +124,7 @@
 托管：新增账号本人的 autoplay 状态与开关接口，保留 bot 身份标志及积分房间判断；规则调度器代为处理开局、猜拳、进贡、普通/特殊出牌与协商。托管优先响应不再造成单人等待，仍等待其他手动玩家优先决定；取消在播报期间可用，并使异步旧局面失效，后续不再为该座位调度 AI。托管期间手动行动禁用，发言/设置与取消仍可用。座位和手牌工具栏均显示“托管中”。116 项 Python、20 项 JS 测试通过，覆盖单人代打、取消后停止、语音等待期间取消、多人的身份/积分与本人权限、真人优先响应；语法和 diff 检查通过。
 
 隔离 390px 浏览器实测开启/取消及标识消失，截图 output/playwright/vgc-autoplay-on.png；另用两个独立账号/浏览器会话验证其他玩家发言真实同步，在自己的视角显示发言者姓名，气泡边界完全位于牌桌下方与手牌上方。截图 output/playwright/vgc-peer-chat-position.png。测试使用临时数据库和本地预览服务；切换预览服务时产生预期的轮询连接拒绝日志，无正式账号验收流量。
+
+Seat bubble and low-card report update: top/bottom bubbles appear to the right, left/right bubbles above. Four authenticated players can retain four independent messages simultaneously. Browser checks at 320/360/390/1280px show four longest messages inside the board, without bubble/bubble or bubble/play-area intersections; additional widths 375/720/721/768/960/1024px pass. Screenshots: output/playwright/vgc-four-chat-{width}.png.
+
+Low-card reports now occur once per seat per game on the first transition to at most ten cards. Later changes or a second threshold crossing do not repeat the report. New games reset the flag; negotiation snapshots restore it. Rules text updated. All 119 Python and 20 JavaScript tests pass, along with syntax and whitespace checks.
