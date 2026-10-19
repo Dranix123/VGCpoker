@@ -290,6 +290,11 @@ class Game:
     def priority_paused(self):
         return bool(self.priority and self.solo() and any(seat != self.turn for seat in self.priority['pending']))
 
+    def forced_pass(self):
+        if self.phase != 'play' or self.mode == 'landlord' or self.negotiation or self.priority_paused(): return False
+        if not self.last or self.last.get('special') in (None, 'play') or self.turn == self.last_seat: return False
+        return not self.candidates(self.turn)
+
     def snapshot(self):
         import copy
         return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last')}
@@ -541,7 +546,7 @@ class Game:
                     self.last = None; self.hui_used = False
                     self.display_seen.clear()
                     for finished in self.finished: self.seat_plays[finished] = None
-                elif seat in self.finished and action == 'hook': self.turn = self.inherit_lead(seat)
+                elif seat in self.finished and action in ('dead', 'hook'): self.turn = self.inherit_lead(seat)
         self.open_priority()
 
     def body_groups(self, combo):

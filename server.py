@@ -115,11 +115,13 @@ def perform_game_action(room, seat, move):
     if g.phase == 'over' and old_phase != 'over': items.append({'effect': 'result'})
     queue_audio(room, items)
 
+CHAT_PHRASES = ('悲', '你能秒我？', '给阿姨倒一杯卡布奇诺')
+
 def room_view(room, uid):
     seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
     return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected')} for p in room['players']],
             'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
-            'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') else None, 'audioWaiting': audio_waiting(room), 'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
+            'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') else None, 'audioWaiting': audio_waiting(room), 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
     parsed = urllib.parse.urlsplit(endpoint)
@@ -182,6 +184,10 @@ def bot_loop():
                 g = room.get('game')
                 if not g or g.phase == 'over' or room['code'] in BOT_BUSY or audio_waiting(room): continue
                 if g.priority_paused(): continue
+                if g.forced_pass():
+                    perform_game_action(room, g.turn, {'action': 'pass'})
+                    room['revision'] += 1
+                    continue
                 for seat, p in enumerate(room['players']):
                     if not p.get('bot'): continue
                     move = g.bot_action(seat)
@@ -231,7 +237,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = self.session()
                 if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
                 if path == '/api/state':
-                    if not user: return self.respond({'user': None, 'room': None, 'features': {'wildUrgent': True}})
+                    if not user: return self.respond({'user': None, 'room': None, 'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}})
                     if self.headers.get('X-Poker-Audio') != '0': STATS.activity(user['id'])
                     room = room_of(user['id'])
                     if room:
@@ -239,7 +245,7 @@ class Handler(BaseHTTPRequestHandler):
                         p['connected'] = True; p['seen'] = time.time(); p['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
                         for p in room['players']:
                             if not p.get('bot'): p['connected'] = time.time() - p.get('seen', 0) < 15
-                    return self.respond({'features': {'wildUrgent': True}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    return self.respond({'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
@@ -368,6 +374,7 @@ class Handler(BaseHTTPRequestHandler):
             if reserved and not single: code = RESERVED_ROOM
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
             options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc', 'tribute')}
+            for key in ('advancedHui', 'advancedDead'): options[key] = mode in ('standard', 'trio') and b.get('options', {}).get(key, True) is True
             if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if uid in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[uid].copy()
@@ -396,6 +403,14 @@ class Handler(BaseHTTPRequestHandler):
             seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
             room['players'][seat]['seen'] = time.time()
             if self.headers.get('X-Poker-Audio') is not None: room['players'][seat]['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
+            if path == '/api/chat':
+                text = b.get('text')
+                if text not in CHAT_PHRASES: raise RuleError('请选择预设发言。')
+                if not room.get('game'): raise RuleError('请在牌桌中发言。')
+                bubbles = room.setdefault('bubbles', {})
+                if bubbles.get(uid, {}).get('sent', 0) > time.time() - 2: raise RuleError('发言太快，请稍候。')
+                bubbles[uid] = {'text': text, 'sent': time.time(), 'expires': time.time() + 6}
+                return self.respond({'ok': True, 'room': room_view(room, uid)})
             if path == '/api/audio-ack':
                 event = room.get('audioEvent')
                 if event and b.get('event') == event['id'] and uid not in event['acknowledged']: event['acknowledged'].append(uid)

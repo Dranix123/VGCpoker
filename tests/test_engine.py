@@ -681,6 +681,59 @@ class Rules(unittest.TestCase):
         with self.assertRaises(RuleError):g.action(1,'negotiate',['d0','d1'],special='cross')
         with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=3)
 
+    def test_special_chain_skips_only_players_without_response_or_urgent(self):
+        for mode in ('basic', 'standard'):
+            g=table(mode); g.turn=0
+            g.hands[0]=cards([5,9],prefix='a');g.hands[3]=cards([5,5,9],prefix='b')
+            g.hands[2]=cards([6,7],prefix='c');g.hands[1]=cards([5,8],prefix='d')
+            g.action(0,'play',['a0']);g.action(3,'cross',['b0','b1'])
+            self.assertEqual(g.turn,2);self.assertTrue(g.forced_pass())
+            g.action(g.turn,'pass');self.assertEqual(g.turn,1);self.assertFalse(g.forced_pass())
+            g.action(1,'hook',['d0']);self.assertFalse(g.forced_pass())
+            g.action(1,'play',['d1']);self.assertFalse(g.forced_pass())
+        g=table();g.turn=0
+        g.hands[0]=cards([5,9],prefix='a');g.hands[3]=cards([5,5,9],prefix='b')
+        g.hands[2]=cards([18,7,8],prefix='c')
+        g.action(0,'play',['a0']);g.action(3,'cross',['b0','b1'])
+        self.assertFalse(g.forced_pass())
+        g.action(2,'urgent',['c0','c1'],target=1)
+        self.assertTrue(g.forced_pass())
+        g.hands[2]=cards([14],'S','w')+cards([9],prefix='x')
+        self.assertFalse(g.forced_pass())
+
+    def test_unanswered_cross_auto_passes_back_to_owner_or_partner(self):
+        for finished in (False, True):
+            g=table('basic');g.turn=0
+            g.hands[0]=cards([5,9],prefix='a');g.hands[3]=cards([5,5]+([] if finished else [8]),prefix='b')
+            g.hands[2]=cards([6,7],prefix='c');g.hands[1]=cards([6,8],prefix='d')
+            g.action(0,'play',['a0']);g.action(3,'cross',['b0','b1'])
+            skipped=[]
+            while g.forced_pass():
+                skipped.append(g.turn);g.action(g.turn,'pass')
+            self.assertEqual(skipped,[2,1,0]);self.assertIsNone(g.last)
+            self.assertEqual(g.turn,1 if finished else 3)
+            self.assertFalse(g.forced_pass())
+            g.action(g.turn,'play',[g.hands[g.turn][0]['id']])
+
+    def test_dead_and_other_specials_keep_legal_responses_and_free_lead(self):
+        g=table(options={'advancedDead':True});g.turn=0
+        g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,5,5,9],prefix='b')
+        g.action(0,'play',['a0','a1']);g.action(3,'dead',['b0','b1','b2'])
+        self.assertEqual(g.turn,3);self.assertFalse(g.forced_pass())
+        g.action(3,'play',['b3']);self.assertFalse(g.forced_pass())
+        g=table(options={'advancedDead':True});g.turn=0
+        g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,5,5],prefix='b')
+        g.action(0,'play',['a0','a1']);g.action(3,'dead',['b0','b1','b2'])
+        self.assertEqual(g.turn,1);self.assertFalse(g.forced_pass())
+        g.action(1,'play',[g.hands[1][0]['id']])
+        g=table();g.turn=0
+        g.hands[0]=cards([5,5,8],prefix='a');g.hands[3]=cards([5,9],prefix='b')
+        g.hands[2]=cards([6,7],prefix='c')
+        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0'])
+        self.assertTrue(g.forced_pass())
+        g.hands[2]=cards([15,7],prefix='c');self.assertFalse(g.forced_pass())
+        g.negotiation={'target':2};self.assertFalse(g.forced_pass())
+
     def test_four_card_airplanes_with_two_units_per_group(self):
         for mode in ('standard', 'trio'):
             for wings in ([8, 9, 10, 11], [8, 8, 9, 10], [8, 8, 9, 9, 10, 10, 11, 11]):

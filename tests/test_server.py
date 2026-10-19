@@ -181,6 +181,63 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
             self.assertGreater(len(response.read()),500)
 
+    def test_server_automatically_passes_without_requesting_a_bot_move(self):
+        self.request(self.clients[0], 'create', {'mode': 'basic'})
+        for _ in range(3): self.request(self.clients[0], 'bot', {})
+        _, data = self.request(self.clients[0], 'start', {})
+        room = server.ROOMS[data['room']['code']];g=room['game'];g.phase='play';g.turn=1
+        def hand(ranks, prefix):
+            return [{'id': prefix+str(i), 'rank':r, 'suit':'H'} for i,r in enumerate(ranks)]
+        g.hands=[hand([7,8],'a'),hand([5,9],'b'),hand([6,7],'c'),hand([5,5,9],'d')]
+        g.action(1,'play',['b0']);g.action(3,'cross',['d0','d1'])
+        g.turn=0;g.priority=None
+        revision=room['revision']
+        room['players'][0]['audioEnabled']=True
+        server.queue_audio(room,[{'voice':'pass'}])
+        with patch('server.time.sleep', side_effect=[None, RuntimeError('stop loop')]), patch.object(g,'forced_pass', side_effect=AssertionError('wait for narration')):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+        self.assertEqual(room['revision'],revision)
+        room['audioEvent']['acknowledged']=[room['players'][0]['id']]
+        with patch('server.time.sleep', side_effect=[None, RuntimeError('stop loop')]), patch.object(g,'bot_action', side_effect=AssertionError('must skip first')):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+        self.assertEqual(g.turn,3)
+        self.assertEqual(room['revision'],revision+1)
+        self.assertTrue(g.seat_plays[0]['passed'])
+        self.assertEqual(room['audioEvent']['items'],[{'voice':'pass'}])
+
+    def test_advanced_options_default_on_and_allow_explicit_disable(self):
+        for mode in ('standard', 'trio', 'basic', 'landlord'):
+            for options in ({}, {'advancedHui': False, 'advancedDead': False}):
+                server.ROOMS.clear()
+                status, data = self.request(self.clients[0], 'create', {'mode': mode, 'options': options})
+                self.assertEqual(status, 200)
+                for key in ('advancedHui', 'advancedDead'):
+                    self.assertEqual(data['room']['options'][key], mode in ('standard', 'trio') and not options)
+
+    def test_chat_is_preset_only_shared_temporary_and_does_not_change_game_revision(self):
+        first, second = self.clients[:2]
+        _, data = self.request(first, 'create', {'mode': 'standard'})
+        code = data['room']['code']
+        self.request(second, 'join', {'code': code})
+        for _ in range(2): self.request(first, 'bot', {})
+        _, data = self.request(first, 'start', {})
+        revision = data['room']['revision']
+        event = data['room']['audioEvent']
+        for text in server.CHAT_PHRASES:
+            server.ROOMS[code].pop('bubbles', None)
+            status, data = self.request(first, 'chat', {'text': text})
+            self.assertEqual(status, 200)
+            self.assertEqual(data['room']['bubbles'], {'0': text})
+            self.assertEqual(data['room']['revision'], revision)
+            self.assertEqual(data['room']['audioEvent'], event)
+            self.assertEqual(self.request(second, 'state')[1]['room']['bubbles'], {'0': text})
+        self.assertEqual(self.request(first, 'chat', {'text': '悲'})[0], 400)
+        for text in ('任意文本', '<script>alert(1)</script>', None, ['悲']):
+            self.assertEqual(self.request(first, 'chat', {'text': text})[0], 400)
+        with patch('server.time.time', return_value=__import__('time').time() + 7):
+            self.assertEqual(self.request(second, 'state')[1]['room']['bubbles'], {})
+        self.assertEqual(self.request(self.clients[2], 'chat', {'text': '悲'})[0], 400)
+
     def test_extended_airplane_uses_recorded_voice(self):
         players = [{'id': i, 'name': str(i)} for i in range(4)]
         for wings, voice in (([], '飞机'), ([8, 9, 10, 11], '飞机带单'), ([8, 8, 9, 9, 10, 10, 11, 11], '飞机带对')):
