@@ -105,6 +105,7 @@ def perform_game_action(room, seat, move):
     if g.last_voice_play is not previous:
         play = g.last_voice_play; kind = play['kind']
         key = kind + '-' + str(play['ranks'][0]) if kind in ('单张', '对子') else kind
+        if '张飞机' in kind: key = '飞机带对' if kind.endswith('对') else '飞机带单' if '带' in kind else '飞机'
         items += [{'effect': 'play'}, {'voice': key}]
     elif g.negotiation and action not in ('accept', 'reject'):
         items.append({'voice': 'negotiate'})

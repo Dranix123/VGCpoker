@@ -90,6 +90,19 @@ def classify(ranks, mode='landlord', main=3, single_wings=False, pattern=(4, 14)
                 return result('飞机带单', seq[-1])
             if n == width * 5 and len(rem) == width and all(v == 2 for v in rem.values()):
                 return result('飞机带对', seq[-1])
+    if mode in ('standard', 'trio'):
+        for size in range(4, max(vals) + 1):
+            for width in range(2, min(12, n // size) + 1):
+                for start in range(3, 15 - width + 1):
+                    seq = list(range(start, start + width))
+                    if any(counts[r] != size for r in seq): continue
+                    wings = [v for r, v in counts.items() if r not in seq]
+                    paired = not single_wings and bool(wings) and all(v == 2 for v in wings)
+                    units = len(wings) if paired else sum(wings)
+                    if units and (units % width or not 1 <= units // width <= size - 2): continue
+                    label = numerals.get(size, str(size)) + '张飞机'
+                    if units: label += '带' + numerals.get(units, str(units)) + ('对' if paired else '单')
+                    return {**result(label, seq[-1]), 'bodySize': size, 'bodyWidth': width}
     for r in keys:
         if mode != 'landlord': break
         if counts[r] != 4: continue
@@ -153,6 +166,14 @@ def interpretations(cards, mode, main, wildcard=None, pattern=(4, 14)):
         if n in (width * 4, width * 5):
             for start in range(3, 15 - width + 1):
                 bodies.append((Counter({r: 3 for r in range(start, start + width)}), width, n == width * 5, False))
+    for size in range(4, n // 2 + 1):
+        for width in range(2, min(12, n // size) + 1):
+            for unit in (1, 2):
+                wings, remainder = divmod(n - size * width, unit)
+                if remainder or wings % width or not 0 <= wings // width <= size - 2: continue
+                for start in range(3, 15 - width + 1):
+                    body = Counter({r: size for r in range(start, start + width)})
+                    if sum((body - fixed).values()) <= len(wild): bodies.append((body, wings, unit == 2, False))
     for size in range(3, n):
         for unit in (1, 2):
             wings, remainder = divmod(n - size, unit)
@@ -402,7 +423,10 @@ class Game:
                         winning = next(c for c in choices if {'rock': 'scissors', 'paper': 'rock', 'scissors': 'paper'}[c] in choices)
                         self.reveals = [s for s in self.reveals if self.rps[s] == winning]
                         self.rps = {}
-                        if len(self.reveals) == 1: self.turn = self.reveals[0]; self.phase = 'play'
+                        if len(self.reveals) == 1:
+                            self.turn = self.reveals[0]; self.phase = 'play'
+                            self.announce('猜拳获胜：' + self.players[self.turn]['name'] + '，先出牌。')
+                        else: self.announce('猜拳胜者：' + '、'.join(self.players[s]['name'] for s in self.reveals) + '，继续猜拳。')
             return
         if self.phase != 'play': raise RuleError('请先完成开局。')
         if action in ('priority-play', 'priority-decline'):
@@ -522,7 +546,9 @@ class Game:
 
     def body_groups(self, combo):
         kind = combo.get('baseKind', combo['kind'])
-        if kind in ('飞机带单', '飞机带对'):
+        if combo.get('bodyWidth'):
+            ranks = range(combo['value'] - combo['bodyWidth'] + 1, combo['value'] + 1)
+        elif kind in ('飞机带单', '飞机带对'):
             width = combo['n'] // (4 if kind == '飞机带单' else 5)
             ranks = range(combo['value'] - width + 1, combo['value'] + 1)
         elif '带' in kind:
@@ -669,6 +695,21 @@ class Game:
                             pairs = [g[:2] for g in others if len(g) >= 2]
                             if len(singles) >= width: sets.append(seq + singles[:width])
                             if len(pairs) >= width: sets.append(seq + [c for g in pairs[:width] for c in g])
+        if self.mode in ('standard', 'trio'):
+            for size in range(4, max((len(g) for g in groups.values()), default=0) + 1):
+                for start in range(3, 14):
+                    seq = []
+                    for end in range(start, 15):
+                        if len(groups.get(end, [])) < size: break
+                        seq += groups[end][:size]
+                        width = end - start + 1
+                        if width < 2: continue
+                        sets.append(seq[:])
+                        others = [g for r, g in groups.items() if r < start or r > end]
+                        for units in ([[c] for g in others for c in g], [g[:2] for g in others if len(g) >= 2]):
+                            for count in range(1, size - 1):
+                                needed = width * count
+                                if len(units) >= needed: sets.append(seq + [c for g in units[:needed] for c in g])
         # Carried units are uniformly singles or pairs in the custom rules.
         for r, group in groups.items():
             if self.mode == 'basic' or len(group) < 4: continue
@@ -720,7 +761,8 @@ class Game:
                     for units in ([[g[0]] for g in others], [[c] for g in others for c in g], [g[:2] for g in others if len(g) >= 2]):
                         for count in range(1, min(size - 2, len(units)) + 1):
                             sets.append(body + [c for g in units[:count] for c in g])
-            for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
+            multiples = [(1, 5), (2, 3), (3, 2)] + [(size, 2) for size in range(4, max((len(g) for g in natural.values()), default=0) + len(wild) + 1)]
+            for multiple, minimum in multiples:
                 for start in range(3, 15):
                     seq, needed = [], 0
                     for end in range(start, 15):
@@ -728,7 +770,16 @@ class Game:
                         seq += available
                         needed += multiple - len(available)
                         if needed > len(wild): break
-                        if needed and end - start + 1 >= minimum: sets.append(seq + wild[:needed])
+                        width = end - start + 1
+                        if needed and width >= minimum:
+                            body = seq + wild[:needed]
+                            sets.append(body)
+                            if multiple >= 4:
+                                others = [g for r, g in natural.items() if r < start or r > end]
+                                for units in ([[c] for g in others for c in g], [g[:2] for g in others if len(g) >= 2]):
+                                    for count in range(1, multiple - 1):
+                                        total = width * count
+                                        if len(units) >= total: sets.append(body + [c for g in units[:total] for c in g])
         output, seen = [], set()
         for cards in sets:
             key = tuple(sorted(c['id'] for c in cards))

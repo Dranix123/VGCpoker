@@ -681,12 +681,47 @@ class Rules(unittest.TestCase):
         with self.assertRaises(RuleError):g.action(1,'negotiate',['d0','d1'],special='cross')
         with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=3)
 
+    def test_four_card_airplanes_with_two_units_per_group(self):
+        for mode in ('standard', 'trio'):
+            for wings in ([8, 9, 10, 11], [8, 8, 9, 10], [8, 8, 9, 9, 10, 10, 11, 11]):
+                ranks = [5]*4 + [6]*4 + wings
+                combo = classify(ranks, mode)
+                self.assertIsNotNone(combo)
+                self.assertEqual((combo['bodySize'], combo['bodyWidth'], combo['power']), (4, 2, 0))
+                g = table(mode); g.turn = 0
+                g.hands[0] = cards(ranks, prefix='a') + cards([13], prefix='z')
+                chosen = g.hands[0][:-1]
+                self.assertTrue(any(set(m['ids']) == {c['id'] for c in chosen} for m in g.candidates(0)))
+                g.action(0, 'auto', [c['id'] for c in chosen])
+                following = cards([6]*4 + [7]*4 + wings)
+                self.assertEqual(g.validate_play(g.turn, following)[0]['value'], 7)
+                with self.assertRaises(RuleError): g.validate_play(g.turn, cards([5]*4 + [6]*4 + wings))
+                self.assertIsNone(classify(ranks, 'landlord'))
+                self.assertIsNone(classify(ranks, 'basic'))
+
+    def test_extended_airplane_wildcards_hui_and_group_sizes(self):
+        for size in (4, 5, 6):
+            ranks = [5]*size + [6]*size + [9]*(2*(size-2))
+            self.assertIsNotNone(classify(ranks, 'standard'))
+        self.assertIsNone(classify([5]*4 + [6]*4 + [9]*5, 'standard'))
+        g = table(options={'advancedHui': True})
+        old = cards([7]*4 + [8]*4 + [9, 10, 11, 12])
+        g.last = {**classify([c['rank'] for c in old], 'standard'), 'cards': old, 'special': 'play'}
+        chosen = cards([5]*4 + [6]*3 + [9, 9, 10, 10], prefix='a') + cards([14], 'S', 'w')
+        combo = g.validate_play(0, chosen, 'hui', {'w0': {'rank': 6, 'suit': 'H'}})[0]
+        self.assertEqual(combo['baseKind'], '四张飞机带四单')
+        g.last = None; g.hands[0] = chosen + cards([13], prefix='z')
+        self.assertTrue(any(set(m['ids']) == {c['id'] for c in chosen} for m in g.candidates(0)))
+
     def test_rps_tie_and_4a4_equal_length_tiebreak(self):
         g=table();g.phase='rps';g.reveals=[0,1]
         g.action(0,'rps',value='rock');g.action(1,'rps',value='rock')
         self.assertEqual(g.phase,'rps');self.assertEqual(g.rps,{})
         g.action(0,'rps',value='scissors');g.action(1,'rps',value='paper')
         self.assertEqual(g.turn,0)
+        self.assertEqual(g.phase,'play')
+        self.assertIn('猜拳获胜：0，先出牌。', g.log)
+        g.action(0,'auto',[g.hands[0][0]['id']])
         low=classify([4]*5+[14]*2,'standard');high=classify([4]*4+[14]*3,'standard')
         self.assertLess(low['power'],high['power']);self.assertLess(low['value'],high['value'])
 

@@ -181,6 +181,16 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
             self.assertGreater(len(response.read()),500)
 
+    def test_extended_airplane_uses_recorded_voice(self):
+        players = [{'id': i, 'name': str(i)} for i in range(4)]
+        for wings, voice in (([], '飞机'), ([8, 9, 10, 11], '飞机带单'), ([8, 8, 9, 9, 10, 10, 11, 11], '飞机带对')):
+            g = Game('standard', players); g.phase = 'play'; g.turn = 0
+            ranks = [5]*4 + [6]*4 + wings
+            g.hands[0] = [{'id': str(i), 'rank': rank, 'suit': 'H'} for i, rank in enumerate(ranks + [13])]
+            room = {'players': players, 'game': g}
+            server.perform_game_action(room, 0, {'action': 'auto', 'ids': [str(i) for i in range(len(ranks))]})
+            self.assertEqual(room['audioEvent']['items'], [{'effect': 'play'}, {'voice': voice}])
+
     def test_audio_gate_requires_current_completion_acknowledgement(self):
         client=self.clients[0];headers={'X-Poker-Audio':'1'}
         self.request(client,'create',{'mode':'basic'},headers)
