@@ -50,7 +50,7 @@ test('current player replaces their previous play with an in-seat status',()=>{
 test('autoplay shows badges and cancellation while removing manual play controls',()=>{
  for(const enabled of [false,true]){
   const players=Array.from({length:4},(_,i)=>({id:i+1,name:String(i),connected:true,autoplay:i===0&&enabled}));
-  const r={seat:0,capacity:4,players,rated:true};
+  const r={seat:0,capacity:4,players,rated:true,bubbles:{0:'悲',1:'你能秒我？',2:'给阿姨倒一杯卡布奇诺',3:'悲'}};
   const g={mode:'basic',phase:'play',turn:0,finished:[],urgentLast:[],counts:[2,2,2,2],hand:[],scores:[0,0],log:[]};
   const context={state:{user:{id:1}},esc:String,ranks:{},suits:{},selected:new Set(),roomHeading:()=>'',card:()=>'',r,g};vm.createContext(context);
   const html=vm.runInContext(source.slice(source.indexOf('function table('),source.indexOf('function showAuth('))+'\ntable(r,g);',context);
@@ -58,5 +58,8 @@ test('autoplay shows badges and cancellation while removing manual play controls
   assert.equal(html.includes('class="autoplay-status"'),enabled);
   assert.equal(html.includes('data-action="play"'),!enabled);
   assert.ok(html.includes('data-action="autoplay"'));
+  assert.equal((html.match(/class="speech-bubble"/g)||[]).length,4);
+  for(let seat=0;seat<4;seat++)assert.ok(html.includes(`aria-label="${seat}的发言"`));
+  assert.ok(!html.includes('table-chat'));
  }
 });

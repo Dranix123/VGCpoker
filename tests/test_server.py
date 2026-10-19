@@ -305,6 +305,18 @@ class ServerIntegration(unittest.TestCase):
                 for key in ('advancedHui', 'advancedDead'):
                     self.assertEqual(data['room']['options'][key], mode in ('standard', 'trio') and not options)
 
+    def test_four_players_can_display_messages_at_the_same_time(self):
+        _,data=self.request(self.clients[0],'create',{'mode':'standard'})
+        for client in self.clients[1:]:self.request(client,'join',{'code':data['room']['code']})
+        self.request(self.clients[0],'start',{})
+        expected={}
+        for seat,client in enumerate(self.clients):
+            text=server.CHAT_PHRASES[seat%len(server.CHAT_PHRASES)]
+            status,data=self.request(client,'chat',{'text':text})
+            self.assertEqual(status,200)
+            expected[str(seat)]=text
+        for client in self.clients:self.assertEqual(self.request(client,'state')[1]['room']['bubbles'],expected)
+
     def test_chat_is_preset_only_shared_temporary_and_does_not_change_game_revision(self):
         first, second = self.clients[:2]
         _, data = self.request(first, 'create', {'mode': 'standard'})

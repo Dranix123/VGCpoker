@@ -802,6 +802,28 @@ class Rules(unittest.TestCase):
         low=classify([4]*5+[14]*2,'standard');high=classify([4]*4+[14]*3,'standard')
         self.assertLess(low['power'],high['power']);self.assertLess(low['value'],high['value'])
 
+    def test_report_announces_only_first_threshold_per_player_per_game(self):
+        for mode in ('basic','standard','trio'):
+            g=table(mode);g.hands[0]=cards([6]*11)
+            g.report(0);self.assertNotIn(0,g.reported)
+            g.hands[0].pop();g.report(0)
+            g.hands[0].pop();g.report(0)
+            g.hands[0]=cards([6]*12);g.report(0)
+            g.hands[0]=cards([6]*8);g.report(0)
+            g.report(1)
+            self.assertEqual(sum('爆牌 · 0' in line for line in g.log),1)
+            self.assertEqual(sum('爆牌 · 1' in line for line in g.log),1)
+            self.assertEqual(g.reported,{0,1})
+            fresh=table(mode);fresh.report(0);self.assertEqual(fresh.reported,{0})
+        g=table('landlord');g.report(0);self.assertFalse(g.reported)
+
+    def test_report_flag_is_restored_with_negotiation_snapshot(self):
+        g=table();snapshot=g.snapshot();g.report(0)
+        self.assertIn(0,g.reported)
+        for key,value in snapshot.items():setattr(g,key,value)
+        self.assertNotIn(0,g.reported)
+        g.report(0);self.assertEqual(sum('爆牌' in line for line in g.log),1)
+
     def test_urgent_and_announcements(self):
         g=table();g.hands[0]=cards([18,6,9],prefix='a')
         g.action(0,'urgent',['a0','a1'],target=3)
