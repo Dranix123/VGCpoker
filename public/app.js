@@ -203,22 +203,23 @@ function sweepCard(card){
  cardSweep.selecting?selected.add(card.dataset.card):selected.delete(card.dataset.card);
 }
 document.addEventListener('pointerdown',e=>{
+ if(e.isPrimary===false||cardSweep&&e.pointerId!==cardSweep.pointerId)return;
  cardSweep=null;suppressCardClick=false;
- if(e.pointerType!=='mouse'||e.button!==0)return;
+ if(!['mouse','touch','pen'].includes(e.pointerType)||e.button!==0)return;
  const card=e.target.closest('.hand [data-card]');if(!card)return;
  cardSweep={pointerId:e.pointerId,selecting:!selected.has(card.dataset.card),visited:new Set(),x:e.clientX,y:e.clientY};
- suppressCardClick=true;sweepCard(card);selectionUpdate();e.preventDefault();
+ suppressCardClick=true;card.setPointerCapture?.(e.pointerId);sweepCard(card);selectionUpdate();e.preventDefault();
 });
 document.addEventListener('pointermove',e=>{
- if(!cardSweep||e.pointerId!==cardSweep.pointerId||!(e.buttons&1))return;
+ if(!cardSweep||e.pointerId!==cardSweep.pointerId||e.pointerType==='mouse'&&!(e.buttons&1))return;
  const {x,y}=cardSweep, steps=Math.max(1,Math.ceil(Math.hypot(e.clientX-x,e.clientY-y)/8));
  for(let i=1;i<=steps;i++)sweepCard(document.elementFromPoint(x+(e.clientX-x)*i/steps,y+(e.clientY-y)*i/steps)?.closest('.hand [data-card]'));
  cardSweep.x=e.clientX;cardSweep.y=e.clientY;selectionUpdate();e.preventDefault();
 });
-document.addEventListener('pointerup',()=>{cardSweep=null;});
-document.addEventListener('pointercancel',()=>{cardSweep=null;suppressCardClick=false;});
+document.addEventListener('pointerup',e=>{if(e.pointerId===cardSweep?.pointerId)cardSweep=null;});
+document.addEventListener('pointercancel',e=>{if(e.pointerId===cardSweep?.pointerId){cardSweep=null;suppressCardClick=false;}});
 document.addEventListener('click',async e=>{
- const c=e.target.closest('[data-card]');if(c){if(e.detail&&suppressCardClick){suppressCardClick=false;return;}selected.has(c.dataset.card)?selected.delete(c.dataset.card):selected.add(c.dataset.card);selectionUpdate();return;}
+ const c=e.target.closest('[data-card]');if(c){if(suppressCardClick&&(e.detail||['touch','pen'].includes(e.pointerType))){suppressCardClick=false;return;}selected.has(c.dataset.card)?selected.delete(c.dataset.card):selected.add(c.dataset.card);selectionUpdate();return;}
  const b=e.target.closest('[data-action]');if(!b||b.disabled)return;
  const action=b.dataset.action;
  try{

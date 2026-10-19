@@ -403,3 +403,18 @@ footer{gap:24px}
 .seat.top .speech-bubble{bottom:auto;top:calc(100% + 12px);border-radius:2px 12px 12px 12px}
 .seat.left .speech-bubble{left:0;transform:none}.seat.right .speech-bubble{left:auto;right:0;transform:none}
 @media(max-width:720px){.turn-notice{font-size:14px;padding:9px 10px;margin-bottom:8px}.turn-notice.your-turn{font-size:20px;padding:9px 8px}.speech-bubble{font-size:13px;max-width:180px;padding:9px 12px}}
+
+.hand [data-card]{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+@media(max-width:720px){
+ .hand,.hand.dense{justify-content:center;padding:24px 16px 12px}
+ .hand .card,.hand.dense .card,.hand .card+.card,.hand.dense .card+.card{margin:0 -16px}
+ .hand .card:last-child{margin-right:-16px}
+ .hand-top{justify-content:center;gap:20px}
+ .room-heading{flex-direction:column;align-items:center;text-align:center;gap:12px}
+ .room-heading-actions{justify-content:center}
+ .home-copy,.flow-heading,.settings-content>h2{text-align:center}
+ .home-bottom,.settings-tabs{justify-content:center;flex-wrap:wrap}
+ .main-menu-item{justify-content:center;position:relative}
+ .main-menu-item .menu-arrow{position:absolute;right:16px}
+ .mode-card{text-align:center}
+}
