@@ -448,8 +448,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
                 g = room['game']
-                moves = [] if g.priority and g.solo() and seat not in g.priority['pending'] else g.candidates(seat)
-                return self.respond({'moves': moves[:80]})
+                waiting = g.priority and g.solo() and seat not in g.priority['pending']
+                moves = [] if waiting else g.candidates(seat)
+                reason = '等待优先管牌处理完成。' if waiting else '还没轮到你出牌。' if seat != g.turn and not moves else '当前没有能管住上一手的牌。' if not moves else ''
+                return self.respond({'moves': moves[:80], 'reason': reason})
             elif path == '/api/action':
                 if not room['game']: raise RuleError('对局尚未开始。')
                 if b.get('revision') != room['revision']: raise RuleError('牌桌已变化，请按最新局面出牌。')

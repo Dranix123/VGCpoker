@@ -36,16 +36,13 @@ test('advanced rules use unchecked opt-out controls in supported modes',()=>{
     }
   }
 });
-test('turn notice remains visible and distinguishes narration, other turns and priority',()=>{
-  const context={esc:x=>String(x).replaceAll('<','&lt;')};vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf('function turnNotice('),source.indexOf('function table(')),context);
-  const r={seat:0,players:[{name:'你'},{name:'1号',bot:true}]};
-  const g={phase:'play',turn:0,finished:[]};
-  assert.match(context.turnNotice(r,g),/your-turn.*轮到你出牌/);
-  r.audioWaiting=true;assert.match(context.turnNotice(r,g),/播报中.*接下来由你出牌/);
-  assert.ok(!context.turnNotice(r,g).includes('your-turn'));
-  r.audioWaiting=false;g.turn=1;assert.match(context.turnNotice(r,g),/1号 正在出牌/);
-  g.response={};assert.match(context.turnNotice(r,g),/your-turn.*你可以优先管牌/);
-  g.negotiation={};assert.match(context.turnNotice(r,g),/等待玩家确认/);
-  g.phase='over';assert.equal(context.turnNotice(r,g),'');
+test('current player replaces their previous play with an in-seat status',()=>{
+  const start=source.indexOf('const playedCards=');
+  const expression=source.slice(start+'const playedCards='.length,source.indexOf(';\n',start));
+  for(const turn of [0,1]){
+    const context={g:{phase:'play',turn},s:0,played:turn===0?{kind:'旧出牌'}:null};vm.createContext(context);
+    const html=vm.runInContext(expression,context);
+    assert.equal(html.includes('出牌中...'),turn===0);
+  }
+  assert.ok(!source.includes('turnNotice('));
 });

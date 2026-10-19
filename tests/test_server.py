@@ -181,6 +181,37 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
             self.assertGreater(len(response.read()),500)
 
+    def test_three_jokers_hint_and_play_beat_five_and_six_card_bombs(self):
+        client=self.clients[0]
+        for size in (5,6):
+            for jokers in ([16,16,17],[16,17,17],[17,17,17]):
+                server.ROOMS.clear()
+                _, data=self.request(client,'create',{'mode':'standard'})
+                for _ in range(3):self.request(client,'bot',{})
+                _,data=self.request(client,'start',{})
+                room=server.ROOMS[data['room']['code']];g=room['game'];g.phase='play';g.turn=1
+                def hand(ranks,prefix):
+                    return [{'id':prefix+str(i),'rank':rank,'suit':'J' if rank>=16 else 'H'} for i,rank in enumerate(ranks)]
+                g.hands[0]=hand(jokers+[8],'a');g.hands[1]=hand([5]*(size-1)+[14,10],'b')
+                g.hands[1][size-1]['suit']='S'
+                g.hands[2]=hand([6,7],'c');g.hands[3]=hand([6,7],'d')
+                _,hint=self.request(client,'hint',{})
+                self.assertEqual(hint['reason'],'还没轮到你出牌。')
+                g.priority={'pending':[],'bots':[1]}
+                _,hint=self.request(client,'hint',{})
+                self.assertEqual(hint['reason'],'等待优先管牌处理完成。')
+                g.priority=None
+                server.perform_game_action(room,1,{'action':'auto','ids':['b'+str(i) for i in range(size)],'wildcard':5})
+                self.assertEqual(g.last['power'],size)
+                self.assertEqual(g.last['ranks'],[5]*size)
+                self.assertEqual(g.turn,0)
+                status,data=self.request(client,'hint',{})
+                self.assertEqual(status,200)
+                self.assertTrue(any(m['label']=='王炸' and m['power']==6.5 and set(m['ids'])=={'a0','a1','a2'} for m in data['moves']))
+                status,data=self.request(client,'action',{'action':'auto','ids':['a0','a1','a2'],'revision':room['revision']})
+                self.assertEqual(status,200)
+                self.assertEqual(data['room']['game']['last']['power'],6.5)
+
     def test_server_automatically_passes_without_requesting_a_bot_move(self):
         self.request(self.clients[0], 'create', {'mode': 'basic'})
         for _ in range(3): self.request(self.clients[0], 'bot', {})
