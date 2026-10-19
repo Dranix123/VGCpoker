@@ -181,6 +181,46 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(response.headers['Content-Type'],'audio/mpeg')
             self.assertGreater(len(response.read()),500)
 
+    def test_autoplay_runs_rules_and_cancels_even_during_audio(self):
+        client=self.clients[0]
+        _,data=self.request(client,'create',{'mode':'landlord'})
+        for _ in range(2):self.request(client,'bot',{})
+        _,data=self.request(client,'start',{})
+        room=server.ROOMS[data['room']['code']];g=room['game'];g.phase='play';g.turn=0;g.landlord=0
+        g.hands[0]=[{'id':'a'+str(i),'rank':r,'suit':'H'} for i,r in enumerate([3,4,5,6,7,9])]
+        for seat in (1,2):g.hands[seat]=[{'id':str(seat)+str(i),'rank':r,'suit':'H'} for i,r in enumerate([8,10])]
+        status,data=self.request(client,'autoplay',{'enabled':True})
+        self.assertEqual(status,200);self.assertTrue(data['room']['players'][0]['autoplay'])
+        self.assertFalse(room['players'][0].get('bot'))
+        self.assertEqual(self.request(client,'action',{'action':'pass','revision':room['revision']})[0],400)
+        before=len(g.hands[0])
+        with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]),patch('server.model_move',side_effect=AssertionError('must use rules')):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'):server.bot_loop()
+        self.assertLess(len(g.hands[0]),before)
+        room['players'][0]['audioEnabled']=True
+        server.queue_audio(room,[{'voice':'pass'}])
+        status,data=self.request(client,'autoplay',{'enabled':False},{'X-Poker-Audio':'1'})
+        self.assertEqual(status,200);self.assertFalse(data['room']['players'][0]['autoplay'])
+        g.turn=0;g.last=None;before=len(g.hands[0])
+        room['players'][0]['audioEnabled']=False
+        for p in room['players'][1:]:p['bot']=False
+        with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]),patch.object(g,'bot_action',side_effect=AssertionError('manual player must not run')):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'):server.bot_loop()
+        self.assertEqual(len(g.hands[0]),before)
+        self.assertEqual(self.request(client,'autoplay',{'enabled':'true'})[0],400)
+
+    def test_autoplay_keeps_multiplayer_room_rated_and_only_changes_self(self):
+        first=self.clients[0]
+        _,data=self.request(first,'create',{'mode':'standard'})
+        for client in self.clients[1:]:self.request(client,'join',{'code':data['room']['code']})
+        _,data=self.request(first,'start',{})
+        status,data=self.request(self.clients[1],'autoplay',{'enabled':True,'seat':0})
+        self.assertEqual(status,200);self.assertTrue(data['room']['rated'])
+        self.assertTrue(data['room']['players'][1]['autoplay']);self.assertFalse(data['room']['players'][0]['autoplay'])
+        self.assertFalse(data['room']['players'][1]['bot'])
+        room=server.ROOMS[data['room']['code']]
+        self.assertIsNotNone(room['game'].bot_action(1))
+
     def test_wildcard_bomb_passes_back_to_airplane_or_pair_run(self):
         client=self.clients[0]
         for follow in ([11,11,11,12,12,12,8,10],[4,4,5,5,6,6]):

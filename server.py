@@ -119,7 +119,7 @@ CHAT_PHRASES = ('悲', '你能秒我？', '给阿姨倒一杯卡布奇诺')
 
 def room_view(room, uid):
     seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
-    return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected')} for p in room['players']],
+    return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay')} for p in room['players']],
             'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
             'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') else None, 'audioWaiting': audio_waiting(room), 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': room['game'].view(seat) if room.get('game') else None, 'revision': room['revision']}
 
@@ -189,10 +189,10 @@ def bot_loop():
                     room['revision'] += 1
                     continue
                 for seat, p in enumerate(room['players']):
-                    if not p.get('bot'): continue
+                    if not (p.get('bot') or p.get('autoplay')): continue
                     move = g.bot_action(seat)
                     if not move: continue
-                    config = room.get('modelConfig') if p.get('model') else None
+                    config = room.get('modelConfig') if p.get('bot') and p.get('model') else None
                     if config and g.phase == 'play' and not g.negotiation:
                         BOT_BUSY.add(room['code'])
                         threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId']), daemon=True).start()
@@ -403,6 +403,12 @@ class Handler(BaseHTTPRequestHandler):
             seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
             room['players'][seat]['seen'] = time.time()
             if self.headers.get('X-Poker-Audio') is not None: room['players'][seat]['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
+            if path == '/api/autoplay':
+                if not isinstance(b.get('enabled'), bool): raise RuleError('托管状态无效。')
+                if b['enabled'] and (not room.get('game') or room['game'].phase == 'over'): raise RuleError('请在对局中开启托管。')
+                room['players'][seat]['autoplay'] = b['enabled']
+                room['revision'] += 1
+                return self.respond({'ok': True, 'room': room_view(room, uid)})
             if path == '/api/chat':
                 text = b.get('text')
                 if text not in CHAT_PHRASES: raise RuleError('请选择预设发言。')
@@ -453,6 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                 reason = '等待优先管牌处理完成。' if waiting else '还没轮到你出牌。' if seat != g.turn and not moves else '当前没有能管住上一手的牌。' if not moves else ''
                 return self.respond({'moves': moves[:80], 'reason': reason})
             elif path == '/api/action':
+                if room['players'][seat].get('autoplay'): raise RuleError('请先取消托管。')
                 if not room['game']: raise RuleError('对局尚未开始。')
                 if b.get('revision') != room['revision']: raise RuleError('牌桌已变化，请按最新局面出牌。')
                 args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special')}

@@ -681,6 +681,30 @@ class Rules(unittest.TestCase):
         with self.assertRaises(RuleError):g.action(1,'negotiate',['d0','d1'],special='cross')
         with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=3)
 
+    def test_autoplay_handles_human_priority_and_can_return_to_manual(self):
+        g=table('basic');g.interactive=True;g.turn=2
+        for seat in (1,2,3):g.players[seat]['bot']=True
+        g.hands[0]=cards([5,5,9],prefix='a');g.hands[1]=cards([6,8],prefix='b')
+        g.hands[2]=cards([5,8],prefix='c');g.hands[3]=cards([6,8],prefix='d')
+        g.action(2,'play',['c0']);self.assertTrue(g.priority_paused())
+        g.players[0]['autoplay']=True
+        self.assertFalse(g.priority_paused())
+        move=g.bot_action(0);self.assertEqual(move['action'],'priority-play');self.assertEqual(move['special'],'cross')
+        g.action(0,**move);self.assertEqual(g.last['special'],'cross')
+        self.assertFalse(g.players[0].get('bot'));self.assertTrue(g.solo())
+        g.players[0]['autoplay']=False
+
+    def test_autoplay_waits_for_other_manual_priority_player(self):
+        g=table();g.interactive=True;g.turn=1;g.players[0]['autoplay']=True
+        g.hands[0]=cards([5,5,9],prefix='a');g.hands[1]=cards([5,8],prefix='b')
+        g.hands[2]=cards([5,5,8],prefix='c');g.hands[3]=cards([6,8],prefix='d')
+        g.action(1,'play',['b0'])
+        with self.assertRaises(RuleError):g.action(0,'cross',['a0','a1'])
+        move=g.bot_action(0)
+        self.assertTrue(move is None or move['action'] not in ('cross','hook','priority-play'))
+        g.action(2,'priority-decline')
+        self.assertEqual(g.bot_action(0)['action'],'priority-play')
+
     def test_special_chain_skips_only_players_without_response_or_urgent(self):
         for mode in ('basic', 'standard'):
             g=table(mode); g.turn=0

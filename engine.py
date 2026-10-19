@@ -288,7 +288,7 @@ class Game:
         return sum(not p.get('bot') for p in self.players) <= 1
 
     def priority_paused(self):
-        return bool(self.priority and self.solo() and any(seat != self.turn for seat in self.priority['pending']))
+        return bool(self.priority and self.solo() and any(seat != self.turn and not self.players[seat].get('autoplay') for seat in self.priority['pending']))
 
     def forced_pass(self):
         if self.phase != 'play' or self.mode == 'landlord' or self.negotiation or self.priority_paused(): return False
@@ -570,7 +570,7 @@ class Game:
     def validate_play(self, seat, cards, action='play', wildcard=None):
         if not cards or any(c['rank'] == 18 for c in cards): raise RuleError('急牌请通过赠牌使用。')
         if action not in ('play', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'hui'): raise RuleError('未知出牌方式。')
-        if self.priority and self.priority['pending'] and self.players[seat].get('bot') and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('等待真人优先决定管牌。')
+        if self.priority and any(not self.players[s].get('autoplay') for s in self.priority['pending']) and (self.players[seat].get('bot') or self.players[seat].get('autoplay')) and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('等待真人优先决定管牌。')
         old = self.last
         special = action != 'play'
         if old and old.get('direct') and seat == self.turn and not special:
@@ -842,13 +842,14 @@ class Game:
             return {'action': 'accept'} if self.negotiation['target'] == seat else None
         if self.priority:
             if self.priority_paused(): return None
-            if seat not in self.priority['bots']:
-                if self.solo(): return None
-            elif not self.priority['pending']:
+            pending = self.priority['pending']
+            controlled = seat in self.priority['bots'] and not pending or seat in pending and self.players[seat].get('autoplay') and not any(not self.players[s].get('autoplay') for s in pending)
+            if controlled:
                 moves = [m for m in self.priority_moves(seat) if self.keeps_urgent_playable(seat, m)]
                 if not moves: return {'action': 'priority-decline'}
                 move = min(moves, key=lambda m: (len(self.hands[seat]) != m['n'], m['power'], -m['n'], m['value']))
                 return {'action': 'priority-play', 'special': move['action'], 'ids': move['ids'], **({'wildcard': move['wildcard']} if 'wildcard' in move else {})}
+            if self.solo(): return None
         if self.phase == 'tribute':
             tribute = self.tribute
             if tribute['stage'] == 'choose' and seat in tribute['receivers'] and not any(o['recipient'] == seat for o in tribute['offers']):
@@ -880,7 +881,7 @@ class Game:
             return {'action': 'rps', 'value': random.choice(['rock', 'paper', 'scissors'])} if seat in self.reveals and seat not in self.rps else None
         if self.phase != 'play' or seat != self.turn or seat in self.finished: return None
         moves = self.candidates(seat)
-        if self.priority and self.priority['pending'] and self.players[seat].get('bot'):
+        if self.priority and self.priority['pending'] and (self.players[seat].get('bot') or self.players[seat].get('autoplay')):
             if self.solo(): return None
             moves = [m for m in moves if m['action'] not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')]
         hand = self.hands[seat]
