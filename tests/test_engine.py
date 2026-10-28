@@ -487,7 +487,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(g.landlord,1);self.assertEqual(g.phase,'play')
 
     def test_decks(self):
-        self.assertEqual([len(deck(m)) for m in MODES], [54, 110, 86, 54])
+        self.assertEqual([len(deck(m)) for m in MODES], [54, 110, 86, 54, 110])
         d = deck('trio')
         self.assertFalse(any(c['suit'] == 'S' and c['rank'] <= 13 for c in d))
         self.assertEqual(Counter(c['rank'] for c in d)[17], 3)

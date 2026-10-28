@@ -5,7 +5,7 @@ from collections import Counter
 
 RANKS = list(range(3, 16))
 LABELS = {**{n: str(n) for n in range(3, 11)}, 11: 'J', 12: 'Q', 13: 'K', 14: 'A', 15: '2', 16: '小王', 17: '大王', 18: '急'}
-MODES = {'landlord': 3, 'standard': 4, 'trio': 3, 'basic': 4}
+MODES = {'landlord': 3, 'standard': 4, 'trio': 3, 'basic': 4, 'conveyor': 4}
 
 def deck(mode, dlc=False):
     copies = 1 if mode in ('landlord', 'basic') else 2
@@ -535,7 +535,7 @@ class Game:
         self.display_action(seat, {**self.last, 'order': self.play_number})
         self.last_seat = seat; self.passes = set()
         if action == 'hui': self.hui_used = True
-        substitutions = [LABELS[c['rank']] + '→' + LABELS[r] + {'S':'♠','H':'♥','C':'♣','D':'♦','T':'Δ'}[s] for c, r, s in zip(cards, combo['ranks'], combo.get('suits', [c['suit'] for c in cards])) if c['rank'] != r or c['suit'] != s]
+        substitutions = [LABELS[c['rank']] + '→' + LABELS[r] + {'S':'♠','H':'♥','C':'♣','D':'♦','T':'Δ'}.get(s, '') for c, r, s in zip(cards, combo['ranks'], combo.get('suits', [c['suit'] for c in cards])) if c['rank'] != r or c['suit'] != s]
         self.announce(self.players[seat]['name'] + '：' + combo['kind'] + ' ' + ' '.join(LABELS[c['rank']] for c in cards) + ('（混子 ' + '、'.join(substitutions) + '）' if substitutions else ''))
         self.finish(seat)
         if self.phase != 'over':

@@ -4,6 +4,7 @@ import hashlib
 import http.cookies
 import json
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -14,7 +15,9 @@ import ipaddress
 import socket
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from engine import Game, RuleError, MODES
+from engine import Game, RuleError, MODES, LABELS
+from conveyor import ConveyorGame
+from conveyor_skills import SKILLS, available as conveyor_skills
 from analytics import Analytics
 from admin import start_admin
 
@@ -115,6 +118,27 @@ def perform_game_action(room, seat, move):
         items.append({'voice': labels.get(action, action)})
         if action == 'promote': items.append({'voice': '单张-' + str(move['rank'])})
     if g.phase == 'over' and old_phase != 'over': items.append({'effect': 'result'})
+    if room.get('mode') == 'conveyor':
+        reports = getattr(g.core, 'action_reports', [])
+        played = g.last_voice_play is not previous
+        actor = move.get('actor', g.actor(seat))
+        if not played:
+            key = 'cv-urgent-' + move.get('effect', 'discard') if action == 'urgent' else 'cv-skill-' + g.core.skills[actor] if action == 'skill' else 'cv-choice' if action == 'choice' else 'cv-keep' if action == 'keep' else labels.get(action, 'cv-action')
+            items = [{'voice': key}]
+        for report in reports:
+            count = re.search(r'获得(\d+)张牌', report)
+            if count: items.append({'voice': 'cv-deal-' + count[1] if int(count[1]) <= 30 else 'cv-deal'})
+            elif '牌堆已轮回' in report: items.append({'voice':'cv-recycle'})
+            elif '完成出牌，第' in report: items.append({'voice':'cv-finish'})
+            for verb in ('买入', '拾取', '赠送', '弃置'):
+                if verb not in report: continue
+                detail = report.split(verb, 1)[1]
+                for suit, label in re.findall(r'(黑桃|红桃|梅花|方片)?(小王|大王|急|10|[3-9JQKA2])', detail):
+                    if suit: items.append({'voice':'cv-suit-' + {'黑桃':'S','红桃':'H','梅花':'C','方片':'D'}[suit]})
+                    rank = next((r for r, name in LABELS.items() if name == label), None)
+                    if rank and rank != 18: items.append({'voice':'单张-' + str(rank)})
+                break
+        if g.phase == 'over' and old_phase != 'over' and not any(i.get('effect') == 'result' for i in items): items.append({'effect':'result'})
     queue_audio(room, items)
 
 CHAT_PHRASES = ('悲', '你能秒我？', '给阿姨倒一杯卡布奇诺')
@@ -134,8 +158,8 @@ def room_view(room, uid):
     game = room['game'].view(seat) if room.get('game') else None
     if spectator and game: game['response'] = None; game['priority'] = None
 
-    return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay')} for p in room['players']],
-            'spectator': spectator, 'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
+    return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay', 'skill')} for p in room['players']],
+            'skills': conveyor_skills(room['options']) if room['mode'] == 'conveyor' else [], 'spectator': spectator, 'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
             'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') and not spectator else None, 'audioWaiting': audio_waiting(room) if not spectator else False, 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': game, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
@@ -210,7 +234,8 @@ def update_autoplay(room):
     if audio_waiting(room) or g.phase != 'play':
         room.pop('idleWait', None)
         return
-    waiting = [g.negotiation['target']] if g.negotiation else g.priority['pending'] if g.priority_paused() else [g.turn]
+    if room.get('mode') == 'conveyor' and g.core.pending: waiting = [g.core.owners[g.core.pending[0]['seat']]]
+    else: waiting = [g.negotiation['target']] if g.negotiation else g.priority['pending'] if g.priority_paused() else [g.turn]
     old = room.get('idleWait', {})
     room['idleWait'] = {seat: old.get(seat, now) for seat in waiting if seat not in g.finished and not (room['players'][seat].get('bot') or room['players'][seat].get('autoplay'))}
     for seat, since in room['idleWait'].items():
@@ -235,7 +260,7 @@ def bot_loop():
                     move = g.bot_action(seat)
                     if not move: continue
                     config = room.get('modelConfig') if p.get('bot') and p.get('model') else None
-                    if config and g.phase == 'play' and not g.negotiation:
+                    if config and g.phase == 'play' and not g.negotiation and not (room['mode'] == 'conveyor' and g.core.pending):
                         BOT_BUSY.add(room['code'])
                         threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId']), daemon=True).start()
                     else:
@@ -279,7 +304,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = self.session()
                 if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
                 if path == '/api/state':
-                    if not user: return self.respond({'user': None, 'room': None, 'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}})
+                    if not user: return self.respond({'user': None, 'room': None, 'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES}})
                     if self.headers.get('X-Poker-Audio') != '0': STATS.activity(user['id'])
                     room = room_of(user['id'])
                     if room:
@@ -291,7 +316,7 @@ class Handler(BaseHTTPRequestHandler):
                         room = ROOMS.get(WATCHING.get(user['id']))
                         if room and not room['options'].get('allowSpectators'): room = None
                         if not room: WATCHING.pop(user['id'], None)
-                    return self.respond({'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'chatPhrases': CHAT_PHRASES}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    return self.respond({'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
@@ -306,7 +331,7 @@ class Handler(BaseHTTPRequestHandler):
         if not file.is_relative_to(ROOT / 'public') or not file.is_file(): return self.respond({'error': '页面不存在。'}, 404)
         content = file.read_bytes()
         if file.name == 'index.html':
-            for asset in ('app.js', 'audio.js', 'style.css'):
+            for asset in ('app.js', 'conveyor.js', 'audio.js', 'style.css'):
                 version = hashlib.sha256((ROOT / 'public' / asset).read_bytes()).hexdigest()[:12]
                 content = content.replace(('/' + asset + '"').encode(), ('/' + asset + '?v=' + version + '"').encode())
         self.send_response(200)
@@ -437,8 +462,17 @@ class Handler(BaseHTTPRequestHandler):
             if reserved and not single: code = RESERVED_ROOM
             if not isinstance(b.get('options', {}), dict): raise RuleError('房间选项格式无效。')
             options = {k: b.get('options', {}).get(k) is True for k in ('advancedHui', 'advancedDead', 'dlc', 'tribute')}
-            for key in ('advancedHui', 'advancedDead'): options[key] = mode in ('standard', 'trio') and b.get('options', {}).get(key, True) is True
+            for key in ('advancedHui', 'advancedDead'): options[key] = mode in ('standard', 'trio', 'conveyor') and b.get('options', {}).get(key, True) is True
             for key in ('allowMatching', 'allowSpectators'): options[key] = not reserved and not b.get('single') and b.get('options', {}).get(key) is True
+            if mode == 'conveyor':
+                options['tribute'] = False
+                options['recycle'] = b.get('options', {}).get('recycle', True) is True
+                groups = b.get('options', {}).get('skillDlc', [])
+                disabled = b.get('options', {}).get('disabledSkills', [])
+                if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4) for n in groups): raise RuleError('技能 DLC 选项无效。')
+                if not isinstance(disabled, list) or any(k not in SKILLS for k in disabled): raise RuleError('禁用技能选项无效。')
+                options['skillDlc'] = list(set(groups)); options['disabledSkills'] = list(set(disabled))
+                if len(conveyor_skills(options)) < 4: raise RuleError('至少需要开放四个技能。')
             if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if b.get('single') is True: room['single'] = True
@@ -471,6 +505,16 @@ class Handler(BaseHTTPRequestHandler):
             seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
             room['players'][seat]['seen'] = time.time()
             if self.headers.get('X-Poker-Audio') is not None: room['players'][seat]['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
+            if path == '/api/skill':
+                if room['mode'] != 'conveyor' or room.get('game') and room['game'].phase != 'over': raise RuleError('请在开局前选择技能。')
+                key = b.get('skill')
+                if key not in {s['id'] for s in conveyor_skills(room['options'])}: raise RuleError('该技能未开放。')
+                if any(p.get('skill') == key for i, p in enumerate(room['players']) if i != seat and not p.get('bot')): raise RuleError('该技能已被选择。')
+                for p in room['players']:
+                    if p.get('bot') and p.get('skill') == key: p.pop('skill', None)
+                room['players'][seat]['skill'] = key
+                room['revision'] += 1
+                return self.respond({'ok':True, 'room':room_view(room, uid)})
             if path == '/api/autoplay':
                 if not isinstance(b.get('enabled'), bool): raise RuleError('托管状态无效。')
                 if b['enabled'] and (not room.get('game') or room['game'].phase == 'over'): raise RuleError('请在对局中开启托管。')
@@ -516,7 +560,16 @@ class Handler(BaseHTTPRequestHandler):
                 prev = room.get('game')
                 previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores, 'captured': prev.captured} if prev and prev.mode != 'landlord' else None
                 if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0, 0], 'captured': []}
-                room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
+                if room['mode'] == 'conveyor':
+                    choices = conveyor_skills(room['options'])
+                    used = {p.get('skill') for p in room['players'] if not p.get('bot')}
+                    if None in used: raise RuleError('请等待所有玩家选择技能。')
+                    for p in room['players']:
+                        if p.get('bot'):
+                            choices_left = [s['id'] for s in choices if s['id'] not in used]
+                            p['skill'] = secrets.choice(choices_left); used.add(p['skill'])
+                    room['game'] = ConveyorGame(room['mode'], room['players'], room['options'], previous, interactive=True)
+                else: room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
                 room.pop('idleWait', None)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
                 STATS.start(room)
@@ -524,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/hint':
                 if not room['game'] or room['game'].phase != 'play': raise RuleError('请先开始出牌。')
                 g = room['game']
-                waiting = g.priority and g.solo() and seat not in g.priority['pending']
+                waiting = room['mode'] == 'conveyor' and bool(g.core.pending) or g.priority and g.solo() and seat not in g.priority['pending']
                 moves = [] if waiting else g.candidates(seat)
                 reason = '等待优先管牌处理完成。' if waiting else '还没轮到你出牌。' if seat != g.turn and not moves else '当前没有能管住上一手的牌。' if not moves else ''
                 return self.respond({'moves': moves[:80], 'reason': reason})
@@ -532,8 +585,9 @@ class Handler(BaseHTTPRequestHandler):
                 if room['players'][seat].get('autoplay'): raise RuleError('请先取消托管。')
                 if not room['game']: raise RuleError('对局尚未开始。')
                 if b.get('revision') != room['revision']: raise RuleError('牌桌已变化，请按最新局面出牌。')
-                args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special')}
-                perform_game_action(room, seat, args)
+                args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special', 'actor', 'effect', 'direction', 'double', 'ranks', 'suits')}
+                if room['mode'] == 'conveyor' and args.get('action') == 'focus': room['game'].action(seat, **args)
+                else: perform_game_action(room, seat, args)
                 persist_result(room)
             elif path == '/api/resign':
                 g = room.get('game')

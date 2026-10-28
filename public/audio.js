@@ -107,7 +107,7 @@ const gameAudio = (() => {
       if(g.phase==='over'&&previous.phase!=='over'&&!room.spectator)effect(g.winner.includes(room.seat)?'win':'lose');
     }
     // Once the match reaches the endgame, keep tension music until settlement.
-    const tense=!fresh&&previous.tense||g.counts.some((n,s)=>initialCounts[s]>0&&n<=initialCounts[s]*.3);
+    const tense=!fresh&&previous.tense||(g.conveyor?g.conveyor.actors.some(a=>a.initialCount>0&&a.count<=a.initialCount*.3):g.counts.some((n,s)=>initialCounts[s]>0&&n<=initialCounts[s]*.3));
     setMusic(g.phase==='over'?'menu':tense?'tension':'table',fresh);
     previous={match,phase:g.phase,tense,plays:(g.seatPlays||[]).map(p=>JSON.stringify(p))};
     processAnnouncement(room);
@@ -130,6 +130,7 @@ const gameAudio = (() => {
         for(const item of event.items){
           if(document.hidden){playingEvent='';return;}
           if(item.effect)await effect(item.effect==='result'?(room.game.winner.includes(room.seat)?'win':'lose'):item.effect);
+          if(item.text)await speak(item.text, 'conveyor-action');
           if(item.voice){const rank=Number(item.voice.split('-')[1]), letter={11:'勾',12:'圈',13:'凯',14:'尖',15:'二',16:'小王',17:'大王'}[rank]||rank;const text=item.voice.startsWith('单张-')?String(letter):item.voice.startsWith('对子-')?'一对'+letter:manifest.voiceText?.[item.voice]||(item.voice==='pass'?'不出':item.voice);await speak(text,item.voice);}
         }
       }

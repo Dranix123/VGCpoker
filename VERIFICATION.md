@@ -132,3 +132,13 @@ Low-card reports now occur once per seat per game on the first transition to at 
 Matching and spectating: opt-in room flags, mode-specific room counts, atomic matching under the existing lock, full/active/private/offline-host/practice/reserved-room exclusion. Registered spectators have no seat, no private hand or priority choices, cannot act/chat/control the room, do not enter audio listeners or game results, and can exit without changing the game. Code-only reserved-room entry remains supported. Browser checks cover room creation settings, actual matching/leave, code-based spectating/exit, public-only state, and desktop/mobile spectator screens. Screenshots: output/playwright/vgc-match-lobby.png, vgc-room-access-settings.png, vgc-spectator-desktop.png, vgc-spectator-mobile.png.
 
 Automatic autoplay: an active game's host is taken over after 15 seconds without heartbeat. Required manual play/priority/negotiation responses time out after 60 seconds. Audio waits do not count; actions reset the wait, cancellation resets the caller's timer, spectators are excluded, and the account remains a registered human for scoring. All 125 Python and 23 JavaScript tests pass; subsequent focused server tests cover the final host-presence filter. Syntax and whitespace checks pass. Preview data uses temporary SQLite only.
+
+## 传送带（2026-10-29）
+
+独立的传送带引擎与 30 项技能目录接入原单人/联机、匹配、观战、托管、统计和播报流程。标准牌型、主牌升级及特殊响应复用原引擎。专项覆盖初始选牌、禁用技能、技能冲突、四座位双身、各类变点、急牌六效果、特殊区域胜利、轮回开关、绑定双向增减、十种花印组合、牌权触发、七印、天命判定、取得实体牌后保留历史显示、免发牌持续期和下一局多发多留。
+
+175 项 Python 回归及 28 项 JavaScript 测试通过；其中传送带 47 项专项检查，包含实体牌不重不漏、随机规则 AI 行动、错误操作回滚与回流后聚财可选牌同步。Python 编译、JavaScript 语法及 git diff 空白检查通过。另以 18 组技能组合进行规则 AI 连续行动检查，修复急牌走完后已全部不出的局面未归还自由牌权的问题。
+
+隔离 4142 服务与临时 SQLite 验证注册、单人房间创建、四组 DLC、技能说明与确认、14 选 14、双身分牌、开局确认、托管开启/取消及实际连续行动。390px 浏览器验证无横向溢出、四座位五出牌区、CDP 手指滑动连续选中四张及反向取消；桌面与手机截图：`output/playwright/vgc-conveyor-desktop.png`、`vgc-conveyor-mobile.png`、`vgc-conveyor-touch.png`。音频新增 76 段内置录音，共约 472 KB；手机真实设备听感仍需实机验收。
+
+推断约定已记录在 README：额外一张同时增加发牌和保留数；天命失败获得五张并结束本次行动、不再普通发牌；黑桃 A 代急牌可单独选择急牌效果。真实账号数据库未用于验收。

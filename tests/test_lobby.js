@@ -67,7 +67,7 @@ test('autoplay shows badges and cancellation while removing manual play controls
 
 test('multiplayer modes show matching counts and room-code spectating',()=>{
  const html=flow('create',{landlord:2,standard:1});
- assert.equal((html.match(/data-action="match"/g)||[]).length,4);
+ assert.equal((html.match(/data-action="match"/g)||[]).length,5);
  assert.ok(html.includes('匹配 · 2 个房间'));
  assert.ok(html.includes('匹配 · 1 个房间'));
  assert.ok(html.includes('data-action="watch"'));

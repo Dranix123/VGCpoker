@@ -673,4 +673,51 @@ class ServerIntegration(unittest.TestCase):
         for url in ('http://example.com/v1','https://127.0.0.1/v1','https://user:pass@example.com/v1'):
             with self.assertRaises(ValueError):server.validate_endpoint(url)
 
+    def test_conveyor_room_selection_start_and_private_view(self):
+        client=self.clients[0]
+        status,data=self.request(client,'create',{'mode':'conveyor','single':True,'options':{'skillDlc':[1,2,3,4],'tribute':True,'recycle':False}})
+        self.assertEqual(status,200,data)
+        self.assertFalse(data['room']['options']['tribute'])
+        self.assertFalse(data['room']['options']['recycle'])
+        self.assertEqual(len(data['room']['skills']),30)
+        for _ in range(3):self.assertEqual(self.request(client,'bot',{})[0],200)
+        self.assertEqual(self.request(client,'start',{})[0],400)
+        self.assertEqual(self.request(client,'skill',{'skill':'twins'})[0],200)
+        status,data=self.request(client,'start',{})
+        self.assertEqual(status,200,data)
+        self.assertEqual(data['room']['game']['phase'],'draft')
+        self.assertEqual(len(data['room']['game']['conveyor']['actors']),5)
+        self.assertEqual(len(set(p['skill'] for p in data['room']['players'])),4)
+        room=server.room_of(self.users[0]['id'])
+        public=server.room_view(room,self.users[1]['id'])
+        self.assertEqual(public['game']['hand'],[])
+        self.assertIsNone(public['game']['conveyor']['choice'])
+        self.assertEqual(self.request(client,'skill',{'skill':'balance'})[0],400)
+        with server.db() as c:
+            metric=c.execute('SELECT * FROM usage_matches WHERE id=?',(room['matchId'],)).fetchone()
+            self.assertEqual((metric['mode'],metric['channel']),('conveyor','single'))
+
+    def test_conveyor_skills_cannot_conflict_or_select_disabled(self):
+        _,data=self.request(self.clients[0],'create',{'mode':'conveyor','options':{'disabledSkills':['balance']}})
+        code=data['room']['code']
+        self.request(self.clients[1],'join',{'code':code})
+        self.assertEqual(self.request(self.clients[0],'skill',{'skill':'balance'})[0],400)
+        self.assertEqual(self.request(self.clients[0],'skill',{'skill':'anchor'})[0],200)
+        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],400)
+        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'leap'})[0],200)
+        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'twins'})[0],400)
+
+    def test_conveyor_waiting_skill_choice_auto_takeover(self):
+        from conveyor import ConveyorGame
+        players=[{'id':self.users[i]['id'],'name':str(i),'skill':skill,'seen':100,'connected':True} for i,skill in enumerate(['balance','anchor','leap','stars'])]
+        game=ConveyorGame('conveyor',players,{})
+        game.core.phase='play';game.core.turn=0;game.core.pending=[]
+        game.core.offer(1,'discard','选择',count=1)
+        room={'code':'123456','mode':'conveyor','host':-1,'players':players,'game':game,'revision':1}
+        with patch('server.time.time',return_value=100):server.update_autoplay(room)
+        self.assertIn(1,room['idleWait'])
+        with patch('server.time.time',return_value=161):server.update_autoplay(room)
+        self.assertTrue(players[1]['autoplay'])
+        self.assertFalse(game.priority_paused())
+
 if __name__=='__main__':unittest.main()

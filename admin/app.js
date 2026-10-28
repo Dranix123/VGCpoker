@@ -17,7 +17,7 @@ async function refresh(){
   const maximum=Math.max(1,...d.days.flatMap(x=>[x.dau,x.single,x.multi]));
   $('#trend').innerHTML=d.days.map((x,i)=>`<div class="day" title="${escape(x.day)} 日活 ${x.dau} / 单人 ${x.single} / 联机 ${x.multi}">${[['users',x.dau],['single',x.single],['multi',x.multi]].map(([kind,value])=>`<div class="bar ${kind}" data-count="${value}"></div>`).join('')}${i%5===0||i===29?`<label>${x.day.slice(5)}</label>`:''}</div>`).join('');
   $('#trend').querySelectorAll('.bar').forEach(bar=>{bar.style.height=Number(bar.dataset.count)/maximum*100+'%';});
-  const names={landlord:'斗地主',basic:'4A4 基础',standard:'4A4A4 标准',trio:'4A4A4 三人'};
+  const names={conveyor:'传送带',landlord:'斗地主',basic:'4A4 基础',standard:'4A4A4 标准',trio:'4A4A4 三人'};
   $('#modes').innerHTML=d.modes.map(r=>`<tr><td>${names[r.mode]||escape(r.mode)}${r.variant==='alternate'?' · 特殊规则':r.variant==='dlc'?' · DLC':''}</td><td>${r.channel==='single'?'单人':'联机'}</td>${[r.active,r.today_started,r.started,r.completed,r.interrupted,r.player_visits].map(v=>`<td>${number(v)}</td>`).join('')}<td>${duration(r.average_seconds)}</td></tr>`).join('');
   $('#daily').innerHTML=[...d.days].reverse().map(r=>`<tr><td>${r.day}</td>${[r.dau,r.signups,r.started,r.single,r.multi].map(v=>`<td>${number(v)}</td>`).join('')}</tr>`).join('');
   $('#updated').textContent='更新于 '+date(d.now);
