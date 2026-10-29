@@ -455,3 +455,5 @@ footer{gap:24px}
 .round-actions button{min-height:50px;min-width:164px;font-size:16px;white-space:nowrap}
 .round-over main{padding-bottom:120px}
 @media(max-width:720px){.room-heading-actions{flex-wrap:wrap;justify-content:center}.room-heading-actions .room-exit{min-height:46px;padding:12px 18px;font-size:15px}.round-actions{bottom:calc(20px + env(safe-area-inset-bottom));width:calc(100% - 28px);gap:8px;padding:10px}.round-actions button{flex:1;min-width:0;font-size:15px;padding:13px 10px}.round-over main{padding-bottom:calc(120px + env(safe-area-inset-bottom))}.app-version{bottom:calc(6px + env(safe-area-inset-bottom))}}
+
+.skill-description{white-space:pre-line;line-height:1.9;font-size:14px;text-align:left}
