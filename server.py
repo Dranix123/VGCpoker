@@ -544,6 +544,7 @@ class Handler(BaseHTTPRequestHandler):
                 bubbles[uid] = {'text': text, 'sent': time.time(), 'expires': time.time() + 6}
                 return self.respond({'ok': True, 'room': room_view(room, uid)})
             if path == '/api/audio-ack':
+                if b.get('code', room['code']) != room['code'] or b.get('matchId', room.get('matchId')) != room.get('matchId'): return self.respond({'ok': True})
                 event = room.get('audioEvent')
                 if event and b.get('event') == event['id'] and uid not in event['acknowledged']: event['acknowledged'].append(uid)
                 return self.respond({'ok': True})

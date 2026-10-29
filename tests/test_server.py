@@ -185,6 +185,14 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(self.request(self.clients[0],'resign',{})[0],200)
         self.assertEqual(room['game'].phase,'over')
 
+    def test_audio_ack_from_previous_match_cannot_release_current_event(self):
+        code=self.new_room('basic',4);room=server.ROOMS[code];room['matchId']='current'
+        server.queue_audio(room,[{'voice':'deal'}]);event=room['audioEvent']
+        status,_=self.request(self.clients[0],'audio-ack',{'event':event['id'],'code':code,'matchId':'old'})
+        self.assertEqual(status,200);self.assertEqual(event['acknowledged'],[])
+        self.request(self.clients[0],'audio-ack',{'event':event['id'],'code':code,'matchId':'current'})
+        self.assertEqual(event['acknowledged'],[self.users[0]['id']])
+
     def test_draw_voice_is_visible_only_to_recipient(self):
         code=self.new_room('basic',4);room=server.ROOMS[code]
         server.queue_audio(room,[{'voice':'cv-deal-2','recipient':self.users[1]['id']},{'dealTo':1,'count':2}])

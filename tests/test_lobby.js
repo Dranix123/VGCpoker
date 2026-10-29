@@ -103,3 +103,15 @@ test('spectator table renders public seats without private hand or action contro
  assert.ok(!html.includes('data-action="accept"'));
  assert.ok(!html.includes('data-action="reject"'));
 });
+
+test('room setup keeps rule switches available in expandable options and a separate submit area',()=>{
+ for(const screen of ['single','create']){
+  let html='';const context={screen,state:{preferences:{}},names:{standard:'4A4A4'},esc:String,showModal:(_,content)=>html=content};vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function showCreate('),source.indexOf('\nasync function showLeaderboard('))+'\nshowCreate("standard");',context);
+  assert.ok(html.includes('class="room-options"'));
+  assert.ok(html.includes('name="tribute"'));assert.ok(html.includes('name="disableAdvancedHui"'));
+  assert.ok(html.includes('class="create-submit"'));
+  assert.equal(html.includes('data-ai-type hidden'),screen==='create');
+  assert.equal(html.includes('name="joinPolicy"'),screen==='create');
+ }
+});

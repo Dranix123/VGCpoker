@@ -95,6 +95,7 @@ const gameAudio = (() => {
     return new Promise(resolve=>{voiceResolve=resolve;line.onend=resolve;line.onerror=resolve;window.speechSynthesis.speak(line);setTimeout(resolve,10000);});
   }
   function observe(room) {
+    if(latestRoom&&(latestRoom.code!==room?.code||latestRoom.matchId!==room?.matchId||latestRoom.audioEvent?.id!==room?.audioEvent?.id))stopVoice();
     latestRoom=room;
     const g=room?.game, match=g?`${room.code}/${room.matchId}`:'';
     if(!g){previous=null;initialCounts=[];setMusic('menu');return;}
@@ -123,6 +124,7 @@ const gameAudio = (() => {
     const origin=pile.getBoundingClientRect(),positions=['bottom','left','top','right'];
     const flights=[];
     for(const seat of seats){
+      if(latestRoom?.code!==room.code||latestRoom?.matchId!==room.matchId||document.hidden)break;
       const target=document.querySelector('.board .seat.'+positions[(seat-(room.seat??0)+4)%4]);if(!target)continue;
       const rect=target.getBoundingClientRect(),card=pile.cloneNode(true);
       card.classList.add('deal-flight');card.style.left=origin.left+'px';card.style.top=origin.top+'px';document.body.append(card);
@@ -137,21 +139,23 @@ const gameAudio = (() => {
     if(!event||!room.game||!unlocked||document.hidden||eventJob)return;
     const key=`${room.code}/${room.matchId}/${event.id}`;
     if(key===completedEvent)return;
+    const current=()=>latestRoom?.code===room.code&&latestRoom?.matchId===room.matchId&&latestRoom?.audioEvent?.id===event.id;
     eventJob=true;
     try{
       if(key!==playingEvent){
         playingEvent=key;
         for(const item of event.items){
-          if(document.hidden){playingEvent='';return;}
+          if(document.hidden||!current()){playingEvent='';return;}
           if(item.dealTo!==undefined&&!item.voice)await dealCards(room,Array(item.count).fill(item.dealTo));
           if(item.effect==='deal'&&room.mode==='conveyor'){const counts=room.game.initialCounts||room.game.counts,seats=[];for(let n=0;n<Math.max(...counts);n++)for(let seat=0;seat<counts.length;seat++)if(n<counts[seat])seats.push(seat);await dealCards(room,seats);}
+          if(!current())return;
           if(item.effect)await effect(item.effect==='result'?(room.game.winner.includes(room.seat)?'win':'lose'):item.effect);
           if(item.text)await speak(item.text, 'conveyor-action');
           if(item.voice){const rank=Number(item.voice.split('-')[1]), letter={11:'勾',12:'圈',13:'凯',14:'尖',15:'二',16:'小王',17:'大王'}[rank]||rank;const text=item.voice.startsWith('单张-')?String(letter):item.voice.startsWith('对子-')?'一对'+letter:manifest.voiceText?.[item.voice]||(item.voice==='pass'?'不出':item.voice);await speak(text,item.voice);}
         }
       }
-      if(document.hidden){playingEvent='';return;}
-      const response=await fetch('/api/audio-ack',{method:'POST',headers:{'Content-Type':'application/json','X-Poker-Audio':'1'},body:JSON.stringify({event:event.id})});
+      if(document.hidden||!current()){playingEvent='';return;}
+      const response=await fetch('/api/audio-ack',{method:'POST',headers:{'Content-Type':'application/json','X-Poker-Audio':'1'},body:JSON.stringify({event:event.id,code:room.code,matchId:room.matchId})});
       if(response.ok)completedEvent=key;
     }catch {}finally{eventJob=false;}
   }
