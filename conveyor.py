@@ -149,6 +149,7 @@ class ConveyorRound(Game):
             optional = [c for c in obtained if c['rank'] == self.main and c['rank'] in (3, 4, 5, 6)]
             if optional: self.offer(seat, 'clean-main', '净牌：选择保留的主牌，其余换牌', cards=copy.deepcopy(optional))
         if not initial and obtained:
+            if hasattr(self, 'action_gains'): self.action_gains.append((seat, len(obtained)))
             self.announce(self.name(seat) + '获得%d张牌。' % len(obtained))
             if self.skill(seat, 'blood') and seat != getattr(self, '_acting', self.turn): self.resources[seat]['blood'] += len(obtained)
             if mirror: self.mirror(seat, len(obtained))
@@ -1067,7 +1068,7 @@ class ConveyorGame:
         if action == 'focus': self.focus[seat] = selected; return
         state = copy.deepcopy(self.core.__dict__)
         try:
-            self.core.action_reports = []
+            self.core.action_reports = []; self.core.action_gains = []
             old_turn = self.core.turn
             if action == 'confirm' and self.core.phase == 'setup':
                 for target, owner in enumerate(self.core.owners):
@@ -1125,7 +1126,7 @@ class ConveyorGame:
             keep=min(c.keep_counts[actor], len(c.hands[actor])) if actor is not None else 0,
             zone=copy.deepcopy(c.zones[actor]) if actor is not None else [],
             resources=copy.deepcopy(c.resources[actor]) if actor is not None else None,
-            actors=[dict(id=s, owner=o, name=c.name(s), count=len(c.hands[s]), initialCount=c.initial_counts[s], zoneCount=len(c.zones[s]),
+            actors=[dict(id=s, owner=o, confirmed=s in c.rps, drafted=s in c.drafted, name=c.name(s), count=len(c.hands[s]), initialCount=c.initial_counts[s], zoneCount=len(c.zones[s]),
                          finished=s in c.finished, skill=c.skills[s], resources={k:v for k,v in c.resources[s].items() if k not in ('markCards',)}, play=c.seat_plays[s]) for s, o in enumerate(c.owners)],
             choice=copy.deepcopy(own_q), waiting=c.name(q['seat']) if q else None,
             remainingActorHands=[copy.deepcopy(h) for h in c.hands] if c.phase == 'over' else None,

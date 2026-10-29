@@ -75,13 +75,22 @@ def persist_result(room, reason='normal'):
     g.announce('真人对局已结算积分。' if rated else '练习对局：含AI玩家，本局不计积分。')
 
 def room_of(uid):
-    return next((r for r in ROOMS.values() if any(p['id'] == uid for p in r['players'])), None)
+    return next((r for r in ROOMS.values() if any(p['id'] == uid and not p.get('departed') for p in r['players'])), None)
 
 def leave_room(room, uid):
+    if room.get('game') and room['game'].phase != 'over' and not room.get('single'):
+        player = next(p for p in room['players'] if p['id'] == uid)
+        player.update(departed=True, autoplay=True, connected=False, audioEnabled=False, seen=0)
+        humans = [p for p in room['players'] if not p.get('bot') and not p.get('departed')]
+        if room['host'] == uid: room['host'] = humans[0]['id'] if humans else None
+        if not humans:
+            STATS.finish(room, 'interrupted', 'leave')
+            ROOMS.pop(room['code'], None)
+        return
     if room.get('game') and room['game'].phase != 'over': STATS.finish(room, 'interrupted', 'leave')
     room['players'] = [p for p in room['players'] if p['id'] != uid]
     room['game'] = None; room.pop('audioEvent', None)
-    humans = [p for p in room['players'] if not p.get('bot')]
+    humans = [p for p in room['players'] if not p.get('bot') and not p.get('departed')]
     if not humans: del ROOMS[room['code']]
     elif room['host'] == uid:
         room['host'] = humans[0]['id']
@@ -127,7 +136,7 @@ def perform_game_action(room, seat, move):
             items = [{'voice': key}]
         for report in reports:
             count = re.search(r'获得(\d+)张牌', report)
-            if count: items.append({'voice': 'cv-deal-' + count[1] if int(count[1]) <= 30 else 'cv-deal'})
+            if count: continue
             elif '牌堆已轮回' in report: items.append({'voice':'cv-recycle'})
             elif '完成出牌，第' in report: items.append({'voice':'cv-finish'})
             for verb in ('买入', '拾取', '赠送', '弃置'):
@@ -138,6 +147,9 @@ def perform_game_action(room, seat, move):
                     rank = next((r for r, name in LABELS.items() if name == label), None)
                     if rank and rank != 18: items.append({'voice':'单张-' + str(rank)})
                 break
+        for target, count in getattr(g.core, 'action_gains', []):
+            items.append({'dealTo':g.core.owners[target], 'count':count})
+            items.append({'voice':'cv-deal-' + str(count) if count <= 30 else 'cv-deal', 'recipient':room['players'][g.core.owners[target]]['id'], 'dealTo':g.core.owners[target], 'count':count})
         if g.phase == 'over' and old_phase != 'over' and not any(i.get('effect') == 'result' for i in items): items.append({'effect':'result'})
     queue_audio(room, items)
 
@@ -153,14 +165,14 @@ def match_counts():
     return {mode: sum(matchable(r, mode) for r in ROOMS.values()) for mode in MODES}
 
 def room_view(room, uid):
-    seat = next((i for i, p in enumerate(room['players']) if p['id'] == uid), None)
+    seat = next((i for i, p in enumerate(room['players']) if p['id'] == uid and not p.get('departed')), None)
     spectator = seat is None
     game = room['game'].view(seat) if room.get('game') else None
     if spectator and game: game['response'] = None; game['priority'] = None
 
-    return {'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay', 'skill')} for p in room['players']],
+    return {'single': bool(room.get('single')), 'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay', 'skill')} for p in room['players']],
             'skills': conveyor_skills(room['options']) if room['mode'] == 'conveyor' else [], 'spectator': spectator, 'matchId': room.get('matchId'), 'capacity': MODES[room['mode']], 'options': {k:v for k,v in room['options'].items() if not k.startswith('_')}, 'rated': all(not p.get('bot') for p in room['players']), 'canLeave': bool(room['options'].get('_alternate')),
-            'audioEvent': {k: room['audioEvent'][k] for k in ('id', 'items')} if room.get('audioEvent') and not spectator else None, 'audioWaiting': audio_waiting(room) if not spectator else False, 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': game, 'revision': room['revision']}
+            'audioEvent': {'id':room['audioEvent']['id'], 'items':[{k:v for k,v in item.items() if k != 'recipient'} for item in room['audioEvent']['items'] if 'recipient' not in item or item['recipient'] == uid]} if room.get('audioEvent') and not spectator else None, 'audioWaiting': audio_waiting(room) if not spectator else False, 'bubbles': {str(i): room['bubbles'][p['id']]['text'] for i, p in enumerate(room['players']) if room.get('bubbles', {}).get(p['id'], {}).get('expires', 0) > time.time()}, 'game': game, 'revision': room['revision']}
 
 def validate_endpoint(endpoint):
     parsed = urllib.parse.urlsplit(endpoint)
@@ -535,9 +547,8 @@ class Handler(BaseHTTPRequestHandler):
                 event = room.get('audioEvent')
                 if event and b.get('event') == event['id'] and uid not in event['acknowledged']: event['acknowledged'].append(uid)
                 return self.respond({'ok': True})
-            if path in ('/api/start', '/api/action', '/api/resign') and audio_waiting(room): raise RuleError('等待本次行动播报完成。')
+            if path in ('/api/start', '/api/action') and audio_waiting(room): raise RuleError('等待本次行动播报完成。')
             if path == '/api/leave':
-                if room['game'] and room['game'].phase != 'over' and not room['options'].get('_alternate'): raise RuleError('对局中请使用认输；可关闭网页并重新登录回到牌桌。')
                 leave_room(room, uid)
             elif path == '/api/bot':
                 if not host: raise RuleError('只有房主可以添加AI。')
@@ -558,6 +569,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not host: raise RuleError('只有房主可以开始对局。')
                 if len(room['players']) != MODES[room['mode']]: raise RuleError('请等待玩家加入或补充AI。')
                 if room['game'] and room['game'].phase != 'over': raise RuleError('游戏已经开始。')
+                for p in room['players']:
+                    if p.get('departed'): p.update(id='bot-' + secrets.token_hex(4), bot=True, model=False)
                 prev = room.get('game')
                 previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores, 'captured': prev.captured} if prev and prev.mode != 'landlord' else None
                 if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0, 0], 'captured': []}
@@ -593,13 +606,17 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/resign':
                 g = room.get('game')
                 if not g or g.phase == 'over': raise RuleError('没有正在进行的对局。')
+                if not room.get('single'):
+                    leave_room(room, uid)
+                    room['revision'] += 1
+                    return self.respond({'ok':True, 'room':None})
                 if g.mode == 'landlord': g.winner = [s for s in range(len(g.players)) if (s == g.landlord) != (seat == g.landlord)]
                 elif g.mode == 'trio': g.winner = [s for s in range(len(g.players)) if s != seat]
                 else: g.winner = [s for s in range(len(g.players)) if s % 2 != seat % 2]
                 g.phase = 'over'; g.announce(user['username'] + '认输。'); queue_audio(room, [{'voice': 'resign'}, {'effect': 'result'}]); persist_result(room, reason='resign')
             else: return self.respond({'error': '接口不存在。'}, 404)
             room['revision'] += 1
-        return self.respond({'ok': True, 'room': room_view(room, uid) if any(p['id'] == uid for p in room['players']) else None})
+        return self.respond({'ok': True, 'room': room_view(room, uid) if any(p['id'] == uid and not p.get('departed') for p in room['players']) else None})
 
 def admin_snapshot():
     with LOCK: return STATS.report(list(ROOMS.values()))

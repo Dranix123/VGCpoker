@@ -117,6 +117,20 @@ const gameAudio = (() => {
     volumes[category]=Math.max(0,Math.min(1,Number(value)));try{localStorage.setItem('paper-poker-audio',JSON.stringify(volumes));}catch{}
     applyVolumes();if(category==='voice'){if(voiceGain)voiceGain.gain.value=volumes.voice;if(!volumes.voice)stopVoice();}
   }
+  async function dealCards(room, seats) {
+    if(room.mode!=='conveyor'||document.hidden||window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)return;
+    const pile=document.querySelector('.draw-pile .pile-back');if(!pile)return;
+    const origin=pile.getBoundingClientRect(),positions=['bottom','left','top','right'];
+    const flights=[];
+    for(const seat of seats){
+      const target=document.querySelector('.board .seat.'+positions[(seat-(room.seat??0)+4)%4]);if(!target)continue;
+      const rect=target.getBoundingClientRect(),card=pile.cloneNode(true);
+      card.classList.add('deal-flight');card.style.left=origin.left+'px';card.style.top=origin.top+'px';document.body.append(card);
+      flights.push(new Promise(resolve=>{requestAnimationFrame(()=>{card.style.transform=`translate(${rect.left+rect.width/2-origin.left}px,${rect.top+rect.height/2-origin.top}px)`;card.style.opacity='0';});setTimeout(()=>{card.remove();resolve();},330);}));
+      await new Promise(resolve=>setTimeout(resolve,90));
+    }
+    await Promise.all(flights);
+  }
   let latestRoom, playingEvent='', completedEvent='', eventJob=false;
   async function processAnnouncement(room){
     const event=room?.audioEvent;
@@ -129,6 +143,8 @@ const gameAudio = (() => {
         playingEvent=key;
         for(const item of event.items){
           if(document.hidden){playingEvent='';return;}
+          if(item.dealTo!==undefined&&!item.voice)await dealCards(room,Array(item.count).fill(item.dealTo));
+          if(item.effect==='deal'&&room.mode==='conveyor'){const counts=room.game.initialCounts||room.game.counts,seats=[];for(let n=0;n<Math.max(...counts);n++)for(let seat=0;seat<counts.length;seat++)if(n<counts[seat])seats.push(seat);await dealCards(room,seats);}
           if(item.effect)await effect(item.effect==='result'?(room.game.winner.includes(room.seat)?'win':'lose'):item.effect);
           if(item.text)await speak(item.text, 'conveyor-action');
           if(item.voice){const rank=Number(item.voice.split('-')[1]), letter={11:'勾',12:'圈',13:'凯',14:'尖',15:'二',16:'小王',17:'大王'}[rank]||rank;const text=item.voice.startsWith('单张-')?String(letter):item.voice.startsWith('对子-')?'一对'+letter:manifest.voiceText?.[item.voice]||(item.voice==='pass'?'不出':item.voice);await speak(text,item.voice);}

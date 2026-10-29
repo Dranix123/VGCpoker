@@ -49,7 +49,7 @@ class ServerIntegration(unittest.TestCase):
 
     def test_usage_tracks_start_completion_and_abandonment(self):
         client=self.clients[0]
-        self.request(client,'create',{'mode':'landlord'})
+        self.request(client,'create',{'mode':'landlord','single':True})
         for _ in range(2):self.request(client,'bot',{})
         self.assertEqual(self.request(client,'start',{})[0],200)
         room=server.room_of(self.users[0]['id']);match=room['matchId']
@@ -151,7 +151,8 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(self.request(first,'start',{})[0],200)
         room=server.ROOMS['001255'];self.assertEqual(room['game'].pattern,(6,8))
         self.assertEqual(self.request(first,'leave',{})[0],200)
-        self.assertIsNone(room['game']);self.assertEqual(room['host'],self.users[1]['id'])
+        self.assertIsNotNone(room['game']);self.assertEqual(room['host'],self.users[1]['id'])
+        self.assertTrue(room['players'][0]['autoplay']);self.assertIsNone(server.room_of(self.users[0]['id']))
         other=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         status,data=self.request(other,'register',{'name':'临时房主','password':'testpass123'})
         self.assertEqual(status,200)
@@ -159,6 +160,39 @@ class ServerIntegration(unittest.TestCase):
         self.request(first,'join',{'code':'001255'})
         self.assertEqual(self.request(other,'logout',{})[0],200)
         self.assertEqual(server.ROOMS['001255']['host'],self.users[0]['id'])
+
+    def test_multiplayer_exit_preserves_game_and_seat_even_during_audio(self):
+        code=self.new_room('basic',4)
+        self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];game=room['game']
+        for p in room['players']: p.update(audioEnabled=True,seen=__import__('time').time())
+        server.queue_audio(room,[{'voice':'deal'}])
+        status,data=self.request(self.clients[0],'resign',{})
+        self.assertEqual(status,200);self.assertIsNone(data['room'])
+        self.assertIs(room['game'],game);self.assertNotEqual(game.phase,'over')
+        self.assertEqual(len(room['players']),4);self.assertTrue(room['players'][0]['autoplay'])
+        self.assertIsNone(server.room_of(self.users[0]['id']))
+        self.assertEqual(room['host'],self.users[1]['id'])
+
+    def test_single_can_end_during_opening_audio(self):
+        self.request(self.clients[0],'create',{'mode':'basic','single':True})
+        for _ in range(3):self.request(self.clients[0],'bot',{})
+        self.request(self.clients[0],'start',{})
+        room=server.room_of(self.users[0]['id'])
+        room['players'][0].update(audioEnabled=True,seen=__import__('time').time())
+        server.queue_audio(room,[{'voice':'deal'}])
+        self.assertTrue(server.audio_waiting(room))
+        self.assertEqual(self.request(self.clients[0],'resign',{})[0],200)
+        self.assertEqual(room['game'].phase,'over')
+
+    def test_draw_voice_is_visible_only_to_recipient(self):
+        code=self.new_room('basic',4);room=server.ROOMS[code]
+        server.queue_audio(room,[{'voice':'cv-deal-2','recipient':self.users[1]['id']},{'dealTo':1,'count':2}])
+        for i,user in enumerate(self.users):
+            items=server.room_view(room,user['id'])['audioEvent']['items']
+            self.assertEqual(any('voice' in item for item in items),i==1)
+            self.assertTrue(any(item.get('dealTo')==1 for item in items))
+            self.assertTrue(all('recipient' not in item for item in items))
 
     def test_static_assets_are_versioned_and_never_cached(self):
         with urllib.request.urlopen(self.url+'/') as response:
@@ -621,6 +655,7 @@ class ServerIntegration(unittest.TestCase):
 
     def test_new_round_has_a_new_match_identity(self):
         self.new_room('landlord',1)
+        server.room_of(self.users[0]['id'])['single']=True
         self.request(self.clients[0],'bot',{});self.request(self.clients[0],'bot',{})
         first=self.request(self.clients[0],'start',{})[1]['room']['matchId']
         self.assertEqual(self.request(self.clients[0],'state')[1]['room']['matchId'],first)
@@ -630,6 +665,7 @@ class ServerIntegration(unittest.TestCase):
 
     def test_ai_games_never_change_rating(self):
         code=self.new_room('landlord',1)
+        server.ROOMS[code]['single']=True
         self.request(self.clients[0],'bot',{});self.request(self.clients[0],'bot',{})
         self.request(self.clients[0],'start',{})
         with server.db() as c:before=c.execute('SELECT points FROM users WHERE id=?',(self.users[0]['id'],)).fetchone()[0]

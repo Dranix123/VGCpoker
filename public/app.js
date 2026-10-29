@@ -26,7 +26,7 @@ function markResponse(){
 async function mutation(path, body = {}) {
   if (busy) return;
   busy = true;
-  try { const result = await api(path,body); if ('room' in result) {if(path==='leave'&&!result.room){screen='home';closeModal();window.scrollTo({top:0,behavior:'instant'});} state.room = result.room; markResponse(); renderedKey = ''; render();} await sync(); return result; }
+  try { const result = await api(path,body); if ('room' in result) {if(['leave','resign'].includes(path)&&!result.room){screen='home';closeModal();window.scrollTo({top:0,behavior:'instant'});} state.room = result.room; markResponse(); renderedKey = ''; render();} await sync(); return result; }
   catch(e) {toast(e.message); await sync();}
   finally {busy = false;}
 }
@@ -75,7 +75,7 @@ function render() {
   if($('.log-entries'))$('.log-entries').scrollTop=$('.log-entries').scrollHeight;
   if(r?.mode==='conveyor')conveyorAfterRender();
   if(r?.audioWaiting){
-    const actions=new Set(['start','play','pass','bid','reveal','confirm','promote','rps','tribute-pick','tribute-return','accept','reject','gift-player','resign-confirm']);
+    const actions=new Set(['start','play','pass','bid','reveal','confirm','promote','rps','tribute-pick','tribute-return','accept','reject','gift-player']);
     $$('[data-action]').filter(b=>actions.has(b.dataset.action)).forEach(b=>b.disabled=true);
   }
   if(r?.players[r.seat]?.autoplay){
@@ -108,7 +108,7 @@ function settingsScreen(){
 function showSettingsModal(){showModal('settings',settingsScreen(),'SETTINGS');}
 function navigate(next){screen=next;renderedKey='';render();window.scrollTo({top:0});}
 
-function roomHeading(r,playing=false){const g=r.game;const promoted=g&&Object.values(g.promotions).includes(g.main);const mainBadge=playing&&r.mode!=='landlord'?`<span class="main-indicator">主牌 <b>${ranks[g.main]}</b>${promoted?' · 升变':''}</span>`:'';return `<div class="room-heading"><div><h1>${esc(names[r.mode])}<span class="muted"> · ${r.spectator?'观战':playing?'对局':'准备室'}</span></h1>${mainBadge}</div><div class="room-heading-actions"><button class="room-number" data-action="copy"><small>房间号</small>${r.code} <small>⧉</small></button><button class="secondary room-exit" data-short-label="${r.spectator?'退出':playing&&g.phase!=='over'?'结束':'离开'}" data-action="${playing&&r.game.phase!=='over'&&!r.spectator?'resign':'leave'}">${r.spectator?'退出观战':playing&&r.game.phase!=='over'?'认输结束本局':'离开房间'} ↗</button>${playing&&r.game.phase!=='over'&&!r.spectator&&r.canLeave?'<button class="text-button" data-action="leave">离开房间 ↗</button>':''}</div></div>${g?.phase==='over'?roundActions(r):''}`;}
+function roomHeading(r,playing=false){const g=r.game;const promoted=g&&Object.values(g.promotions).includes(g.main);const mainBadge=playing&&r.mode!=='landlord'?`<span class="main-indicator">主牌 <b>${ranks[g.main]}</b>${promoted?' · 升变':''}</span>`:'';return `<div class="room-heading"><div><h1>${esc(names[r.mode])}<span class="muted"> · ${r.spectator?'观战':playing?'对局':'准备室'}</span></h1>${mainBadge}</div><div class="room-heading-actions"><button class="room-number" data-action="copy"><small>房间号</small>${r.code} <small>⧉</small></button><button class="secondary room-exit" data-short-label="${r.spectator?'退出':playing&&g.phase!=='over'?'结束':'离开'}" data-action="${playing&&r.game.phase!=='over'&&!r.spectator?'resign':'leave'}">${r.spectator?'退出观战':playing&&r.game.phase!=='over'?(r.single?'结束本局':'返回大厅'):'离开房间'} ↗</button>${playing&&r.game.phase!=='over'&&!r.spectator&&r.canLeave?'<button class="text-button" data-action="leave">离开房间 ↗</button>':''}</div></div>${g?.phase==='over'?roundActions(r):''}`;}
 function roundActions(r){return `<nav class="round-actions" aria-label="本局结束操作">${!r.spectator?`<button class="primary" data-action="start" ${r.host!==state.user.id?'disabled':''}>${r.host===state.user.id?'再来一局 →':'等待房主开局'}</button>`:''}<button class="secondary" data-action="leave">回到主菜单</button></nav>`;}
 function waiting(r) {
   if(r.mode==='conveyor')return conveyorWaiting(r);
@@ -132,7 +132,7 @@ function table(r,g) {
     const played=g.seatPlays?.[s]||(!g.seatPlays&&g.lastSeat===s?{...g.last,order:1}:null);
     const playNumber=g.playNumber??1;
     const publicCards=[];if(played)played.cards.forEach((c,i)=>{const existing=publicCards.find(x=>x.rank===c.rank&&x.suit===c.suit&&x.effective===played.ranks[i]&&x.effectiveSuit===(played.suits?.[i]||c.suit));if(existing)existing.count++;else publicCards.push({...c,effective:played.ranks[i],effectiveSuit:played.suits?.[i]||c.suit,count:1});});
-    const playedCards=g.phase==='play'&&g.turn===s?'<div class="seat-play playing" role="status">出牌中...</div>':played?`<div class="seat-play ${!played.passed&&played.order===playNumber?'latest':'older'}" aria-label="${esc(p.name)}的最近出牌"><div class="seat-play-label">${esc(played.kind)}</div><div class="seat-play-cards">${publicCards.map(c=>`<span class="seat-play-card ${['H','D'].includes(c.suit)||c.rank===17?'red':''}" title="${ranks[c.rank]}${suits[c.suit]}${c.rank!==c.effective||c.suit!==c.effectiveSuit?' → '+ranks[c.effective]+suits[c.effectiveSuit]:''}"><b>${ranks[c.rank]}${c.count>1?`<em>×${c.count}</em>`:''}</b><small>${suits[c.suit]}${c.rank!==c.effective||c.suit!==c.effectiveSuit?'→'+ranks[c.effective]+suits[c.effectiveSuit]:''}</small></span>`).join('')}</div></div>`:'';
+    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play playing" role="status">${g.ready.includes(s)?'已确认':'等待确认...'}</div>`:g.phase==='play'&&g.turn===s?'<div class="seat-play playing" role="status">出牌中...</div>':played?`<div class="seat-play ${!played.passed&&played.order===playNumber?'latest':'older'}" aria-label="${esc(p.name)}的最近出牌"><div class="seat-play-label">${esc(played.kind)}</div><div class="seat-play-cards">${publicCards.map(c=>`<span class="seat-play-card ${['H','D'].includes(c.suit)||c.rank===17?'red':''}" title="${ranks[c.rank]}${suits[c.suit]}${c.rank!==c.effective||c.suit!==c.effectiveSuit?' → '+ranks[c.effective]+suits[c.effectiveSuit]:''}"><b>${ranks[c.rank]}${c.count>1?`<em>×${c.count}</em>`:''}</b><small>${suits[c.suit]}${c.rank!==c.effective||c.suit!==c.effectiveSuit?'→'+ranks[c.effective]+suits[c.effectiveSuit]:''}</small></span>`).join('')}</div></div>`:'';
     return `<div class="seat ${positions[relative]} ${g.turn===s&&g.phase!=='over'?'turn':''} ${finish>=0?'finished':''}"><div class="avatar ${p.bot?'bot':''}">${p.bot?'✦':esc(p.name[0])}</div><div><div class="seat-name">${esc(p.name)}${s===me&&!r.spectator?' · 你':''}</div><div class="seat-meta">${g.urgentLast.includes(s)?'急牌末名':g.phase==='over'&&g.counts[s]>0?'剩 '+g.counts[s]+' 张':finish>=0?'第 '+(finish+1)+' 名':g.counts[s]+' 张牌'}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${!p.connected?' · 离线':''}</div></div>${role?`<span class="seat-role">${role}</span>`:''}${playedCards}${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
   }).join('');
   let center='';
@@ -267,7 +267,7 @@ document.addEventListener('click',async e=>{
  case 'clear-api':await mutation('model-settings',{clear:true});if(state.room)showSettingsModal();else{renderedKey='';render();}toast('API 配置已清除。');break;
  case 'start':selected.clear();await mutation('start');break;
  case 'leave':await mutation('leave');break;
- case 'resign':showModal('resign','<h2 class="modal-title">认输结束这一局？</h2><p class="modal-desc">本局立即结束。真人对局将结算负分；组队时你的队友也会判负。</p><div class="phase-actions"><button class="secondary" data-action="close">继续打牌</button><button class="primary" data-action="resign-confirm">确认认输</button></div>','END THIS MATCH');break;
+ case 'resign':showModal('resign',`<h2 class="modal-title">${state.room.single?'结束这一局？':'返回大厅？'}</h2><p class="modal-desc">${state.room.single?'本局将立即结束。':'离开后由规则 AI 托管你的座位，对局继续。'}</p><div class="phase-actions"><button class="secondary" data-action="close">继续打牌</button><button class="primary" data-action="resign-confirm">${state.room.single?'结束本局':'返回大厅'}</button></div>`);break;
  case 'resign-confirm':await mutation('resign');closeModal();break;
  case 'tribute-pick':await gameAction('tribute-pick',{target:Number(b.dataset.seat)});break;
  case 'tribute-return':if(await gameAction('tribute-return',{ids:[...selected]})){selected.clear();renderedKey='';render();}break;
