@@ -2,7 +2,8 @@
   "music": {
     "menu": null,
     "table": null,
-    "tension": null
+    "tension": null,
+    "conveyor": "/audio/music/conveyor.mp3"
   },
   "effects": {
     "click": null,

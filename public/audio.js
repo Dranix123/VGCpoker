@@ -2,11 +2,11 @@
 const gameAudio = (() => {
   const defaults = {effects: .55, music: .4, voice: .7};
   let volumes = {...defaults}, context, unlocked = false, manifest = {music:{}, effects:{}, voices:{}}, previous, initialCounts = [], musicMode = 'menu', fadeFrame;
-  const tracks = {}, mixes = {menu:1, table:0, tension:0}, buffers = new Map();
+  const tracks = {}, mixes = {menu:1, table:0, tension:0, conveyor:0}, buffers = new Map();
   try { const saved = JSON.parse(localStorage.getItem('paper-poker-audio')); for (const k in defaults) if (Number.isFinite(saved?.[k])) volumes[k] = Math.max(0, Math.min(1, saved[k])); } catch {}
   const ready = fetch('/audio/manifest.json', {cache:'no-store'}).then(r=>r.json()).then(data=>{
     manifest=data;
-    for(const name of ['menu','table','tension']) if(manifest.music[name]) {
+    for(const name of ['menu','table','tension','conveyor']) if(manifest.music[name]) {
       const track = new Audio(manifest.music[name]); track.loop=true; track.preload='auto'; track.volume=0; tracks[name]=track;
       track.addEventListener('error',()=>{track.pause();delete tracks[name];const mode=musicMode;musicMode='';setMusic(mode);});
     }
@@ -15,7 +15,7 @@ const gameAudio = (() => {
   function applyVolumes() {for(const [name,track] of Object.entries(tracks)) track.volume=volumes.music*mixes[name];}
   function startMusic() {
     if(!unlocked || document.hidden) return;
-    const active = musicMode==='menu'?['menu']:['table','tension'];
+    const active = musicMode==='menu'?['menu']:musicMode==='conveyor'?['conveyor']:['table','tension'];
     // Keep both match tracks running, including the silent one, on one timeline.
     for(const name of active) if(tracks[name]?.paused) tracks[name].play().catch(()=>{});
     for(const name of Object.keys(tracks)) if(!active.includes(name)) tracks[name].pause();
@@ -24,14 +24,14 @@ const gameAudio = (() => {
   function setMusic(mode, reset=false) {
     if(mode===musicMode&&!reset)return;
     const enteringMatch=musicMode==='menu'&&mode!=='menu'; musicMode=mode;
-    if(reset||enteringMatch) for(const name of ['table','tension']) if(tracks[name]) tracks[name].currentTime=0;
+    if(reset||enteringMatch) for(const name of ['table','tension','conveyor']) if(tracks[name]) tracks[name].currentTime=0;
     if(mode==='tension' && tracks.table && tracks.tension) {
       const t=tracks.table.currentTime, duration=tracks.tension.duration;
       tracks.tension.currentTime=Number.isFinite(duration)&&duration>0?t%duration:t;
     }
     // Without a tension asset, retain normal match music instead of fading to silence.
     const effective=mode==='tension'&&!tracks.tension?'table':mode;
-    const target={menu:effective==='menu'?1:0,table:effective==='table'?1:0,tension:effective==='tension'?1:0};
+    const target={menu:effective==='menu'?1:0,table:effective==='table'?1:0,tension:effective==='tension'?1:0,conveyor:effective==='conveyor'?1:0};
     cancelAnimationFrame(fadeFrame);
     const from={...mixes}, started=performance.now();
     function fade(now){const p=Math.min(1,(now-started)/1500);for(const k in mixes)mixes[k]=from[k]+(target[k]-from[k])*p;applyVolumes();if(p<1)fadeFrame=requestAnimationFrame(fade);}
@@ -108,7 +108,7 @@ const gameAudio = (() => {
     }
     // Once the match reaches the endgame, keep tension music until settlement.
     const tense=!fresh&&previous.tense||(g.conveyor?g.conveyor.actors.some(a=>a.initialCount>0&&a.count<=a.initialCount*.3):g.counts.some((n,s)=>initialCounts[s]>0&&n<=initialCounts[s]*.3));
-    setMusic(g.phase==='over'?'menu':tense?'tension':'table',fresh);
+    setMusic(g.phase==='over'?'menu':room.mode==='conveyor'?'conveyor':tense?'tension':'table',fresh);
     previous={match,phase:g.phase,tense,plays:(g.seatPlays||[]).map(p=>JSON.stringify(p))};
     processAnnouncement(room);
   }
