@@ -6,7 +6,7 @@ const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',1
 const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
-let responseKey='', pollTimer, toastTimer, screen='home', settingsTab='account';
+let responseKey='', pollTimer, toastTimer, screen='home', settingsTab='account', connectionLost=false;
 const modal = $('#modal');
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3500); }
 async function api(path, body) {
@@ -33,6 +33,7 @@ async function mutation(path, body = {}) {
 async function sync() {
   try {
     const next = await api('state');
+    connectionLost=false;updateConnection();
     const oldRoom = state.room?.code, oldMatch = state.room?.matchId;
     state = next;
     if (oldRoom !== state.room?.code || oldMatch !== state.room?.matchId) {selected.clear(); wildcard='';wildcardMap={};}
@@ -40,8 +41,9 @@ async function sync() {
     const available = new Set(state.room?.game?.hand.map(c=>c.id) || []);
     selected = new Set([...selected].filter(id=>available.has(id)));
     render();
-  } catch {}
+  } catch {connectionLost=true;updateConnection();}
 }
+function updateConnection(){const banner=$('#connection-notice');if(banner)banner.hidden=!connectionLost;}
 async function poll() {await sync(); pollTimer = setTimeout(poll, document.hidden ? 2500 : 850);}
 function showModal(kind, content) {modalKind=kind; $('#modal-content').innerHTML=content; if(!modal.open) modal.showModal();}
 function closeModal() {modal.close(); modalKind='';}
@@ -57,9 +59,8 @@ function render() {
   document.body.classList.toggle('home-screen',!r&&screen==='home');
   document.body.classList.toggle('in-game',!!g);
   document.body.classList.toggle('round-over',g?.phase==='over');
-  gameAudio.observe(r);
-  const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,state.matchCounts]);
-  if(key===renderedKey)return;
+  const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,screen==='create'?state.matchCounts:null]);
+  if(key===renderedKey){gameAudio.observe(r);return;}
   renderedKey=key;
   const handScroll=$('.hand')?.scrollLeft||0;
   const choiceForm=$('#cv-choice-form');
@@ -73,6 +74,7 @@ function render() {
   if(choiceDraft&&nextChoice?.dataset.choiceKey===choiceDraft.key)for(const [name,value] of choiceDraft.values){const field=nextChoice.elements.namedItem(name);if(field)field.value=value;}
   if($('.hand'))$('.hand').scrollLeft=handScroll;
   if($('.log-entries'))$('.log-entries').scrollTop=$('.log-entries').scrollHeight;
+  const hand=$('.hand-area');if(hand&&g?.phase!=='over'){const message=r.audioWaiting?'正在播报，结束后可继续选好的操作':r.players[r.seat]?.autoplay?'规则 AI 托管中，可随时取消':'';if(message)hand.insertAdjacentHTML('afterbegin',`<p class="action-status" role="status">${message}</p>`);}
   if(r?.mode==='conveyor')conveyorAfterRender();
   if(r?.audioWaiting){
     const actions=new Set(['start','play','pass','bid','reveal','confirm','promote','rps','tribute-pick','tribute-return','accept','reject','gift-player']);
@@ -84,6 +86,7 @@ function render() {
   }
   if(g && lastPhase!==g.phase){if(lastPhase==='rps'&&g.phase==='play')toast('猜拳获胜：'+r.players[g.turn].name+'，先出牌。');hintMoves=[];hintIndex=0;lastPhase=g.phase;}
   if(!g)lastPhase='';
+  gameAudio.observe(r);
 
 }
 function lobby() {
