@@ -52,3 +52,40 @@ test('passive skill is described as view rather than activation',()=>{
  const html=table();
  assert.ok(html.includes('查看双身'));assert.ok(!html.includes('发动双身'));
 });
+
+test('choice validation permits declining optional picks and enforces mandatory counts',()=>{
+ const ctx=context();
+ const check=(kind,count,extra={})=>{ctx.q={kind,...extra};ctx.selected=new Set(Array.from({length:count},(_,i)=>String(i)));return vm.runInContext('conveyorChoiceProgress(q,7)',ctx);};
+ assert.equal(check('blood',0).valid,true);
+ assert.equal(check('blood',6).valid,false);
+ assert.equal(check('split',0).valid,false);
+ assert.equal(check('split',7).valid,false);
+ assert.equal(check('split',3).valid,true);
+ assert.equal(check('discard',1,{count:2}).valid,false);
+ assert.equal(check('discard',2,{count:2}).valid,true);
+ ctx.q={kind:'clean-main',cards:[{id:'a'}]};
+ assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),true);
+ ctx.q={kind:'stars',cards:[{id:'a'},{id:'b'}]};
+ assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),false);
+ vm.runInContext('conveyorChosen=["b","a"]',ctx);
+ assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),true);
+});
+test('blood ending choice explains the actual gain instead of ambiguous use or abandon',()=>{
+ const ctx=context({q:{kind:'blood-deal',seat:0,title:'血契'},c:{actor:0,actors:[],skill:'blood'}});
+ const html=vm.runInContext('conveyorChoice(q,c)',ctx);
+ assert.ok(html.includes('本次不发牌'));assert.ok(html.includes('获得一张牌'));
+ assert.ok(!html.includes('请在手牌中选择'));
+});
+test('seven marks uses seven rank and suit selectors instead of raw codes',()=>{
+ let html='';const ctx=context({showModal:(_,value)=>html=value});
+ ctx.state.features.conveyorSkills.push({id:'seven',name:'七印',text:'储存七枚印记'});
+ ctx.state.room={game:{conveyor:{skill:'seven',resources:{marks:7}}}};
+ vm.runInContext('conveyorUseSkill()',ctx);
+ assert.equal((html.match(/name="markRank/g)||[]).length,7);
+ assert.equal((html.match(/name="markSuit/g)||[]).length,7);
+ assert.ok(!html.includes('placeholder="例如'));
+});
+test('waiting room post-render does not require a running game',()=>{
+ const ctx=context();ctx.state.room={game:null};
+ assert.doesNotThrow(()=>vm.runInContext('conveyorAfterRender()',ctx));
+});

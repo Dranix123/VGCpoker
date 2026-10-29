@@ -52,16 +52,28 @@ function conveyorChoice(q,c){
  const key=JSON.stringify([q.kind,q.seat,q.cards?.map(x=>x.id),q.count,q.left]);
  if(key!==conveyorChoiceKey){conveyorChoiceKey=key;conveyorChosen=[];}
  const cards=q.cards||[];
- const cardChoice=cards.length?`<div class="choice-cards">${cards.map(x=>`<button type="button" aria-pressed="${conveyorChosen.includes(x.id)}" class="choice-card ${conveyorChosen.includes(x.id)?'chosen':''}" data-action="cv-choice-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]||'○'}</button>`).join('')}</div><p>${conveyorChosen.map(id=>{const x=cards.find(x=>x.id===id);return ranks[x.rank]+(suits[x.suit]||'○');}).join(' → ')}</p>`:'<p>需要选牌时，请在手牌中选择。</p>';
+ const cardChoice=cards.length?`<div class="choice-cards">${cards.map(x=>`<button type="button" aria-pressed="${conveyorChosen.includes(x.id)}" class="choice-card ${conveyorChosen.includes(x.id)?'chosen':''}" data-action="cv-choice-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]||'○'}</button>`).join('')}</div><p>${conveyorChosen.map(id=>{const x=cards.find(x=>x.id===id);return ranks[x.rank]+(suits[x.suit]||'○');}).join(q.kind==='stars'?' → ':' · ')}</p>`:'<p>需要选牌时，请在手牌中选择。</p>';
  let extra='';
  if(['pursuit','trade-extra','deal'].includes(q.kind))extra=`<label>获得张数<select name="value">${Array.from({length:(q.maximum||10)+(q.kind==='deal'?0:1)},(_,i)=>q.kind==='deal'?i+1:i).map(n=>`<option value="${n}">${n}</option>`).join('')}</select></label>`;
  if(q.kind==='deal'&&['redirect','request','trade'].includes(c.skill))extra+=`<label>方式<select name="effect"><option value="normal">普通发牌</option><option value="${c.skill==='trade'?'judge':c.skill}">${c.skill==='trade'?'判定':c.skill==='redirect'?'转给别人':'向其他每人索取两张'}</option></select></label>${c.skill==='redirect'?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}`;
  if(q.kind==='bond')extra=`<label>目标<select name="target"><option value="">不绑定</option>${conveyorTargets(c)}</select></label>`;
- if(['blood-deal','duel-start'].includes(q.kind))extra='<label>选择<select name="value"><option value="0">放弃</option><option value="1">使用</option></select></label>';
- return `<section class="conveyor-choice" role="region" aria-label="${esc(q.title)}"><h3>${esc(q.title)}</h3><form id="cv-choice-form" data-choice-key="${esc(key)}" class="form">${cardChoice}${extra}<p class="form-error"></p><button class="primary" type="submit">确认选择 →</button></form></section>`;
+ if(['blood-deal','duel-start'].includes(q.kind))extra=`<label>选择<select name="value"><option value="0">${q.kind==='blood-deal'?'本次不发牌':'不发动'}</option><option value="1">${q.kind==='blood-deal'?'获得一张牌':'发起拼点'}</option></select></label>`;
+ return `<section class="conveyor-choice" role="region" aria-label="${esc(q.title)}"><h3>${esc(q.title)}</h3><form id="cv-choice-form" data-choice-key="${esc(key)}" class="form">${cards.length||['split','blood','discard','give','duel','stash'].includes(q.kind)?cardChoice:''}${extra}<p class="choice-progress" role="status"></p><p class="form-error"></p><button class="primary" type="submit">确认选择 →</button></form></section>`;
+}
+function conveyorChoiceProgress(q,handCount){
+ const count=q.cards?conveyorChosen.length:selected.size;
+ const exact=['maximum','urgent-max','duel'].includes(q.kind)?1:['discard','give'].includes(q.kind)?Math.min(q.count,handCount):q.kind==='stars'?q.cards.length:null;
+ const maximum=['retain','buy'].includes(q.kind)?1:q.kind==='blood'?5:q.kind==='split'?handCount-1:null;
+ const minimum=['split','scavenge'].includes(q.kind)?1:0;
+ const labels={stars:'按点击顺序排列，左侧先发', 'clean-main':'选中的主牌会保留，未选的换牌',retain:'选中的牌会保留',buy:'选中的牌会买入',reflux:'选中的已出牌放回牌堆底',stash:'选中的手牌存入分区',blood:'选中的牌作为血',split:'选中的牌分给手牌 B'};
+ const hasCards=!!q.cards||['split','blood','discard','give','duel','stash'].includes(q.kind);
+ return {valid:exact!==null?count===exact:count>=minimum&&(maximum===null||count<=maximum),text:hasCards?`${labels[q.kind]||'选择手牌'} · 已选 ${count}${exact!==null?' / '+exact:maximum!==null?' / 最多 '+maximum:minimum?' / 至少 '+minimum:''} 张`:''};
 }
 function conveyorAfterRender(){
  const r=state.room,g=r.game;
+ if(!g)return;
+ const q=g.conveyor.choice;
+ if(q){const progress=conveyorChoiceProgress(q,g.hand.length),label=$('.choice-progress'),submit=$('#cv-choice-form button[type="submit"]');if(label)label.textContent=progress.text;if(submit)submit.disabled=!progress.valid;}
  if(g.phase==='draft'&&!g.conveyor.drafted){const b=$('[data-action="cv-keep"]');if(b){b.textContent='确认保留 · '+selected.size+' / '+g.conveyor.keep;b.disabled=!!g.conveyor.waiting||!!r.players[r.seat]?.autoplay||selected.size!==g.conveyor.keep;}}
  if(r.audioWaiting||r.players[r.seat]?.autoplay)$$('[data-action^="cv-"]').filter(b=>!['cv-focus','cv-skill-info'].includes(b.dataset.action)&&!(b.dataset.action==='cv-skill-use'&&!conveyorActiveSkills.has(g.conveyor.skill))).forEach(b=>b.disabled=true);
  if(r.audioWaiting)$('.conveyor-choice button[type="submit"]')?.setAttribute('disabled','');
@@ -69,7 +81,7 @@ function conveyorAfterRender(){
 async function conveyorPlay(){
  const g=state.room.game,c=g.conveyor;
  if(urgentSelected()){
-  showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form"><label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><label>目标<select name="target">${conveyorTargets(c,false)}</select></label><label>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);return;
+  showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form"><label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);return;
  }
  const args={ids:[...selected],actor:c.actor};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;if(conveyorDouble&&selected.has(conveyorDouble.id))args.double=conveyorDouble;
  if(await gameAction('auto',args)){selected.clear();conveyorDouble=null;wildcard='';wildcardMap={};renderedKey='';render();}
@@ -78,7 +90,7 @@ function conveyorUseSkill(){
  const c=state.room.game.conveyor;
  const active={balance:'制衡',gift:'馈赠',pressure:'施压',ascend:'升格',seven:'七印',judgment:'天命',trade:'易牌'};
  if(!active[c.skill]){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p class="skill-description">${esc(s.text)}</p><p>对应时机会提供操作。</p><button class="secondary" data-action="close">关闭</button>`);return;}
- showModal('cv-skill',`<h2>${active[c.skill]}</h2><p class="skill-description">${esc(conveyorSkill(c.skill).text)}</p><p>当前选中 ${selected.size} 张牌。</p><form class="form" id="cv-skill-form">${['gift','pressure'].includes(c.skill)?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}${c.skill==='seven'?'<label>操作<select name="effect"><option value="store">储存所选手牌</option><option value="release">使用七印</option></select></label><label>七印点数<input name="ranks" placeholder="例如 3,4,5,6,7,8,9"></label><label>七印花色<input name="suits" placeholder="例如 S,H,C,D,S,H,C"></label>':''}<p class="form-error"></p><button class="primary">确认使用</button></form>`);
+ showModal('cv-skill',`<h2>${active[c.skill]}</h2><p class="skill-description">${esc(conveyorSkill(c.skill).text)}</p><p>当前选中 ${selected.size} 张牌。</p><form class="form" id="cv-skill-form">${['gift','pressure'].includes(c.skill)?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}${c.skill==='seven'?`<label>操作<select name="effect"><option value="store">储存所选手牌</option><option value="release" ${c.resources.marks!==7?'disabled':''}>使用七印（${c.resources.marks||0} / 7）</option></select></label><fieldset class="seven-picker" hidden><legend>组成七张牌</legend>${Array.from({length:7},(_,i)=>`<label><span>${i+1}</span><select name="markRank${i}" aria-label="第 ${i+1} 张点数">${Array.from({length:15},(_,n)=>n+3).map(n=>`<option value="${n}" ${n===i+3?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="markSuit${i}" aria-label="第 ${i+1} 张花色">${['S','H','C','D'].map(v=>`<option value="${v}">${suits[v]}</option>`).join('')}</select></label>`).join('')}</fieldset>`:''}<p class="form-error"></p><button class="primary">确认使用</button></form>`);
 }
 document.addEventListener('click',async e=>{
  const b=e.target.closest('[data-action^="cv-"]');if(!b||b.disabled)return;
@@ -99,6 +111,11 @@ document.addEventListener('click',async e=>{
  }
  }catch(error){toast(error.message);}
 });
+document.addEventListener('change',e=>{
+ const f=e.target.closest('form');if(!f||e.target.name!=='effect')return;
+ if(f.id==='cv-urgent-form'){f.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum'].includes(e.target.value);f.querySelector('[data-urgent-direction]').hidden=e.target.value!=='rotate';}
+ if(f.id==='cv-skill-form'&&f.querySelector('.seven-picker'))f.querySelector('.seven-picker').hidden=e.target.value!=='release';
+});
 document.addEventListener('submit',async e=>{
  const f=e.target;if(!f.id.startsWith('cv-'))return;e.preventDefault();
  const c=state.room.game?.conveyor;
@@ -112,8 +129,7 @@ document.addEventListener('submit',async e=>{
  if(f.id==='cv-urgent-form'){action='urgent';args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;}
  if(f.elements.target&&f.elements.target.value!=='')args.target=Number(f.elements.target.value);
  if(f.elements.effect)args.effect=f.elements.effect.value;
- if(f.elements.ranks)args.ranks=f.elements.ranks.value.split(/[,，\s]+/).filter(Boolean).map(Number);
- if(f.elements.suits&&f.elements.suits.value)args.suits=f.elements.suits.value.split(/[,，\s]+/).filter(Boolean);
+ if(f.elements.markRank0&&args.effect==='release'){args.ranks=Array.from({length:7},(_,i)=>Number(f.elements['markRank'+i].value));args.suits=Array.from({length:7},(_,i)=>f.elements['markSuit'+i].value);}
  if(await gameAction(action,args)){selected.clear();conveyorChosen=[];if(f.id!=='cv-choice-form')closeModal();renderedKey='';render();}
  }catch(error){const target=f.querySelector('.form-error');if(target)target.textContent=error.message;else toast(error.message);}
 });
