@@ -53,7 +53,11 @@ class ConveyorRound(Game):
             start = order.index(self.first); order = order[start:] + order[:start]
         for index in range(max(self.deal_counts)):
             for s in order:
-                if index < self.deal_counts[s]: self.gain(s, 1, initial=True)
+                if index < self.deal_counts[s]: self.gain(s, 1, initial=True, main_choice=False)
+        for s in order:
+            if self.skill(s, 'clean'):
+                optional = [c for c in self.hands[s] if c['rank'] == self.main and c['rank'] in (3, 4, 5, 6)]
+                if optional: self.offer(s, 'clean-main', '净牌：选择保留的主牌，其余换牌', cards=copy.deepcopy(optional))
         self.initial_counts = [len(h) for h in self.hands]
         self.announce('请选择开局保留的牌。')
 
