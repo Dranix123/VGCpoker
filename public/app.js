@@ -62,11 +62,15 @@ function render() {
   if(key===renderedKey)return;
   renderedKey=key;
   const handScroll=$('.hand')?.scrollLeft||0;
+  const choiceForm=$('#cv-choice-form');
+  const choiceDraft=choiceForm?{key:choiceForm.dataset.choiceKey,values:[...new FormData(choiceForm)]}:null;
   const joinInput=$('#join-code'); const joinValue=joinInput?.value; const joinFocus=document.activeElement===joinInput;
   if(!r) $('#view').innerHTML=screen==='home'?lobby():screen==='settings'?settingsScreen():flowScreen();
   else if(!g) $('#view').innerHTML=waiting(r);
   else $('#view').innerHTML=table(r,g);
   if(joinValue!==undefined && $('#join-code')){$('#join-code').value=joinValue; if(joinFocus)$('#join-code').focus();}
+  const nextChoice=$('#cv-choice-form');
+  if(choiceDraft&&nextChoice?.dataset.choiceKey===choiceDraft.key)for(const [name,value] of choiceDraft.values){const field=nextChoice.elements.namedItem(name);if(field)field.value=value;}
   if($('.hand'))$('.hand').scrollLeft=handScroll;
   if($('.log-entries'))$('.log-entries').scrollTop=$('.log-entries').scrollHeight;
   if(r?.mode==='conveyor')conveyorAfterRender();
@@ -197,6 +201,7 @@ function showWildcard(){
   showModal('wildcard',`<h2 class="modal-title">${label} 配牌</h2><p class="modal-desc">每张${label}可以独立代替非王牌。选择 A 表示保留原点数${state.features?.wildUrgent?(conveyor?'；选择急牌后可选择急牌效果。':'；选择急牌后出牌即可赠牌。'):'。'}</p><form class="form" id="wildcard-form">${wild.map((c,i)=>`<label>第 ${i+1} 张${label}<select name="rank:${esc(c.id)}">${wildRanks().map(n=>`<option value="${n}" ${n===(wildRank(wildcardMap[c.id])||14)?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="suit:${esc(c.id)}" aria-label="替代花色">${Object.entries(suits).filter(([s])=>['S','H','C','D'].includes(s)||s==='T'&&state.room.options.dlc).map(([s,label])=>`<option value="${s}" ${s===(wildcardMap[c.id]?.suit||'S')?'selected':''}>${label}</option>`).join('')}</select></label>`).join('')}<button class="primary full" type="submit">确认配牌 →</button></form>`,'WILDCARD DECLARATION');
 }
 function selectionUpdate(){
+ if(state.room?.mode==='conveyor')conveyorAfterRender();
  $$('.hand .card').forEach(b=>{b.classList.toggle('selected',selected.has(b.dataset.card));b.setAttribute('aria-pressed',selected.has(b.dataset.card));});
  const returned=$('[data-action="tribute-return"]');if(returned)returned.disabled=selected.size!==1||state.room.audioWaiting;
  const btn=$('[data-action="play"]');if(btn)btn.disabled=state.room.audioWaiting||state.room.players[state.room.seat].autoplay||!selected.size||!!state.room?.game?.negotiation||!!state.room?.game?.priority&&state.room.players.filter(p=>!p.bot).length===1&&!state.room.game.priority.pending.includes(state.room.seat);

@@ -23,7 +23,8 @@ test('four visible seats render five independent actor play areas',()=>{
  const html=table();
  assert.equal((html.match(/class="seat /g)||[]).length,4);
  assert.equal((html.match(/class="actor-play /g)||[]).length,5);
- assert.ok(html.includes('第 1 手'));assert.ok(html.includes('第 2 手'));
+ assert.ok(!html.includes('第 1 手'));assert.ok(!html.includes('第 2 手'));
+ assert.ok(html.includes('手牌 A'));assert.ok(html.includes('手牌 B'));
  assert.ok(html.includes('出牌中...'));
 });
 test('conveyor spectators get no hand, target choices or gameplay controls',()=>{
@@ -39,4 +40,15 @@ test('top-deck ordering preserves the order selected by the user',()=>{
  vm.runInContext('conveyorChoice(q,c);conveyorChosen=["b","a"];',ctx);
  const html=vm.runInContext('conveyorChoice(q,c)',ctx);
  assert.ok(html.includes('4♥ → 3♠'));
+});
+
+test('choice cards select without submitting the form',()=>{
+ const ctx=context({q:{kind:'clean-main',seat:0,title:'净牌',cards:[{id:'a',rank:3,suit:'S'}]},c:{skill:'clean',actor:0,actors:[]}});
+ const html=vm.runInContext('conveyorChoice(q,c)',ctx);
+ assert.match(html,/<button type="button" aria-pressed="false" class="choice-card/);
+ assert.ok(html.includes('data-choice-key='));
+});
+test('passive skill is described as view rather than activation',()=>{
+ const html=table();
+ assert.ok(html.includes('查看双身'));assert.ok(!html.includes('发动双身'));
 });
