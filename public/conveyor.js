@@ -11,7 +11,19 @@ function conveyorFormOptions(form){return {recycle:form.elements.recycle.checked
 function conveyorWaiting(r){
  const host=r.host===state.user?.id;
  if(r.spectator)return roomHeading(r)+`<section class="watch-waiting"><h2>等待选择技能</h2></section>`;
- return roomHeading(r)+`<div class="conveyor-lobby"><section><div class="conveyor-players">${Array.from({length:4},(_,i)=>{const p=r.players[i];return `<div class="waiting-seat"><div class="avatar">${p?.bot?'✦':esc(p?.name?.[0]||'＋')}</div><div><strong>${esc(p?.name||'等待加入')}</strong><small>${p?.skill?esc(conveyorSkill(p.skill)?.name):p?.bot?'开局随机选择':'待选择技能'}</small></div>${host&&p?.bot?`<button class="seat-remove" data-action="remove" data-seat="${i}">×</button>`:''}</div>`;}).join('')}</div><div class="skill-grid">${r.skills.map(s=>{const taken=r.players.find(p=>!p.bot&&p.skill===s.id);return `<button class="skill-card ${r.players[r.seat]?.skill===s.id?'chosen':''}" data-action="cv-skill-info" data-skill="${s.id}"><strong>${s.name}</strong><small>${conveyorGroups[s.group]} · ${s.deal} 选 ${s.keep}</small><span>${taken?esc(taken.name):'查看技能 →'}</span></button>`;}).join('')}</div></section><aside class="side-panel"><h3>传送带</h3><p>${r.options.recycle?'轮回':'不轮回'} · 对家组队</p><button class="primary full" data-action="start" ${!host||r.players.length!==4||r.players.some(p=>!p.bot&&!p.skill)?'disabled':''}>开始对局 →</button>${host?`<button class="secondary full" data-action="bot" ${r.players.length===4?'disabled':''}>邀请规则 AI</button><button class="secondary full" data-action="model-bot" ${r.players.length===4||!state.preferences?.configured?'disabled':''}>邀请模型 AI</button>`:''}<p>每人选择一个不同技能。</p></aside></div>`;
+ const mine=r.players[r.seat]?.skill, missing=r.players.filter(p=>!p.bot&&!p.skill);
+ const ready=r.players.length===4&&!missing.length;
+ const status=r.players.length<4?'还差 '+(4-r.players.length)+' 位玩家':missing.length?'等待 '+missing.map(p=>esc(p.name)).join('、')+' 选技能':host?'已准备好，可以开始':'已准备好，等待房主开始';
+ const groups=Object.entries(conveyorGroups).map(([group,name])=>{
+  const skills=r.skills.filter(s=>s.group===Number(group));
+  if(!skills.length)return '';
+  return `<section class="skill-group"><h3>${name}</h3><div class="skill-grid">${skills.map(s=>{
+   const taken=r.players.find(p=>!p.bot&&p.skill===s.id), chosen=mine===s.id;
+   return `<button class="skill-card ${chosen?'chosen':''} ${taken&&!chosen?'taken':''}" data-action="cv-skill-info" data-skill="${s.id}" aria-pressed="${chosen}"><strong>${s.name}</strong><small>${s.deal} 选 ${s.keep} · ${conveyorActiveSkills.has(s.id)?'主动技能':'按时机生效'}</small><span>${chosen?'已选择 ✓':taken?esc(taken.name)+' 已选':'查看说明 →'}</span></button>`;
+  }).join('')}</div></section>`;
+ }).join('');
+ const players=Array.from({length:4},(_,i)=>{const p=r.players[i];return `<div class="waiting-seat"><div class="avatar">${p?.bot?'✦':esc(p?.name?.[0]||'＋')}</div><div><strong>${esc(p?.name||'等待加入')}</strong><small>${p?.skill?esc(conveyorSkill(p.skill)?.name):p?.bot?'开局随机选择':'待选择技能'}</small></div>${host&&p?.bot?`<button class="seat-remove" data-action="remove" data-seat="${i}" aria-label="移除${esc(p.name)}">×</button>`:''}</div>`;}).join('');
+ return roomHeading(r)+`<div class="conveyor-lobby"><section><div class="conveyor-players">${players}</div>${groups}</section><aside class="side-panel skill-ready"><h3>${mine?'已选 · '+esc(conveyorSkill(mine)?.name):'选择你的技能'}</h3><p>${r.options.recycle?'轮回':'不轮回'} · 对家组队</p><p class="ready-status" role="status">${status}</p><button class="primary full" data-action="start" ${!host||!ready?'disabled':''}>${host?'开始对局 →':'等待房主开始'}</button>${host?`<button class="secondary full" data-action="bot" ${r.players.length===4?'disabled':''}>邀请规则 AI</button><button class="secondary full" data-action="model-bot" ${r.players.length===4||!state.preferences?.configured?'disabled':''}>邀请模型 AI</button>`:''}</aside></div>`;
 }
 function conveyorPlayCards(play,g){
  if(!play)return '';
@@ -72,7 +84,7 @@ document.addEventListener('click',async e=>{
  const b=e.target.closest('[data-action^="cv-"]');if(!b||b.disabled)return;
  const action=b.dataset.action,c=state.room?.game?.conveyor;
  try{
- if(action==='cv-skill-info'){const s=conveyorSkill(b.dataset.skill);showModal('cv-skill-info',`<h2>${esc(s.name)}</h2><p>${s.deal} 选 ${s.keep} · ${conveyorGroups[s.group]}</p><p class="skill-description">${esc(s.text)}</p><div class="phase-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="cv-skill-select" data-skill="${s.id}">确认选择</button></div>`);}
+ if(action==='cv-skill-info'){const s=conveyorSkill(b.dataset.skill),taken=state.room.players.find(p=>!p.bot&&p.skill===s.id&&p.id!==state.user.id);showModal('cv-skill-info',`<h2>${esc(s.name)}</h2><p>${s.deal} 选 ${s.keep} · ${conveyorGroups[s.group]}</p><p class="skill-description">${esc(s.text)}</p><div class="phase-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="cv-skill-select" data-skill="${s.id}" ${taken?'disabled':''}>${taken?esc(taken.name)+' 已选择':'确认选择'}</button></div>`);}
  if(action==='cv-skill-select'){if(await mutation('skill',{skill:b.dataset.skill}))closeModal();}
  if(action==='cv-keep'){if(await gameAction('keep',{ids:[...selected],actor:c.actor})){selected.clear();renderedKey='';render();}}
  if(action==='cv-focus'){await gameAction('focus',{actor:Number(b.dataset.actor)});selected.clear();}
