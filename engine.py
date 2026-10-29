@@ -574,6 +574,8 @@ class Game:
         if self.priority and any(not self.players[s].get('autoplay') for s in self.priority['pending']) and (self.players[seat].get('bot') or self.players[seat].get('autoplay')) and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('等待真人优先决定管牌。')
         old = self.last
         special = action != 'play'
+        if old and old.get('special') == 'dot' and old.get('direct') and (seat != self.last_seat or special):
+            raise RuleError('2 或主牌死点后直接获得牌权，不能再管。')
         if old and old.get('direct') and seat == self.turn and not special:
             old = None
         if old and old.get('special') == 'cross' and action != 'hook': raise RuleError('叉牌只能用同点单牌勾。')

@@ -20,7 +20,7 @@ def card_name(card):
 
 class ConveyorRound(Game):
     def __init__(self, players, options=None, previous=None, interactive=True):
-        options = {**(options or {}), 'tribute': False}
+        options = {**(options or {}), 'tribute': False, 'dlc': False}
         super().__init__('standard', players, options, previous, interactive)
         self.owners = [p['owner'] for p in players]
         self.skills = [p['skill'] for p in players]
@@ -60,6 +60,9 @@ class ConveyorRound(Game):
     def announce(self, text):
         super().announce(text)
         if hasattr(self, 'action_reports'): self.action_reports.append(text)
+
+    def report(self, seat):
+        pass
 
     def solo(self):
         return len({self.owners[s] for s, p in enumerate(self.players) if not p.get('bot')}) <= 1
@@ -1001,7 +1004,7 @@ class ConveyorGame:
     def __init__(self, mode, players, options=None, previous=None, interactive=True):
         self.players = players
         self.mode = 'conveyor'
-        self.options = {**(options or {}), 'tribute':False}
+        self.options = {**(options or {}), 'tribute':False, 'dlc':False}
         choices = {s['id'] for s in available(self.options)}
         chosen = [p.get('skill') for p in players]
         if len(set(chosen)) != 4 or any(s not in choices for s in chosen): raise RuleError('每位玩家须选择一个不同且已启用的技能。')

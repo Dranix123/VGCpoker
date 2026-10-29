@@ -465,6 +465,7 @@ class Handler(BaseHTTPRequestHandler):
             for key in ('advancedHui', 'advancedDead'): options[key] = mode in ('standard', 'trio', 'conveyor') and b.get('options', {}).get(key, True) is True
             for key in ('allowMatching', 'allowSpectators'): options[key] = not reserved and not b.get('single') and b.get('options', {}).get(key) is True
             if mode == 'conveyor':
+                options['dlc'] = False
                 options['tribute'] = False
                 options['recycle'] = b.get('options', {}).get('recycle', True) is True
                 groups = b.get('options', {}).get('skillDlc', [])
