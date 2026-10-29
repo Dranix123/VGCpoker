@@ -59,6 +59,7 @@ function render() {
   document.body.classList.toggle('home-screen',!r&&screen==='home');
   document.body.classList.toggle('in-game',!!g);
   document.body.classList.toggle('round-over',g?.phase==='over');
+  document.body.classList.toggle('opening-phase',['setup','rps','draft','tribute'].includes(g?.phase));
   const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,screen==='create'?state.matchCounts:null]);
   if(key===renderedKey){gameAudio.observe(r);return;}
   renderedKey=key;
