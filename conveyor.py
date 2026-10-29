@@ -250,6 +250,7 @@ class ConveyorRound(Game):
     def validate_play(self, seat, cards, action='play', wildcard=None):
         self._validating_seat = seat
         transformed = self.transformed(seat, cards, self.extra_args)
+        if any(c['rank'] == 18 for c in transformed): raise RuleError('急牌请单独选择效果使用。')
         old_hui, old_pattern = self.hui_used, self.pattern
         old_advanced = self.options.get('advancedHui', False)
         if self.skill(seat, 'formless') and action == 'hui':

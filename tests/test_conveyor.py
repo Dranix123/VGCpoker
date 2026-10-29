@@ -408,5 +408,17 @@ class ConveyorRules(unittest.TestCase):
             else:self.fail('bots stalled')
             if g.phase=='over':break
 
+    def test_normal_candidates_never_include_urgent_cards(self):
+        g=self.game('gift','bond','debt','formless')
+        c=self.table(g,[[7,8],[18,7,8,9,10,11,12],[7,8],[7,8]])
+        c.turn=1
+        for move in c.candidates(1):
+            chosen=c.select(1,move['ids'])
+            self.assertFalse(any(card['rank']==18 for card in chosen))
+        move=g.bot_action(1)
+        self.assertEqual(move['action'],'urgent')
+        self.assertIn(move['effect'],('ban','discard'))
+        g.action(1,**move)
+
 
 if __name__=='__main__':unittest.main()

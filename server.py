@@ -229,7 +229,7 @@ def tick_bot(code, seat, version, snapshot, config, match_id=None):
 
 def update_autoplay(room):
     g = room.get('game')
-    if not g or g.phase == 'over':
+    if room.get('single') or not g or g.phase == 'over':
         room.pop('idleWait', None)
         return
     now = time.time()

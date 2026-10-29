@@ -36,7 +36,7 @@ function conveyorTable(r,g){
  const positions=['bottom','left','top','right'];
  const board=r.players.map((p,s)=>{
   const actors=c.actors.filter(a=>a.owner===s);
-  return `<div class="seat ${positions[(s-me+4)%4]} ${g.turn===s&&g.phase==='play'?'turn':''}"><div class="avatar">${p.bot?'✦':esc(p.name[0])}</div><div><div class="seat-name">${esc(p.name)}${s===me&&!r.spectator?' · 你':''}</div><div class="seat-meta">${actors.map(a=>a.count+(actors.length>1?' 张（'+(actors.indexOf(a)+1)+'）':' 张')).join(' / ')}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}</div><small>${esc(conveyorSkill(p.skill)?.name||'')}</small></div><span class="seat-role">${s%2===me%2?'同队':'对手'}</span><div class="seat-play conveyor-seat-plays">${actors.map(a=>`<div class="actor-play ${a.play?.order===g.playNumber?'latest':'older'}">${['setup','rps','draft'].includes(g.phase)?`<div class="playing">${(g.phase==='draft'?a.drafted:a.confirmed)?'已确认':'等待确认...'}</div>`:g.phase==='play'&&c.turnActor===a.id?'<div class="playing">出牌中...</div>':conveyorPlayCards(a.play,g)}${a.resources.ban?`<small>禁手 ${a.resources.ban}</small>`:''}</div>`).join('')}</div>${r.bubbles?.[s]?`<div class="speech-bubble">${esc(r.bubbles[s])}</div>`:''}</div>`;
+  return `<div class="seat ${positions[(s-me+4)%4]} ${g.turn===s&&g.phase==='play'?'turn':''}"><div class="avatar">${p.bot?'✦':esc(p.name[0])}</div><div><div class="seat-name">${esc(p.name)}${s===me&&!r.spectator?' · 你':''}</div><div class="seat-meta">${actors.map(a=>a.count+(actors.length>1?' 张（'+(actors.indexOf(a)+1)+'）':' 张')).join(' / ')}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}</div><small>${esc(conveyorSkill(p.skill)?.name||'')}${p.skill==='money'?' · 金钱 '+(actors[0]?.resources.money||0):''}</small></div><span class="seat-role">${s%2===me%2?'同队':'对手'}</span><div class="seat-play conveyor-seat-plays">${actors.map(a=>`<div class="actor-play ${a.play?.order===g.playNumber?'latest':'older'}">${['setup','rps','draft'].includes(g.phase)?`<div class="opening-display">${(g.phase==='draft'?a.drafted:a.confirmed)?'<div class="seat-play-label">已确认</div>':(c.waiting?c.actors.find(x=>x.name===c.waiting):c.actors.find(x=>(g.phase!=='rps'||g.reveals.includes(x.owner))&&!(g.phase==='draft'?x.drafted:x.confirmed)))?.id===a.id?'<div class="playing">等待确认...</div>':''}${g.phase!=='draft'&&g.reveals.includes(s)&&actors[0].id===a.id?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:g.phase==='play'&&c.turnActor===a.id?'<div class="playing">出牌中...</div>':conveyorPlayCards(a.play,g)}${a.resources.ban?`<small>禁手 ${a.resources.ban}</small>`:''}</div>`).join('')}</div>${r.bubbles?.[s]?`<div class="speech-bubble">${esc(r.bubbles[s])}</div>`:''}</div>`;
  }).join('');
  let center='';
  const pile=`<div class="draw-pile" aria-label="牌堆 ${c.pile} 张"><span class="pile-back">VGC</span><strong>${c.pile} 张</strong></div>`;
@@ -82,7 +82,7 @@ function conveyorAfterRender(){
 async function conveyorPlay(){
  const g=state.room.game,c=g.conveyor;
  if(urgentSelected()){
-  showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form"><label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);return;
+  showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form"><label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><div class="urgent-discard-picker" hidden><p>选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!selected.has(x.id)&&x.rank!==18).map(x=>`<label class="urgent-discard-card"><input type="checkbox" name="discardIds" value="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);return;
  }
  const args={ids:[...selected],actor:c.actor};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;if(conveyorDouble&&selected.has(conveyorDouble.id))args.double=conveyorDouble;
  if(await gameAction('auto',args)){selected.clear();conveyorDouble=null;wildcard='';wildcardMap={};renderedKey='';render();}
@@ -114,7 +114,7 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('change',e=>{
  const f=e.target.closest('form');if(!f||e.target.name!=='effect')return;
- if(f.id==='cv-urgent-form'){f.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum'].includes(e.target.value);f.querySelector('[data-urgent-direction]').hidden=e.target.value!=='rotate';}
+ if(f.id==='cv-urgent-form'){f.querySelector('.urgent-discard-picker').hidden=e.target.value!=='discard';f.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum'].includes(e.target.value);f.querySelector('[data-urgent-direction]').hidden=e.target.value!=='rotate';}
  if(f.id==='cv-skill-form'&&f.querySelector('.seven-picker'))f.querySelector('.seven-picker').hidden=e.target.value!=='release';
 });
 document.addEventListener('submit',async e=>{
@@ -127,7 +127,7 @@ document.addEventListener('submit',async e=>{
   action='choice';args.ids=c.choice.cards?conveyorChosen:[...selected];
   if(f.elements.value)args.value=['duel-start','blood-deal'].includes(c.choice.kind)?f.elements.value.value==='1':Number(f.elements.value.value);
  }
- if(f.id==='cv-urgent-form'){action='urgent';args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;}
+ if(f.id==='cv-urgent-form'){action='urgent';if(f.elements.effect.value==='discard')args.ids=[...new Set([...args.ids,...[...f.querySelectorAll('[name=discardIds]:checked')].map(x=>x.value)])];args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;}
  if(f.elements.target&&f.elements.target.value!=='')args.target=Number(f.elements.target.value);
  if(f.elements.effect)args.effect=f.elements.effect.value;
  if(f.elements.markRank0&&args.effect==='release'){args.ranks=Array.from({length:7},(_,i)=>Number(f.elements['markRank'+i].value));args.suits=Array.from({length:7},(_,i)=>f.elements['markSuit'+i].value);}
