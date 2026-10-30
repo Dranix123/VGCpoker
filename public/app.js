@@ -6,6 +6,7 @@ const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',1
 const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
+let mutationSequence=0;
 let responseKey='', pollTimer, toastTimer, screen='home', settingsTab='account', connectionLost=false;
 const modal = $('#modal');
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3500); }
@@ -23,12 +24,30 @@ function markResponse(){
  responseKey=key;
  if(response?.moves.length){const move=response.moves[0];selected=new Set(move.ids);wildcard='';wildcardMap=move.wildcard||{};}
 }
+async function requestMutation(path,body,isCurrent=()=>true){
+ const before=state.room,phase=before?.game?.phase,choice=JSON.stringify(before?.game?.conveyor?.choice);
+ const defer=path==='action'&&['keep','confirm','choice'].includes(body.action);
+ let queued=false;
+ try{
+  for(let attempt=0;;attempt++){
+   if(!isCurrent())throw Error('操作已取消。');
+   try{return await api(path,body);}catch(error){
+    if(!defer||error.message!=='等待本次行动播报完成。'||attempt>=40)throw error;
+    if(!queued){queued=true;toast('正在播报，结束后确认本次选择。');}
+    await new Promise(resolve=>setTimeout(resolve,250));if(!isCurrent())throw Error('操作已取消。');await sync();
+    if(state.room?.code!==before.code||state.room?.matchId!==before.matchId||state.room?.game?.phase!==phase||body.action==='choice'&&JSON.stringify(state.room?.game?.conveyor?.choice)!==choice)throw Error('选择已更新，请重新确认。');
+    body={...body,revision:state.room.revision};
+   }
+  }
+ }finally{if(queued){clearTimeout(toastTimer);$('#toast').classList.remove('show');}}
+}
 async function mutation(path, body = {}) {
-  if (busy) return;
+  if (busy&&!['leave','resign'].includes(path)) return;
+  const sequence=++mutationSequence;
   busy = true;
-  try { const result = await api(path,body); if ('room' in result) {if(['leave','resign'].includes(path)&&!result.room){screen='home';closeModal();window.scrollTo({top:0,behavior:'instant'});} state.room = result.room; markResponse(); renderedKey = ''; render();} await sync(); return result; }
-  catch(e) {toast(e.message); await sync();}
-  finally {busy = false;}
+  try { const result = await requestMutation(path,body,()=>sequence===mutationSequence);if(sequence!==mutationSequence)return; if ('room' in result) {if(['leave','resign'].includes(path)&&!result.room){screen='home';closeModal();window.scrollTo({top:0,behavior:'instant'});} state.room = result.room; markResponse(); renderedKey = ''; render();} await sync(); return result; }
+  catch(e) {if(sequence===mutationSequence){toast(e.message);await sync();}}
+  finally {if(sequence===mutationSequence)busy = false;}
 }
 async function sync() {
   try {

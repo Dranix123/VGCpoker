@@ -53,3 +53,22 @@ test('play and pass respect turn, priority window and free lead while preserving
   assert.equal(ctx.selected.size,1);
  }
 });
+
+test('preparation confirmation waits for narration but cancels when the choice changes',async()=>{
+ const source=fs.readFileSync('public/app.js','utf8');
+ const fn=source.slice(source.indexOf('async function requestMutation('),source.indexOf('async function mutation('));
+ for(const change of [false,true]){
+  let calls=0;const ctx={state:{room:{code:'123456',matchId:'match',revision:1,game:{phase:'play',conveyor:{choice:{kind:'retain',cards:['a']}}}}},api:async()=>{calls++;if(calls===1)throw Error('等待本次行动播报完成。');return {ok:true};},sync:async()=>{ctx.state.room.revision++;if(change)ctx.state.room.game.conveyor.choice={kind:'retain',cards:['b']};},toast(){},toastTimer:null,$:()=>({classList:{remove(){}}}),setTimeout:fn=>fn(),clearTimeout(){},Error,JSON};
+  vm.createContext(ctx);vm.runInContext(fn,ctx);
+  const promise=vm.runInContext('requestMutation("action",{action:"choice",ids:["a"]})',ctx);
+  if(change){await assert.rejects(promise,/选择已更新/);assert.equal(calls,1);}else{assert.equal((await promise).ok,true);assert.equal(calls,2);}
+ }
+});
+
+test('leaving cancels a narration-delayed confirmation before resubmission',async()=>{
+ const source=fs.readFileSync('public/app.js','utf8');const fn=source.slice(source.indexOf('async function requestMutation('),source.indexOf('async function mutation('));
+ let calls=0;const ctx={state:{room:{code:'123456',matchId:'one',game:{phase:'setup'}}},api:async()=>{calls++;throw Error('等待本次行动播报完成。');},sync:async()=>{throw Error('Should not sync cancelled request');},toast(){},toastTimer:null,$:()=>({classList:{remove(){}}}),setTimeout:fn=>fn(),clearTimeout(){},Error,JSON,isCurrent:()=>calls===0};
+ vm.createContext(ctx);vm.runInContext(fn,ctx);
+ await assert.rejects(vm.runInContext('requestMutation("action",{action:"confirm"},isCurrent)',ctx),/操作已取消/);
+ assert.equal(calls,1);
+});
