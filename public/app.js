@@ -79,6 +79,7 @@ function render() {
   document.body.classList.toggle('in-game',!!g);
   document.body.classList.toggle('landlord-game',r?.mode==='landlord'&&!!g);
   document.body.classList.toggle('round-over',g?.phase==='over');
+  document.body.classList.toggle('tribute-phase',g?.phase==='tribute');
   document.body.classList.toggle('opening-phase',['setup','rps','draft','tribute'].includes(g?.phase));
   const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,screen==='create'?state.matchCounts:null]);
   if(key===renderedKey){gameAudio.observe(r);return;}
@@ -177,7 +178,9 @@ function table(r,g) {
   }
   else if(g.phase==='tribute') {
     const t=g.tribute, offer=t.offers.find(o=>o.recipient===me&&!o.returned), canChoose=t.stage==='choose'&&t.receivers.includes(me)&&!t.offers.some(o=>o.recipient===me);
-    center=`<div class="table-prompt">${t.stage==='choose'?'选择贡牌':'还牌'}</div><div class="tribute-offers">${t.offers.map(o=>`<button class="secondary" data-action="tribute-pick" data-seat="${o.donor}" ${!canChoose||o.recipient!==null?'disabled':''}>${esc(r.players[o.donor].name)} · ${ranks[o.card.rank]}${suits[o.card.suit]}${o.recipient!==null?' → '+esc(r.players[o.recipient].name):''}</button>`).join('')}</div><p class="table-sub">${t.stage==='return'&&offer?'选择一张手牌，还给 '+esc(r.players[offer.donor].name):'等待其他玩家完成进贡'}</p>`;
+    center='<div class="table-prompt">进贡</div>';
+    const waiting=t.offers.filter(o=>o.recipient!==null&&!o.returned).map(o=>esc(r.players[o.recipient].name)).join('、');
+    openingActions=`<section class="tribute-panel"><h3>${canChoose?'选择一张贡牌':offer?'选一张手牌返还':'进贡进行中'}</h3><p>${canChoose?'收下贡牌后，返还一张手牌。':offer?'还给 '+esc(r.players[offer.donor].name):t.stage==='return'?'等待 '+waiting+' 还牌':'等待队友选择贡牌'}</p><div class="tribute-offers">${t.offers.map(o=>`<button class="secondary tribute-card ${['H','D'].includes(o.card.suit)||o.card.rank===17?'red':''}" data-action="tribute-pick" data-seat="${o.donor}" ${!canChoose||o.recipient!==null?'disabled':''}><span>${ranks[o.card.rank]}${suits[o.card.suit]}</span><small>${esc(r.players[o.donor].name)}${o.recipient!==null?' → '+esc(r.players[o.recipient].name):''}</small></button>`).join('')}</div></section>`;
   }
   else if(g.phase==='play') center=g.mode==='landlord'&&!g.last&&g.bottom.length?`<div class="bottom-cards">${g.bottom.map(c=>`<span class="mini-card ${['H','D'].includes(c.suit)?'red':''}">${ranks[c.rank]}${suits[c.suit]}</span>`).join('')}</div>`:'';
   else center='<div class="table-prompt">本局已结束</div>';
@@ -316,7 +319,8 @@ document.addEventListener('click',async e=>{
  case 'declare-wild':showWildcard();break;
  case 'deselect':selected.clear();selectionUpdate();break;
  case 'hint':{
-   const result=await api('hint',{});hintMoves=result.moves;if(!hintMoves.length){toast(result.reason||'未找到提示方案，可手动选牌或选择不出。');return;}
+   const hintRoom=state.room?.code,hintMatch=state.room?.matchId;
+   const result=await api('hint',{});if(state.room?.code!==hintRoom||state.room?.matchId!==hintMatch||state.room?.game?.phase!=='play'||state.room.game.finished.includes(state.room.seat))return;hintMoves=result.moves;if(!hintMoves.length){toast(result.reason||'未找到提示方案，可手动选牌或选择不出。');return;}
    const move=hintMoves[hintIndex++%hintMoves.length];if(state.room.mode==='conveyor')conveyorDouble=move.double||null;selected=new Set(move.ids);wildcard='';wildcardMap=move.wildcard||{};renderedKey='';render();toast(move.label+' · 再点提示切换方案');break;
  }
  case 'gift-player':{
