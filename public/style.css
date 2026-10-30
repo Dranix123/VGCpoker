@@ -483,3 +483,5 @@ footer{gap:24px}
 
 .skill-hand-picker{display:flex;flex-wrap:wrap;gap:8px;max-height:210px;overflow:auto;padding:4px 3px 8px;margin-bottom:16px}.skill-hand-picker button{min-width:48px;min-height:54px;font-size:18px}.skill-hand-picker .chosen{outline:2px solid var(--ink);background:#dedbd2}
 .conveyor-opening-actions{justify-content:center;margin:12px 0}.conveyor-opening-actions button{min-height:44px;min-width:110px;font-size:15px}
+
+.urgent-discard-card{display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-width:52px;min-height:70px;padding:8px;border:1px solid var(--line);font-size:18px;cursor:pointer}.urgent-discard-card input{width:18px!important;height:18px;margin:0}.urgent-discard-card.chosen{outline:2px solid var(--ink);background:#dedbd2}.urgent-discard-picker .choice-cards{padding:3px;gap:10px}.urgent-discard-count{font-size:13px}

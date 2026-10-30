@@ -284,7 +284,8 @@ document.addEventListener('click',async e=>{
  case 'tribute-pick':await gameAction('tribute-pick',{target:Number(b.dataset.seat)});break;
  case 'tribute-return':if(await gameAction('tribute-return',{ids:[...selected]})){selected.clear();renderedKey='';render();}break;
  case 'bid':await gameAction('bid',{value:Number(b.dataset.value)});break;
- case 'reveal':case 'confirm':case 'pass':case 'accept':case 'reject':await gameAction(action);break;
+ case 'pass':await gameAction('pass',state.room.mode==='conveyor'?{actor:state.room.game.conveyor.actor}:{});break;
+ case 'reveal':case 'confirm':case 'accept':case 'reject':await gameAction(action);break;
  case 'promote':await gameAction('promote',{rank:Number(b.dataset.rank)});break;
  case 'rps':await gameAction('rps',{value:b.dataset.value});break;
  case 'declare-wild':showWildcard();break;

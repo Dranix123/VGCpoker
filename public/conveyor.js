@@ -83,7 +83,10 @@ function conveyorAfterRender(){
 async function conveyorPlay(){
  const g=state.room.game,c=g.conveyor;
  if(urgentSelected()){
-  showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form"><label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><div class="urgent-discard-picker" hidden><p>选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!selected.has(x.id)&&x.rank!==18).map(x=>`<label class="urgent-discard-card"><input type="checkbox" name="discardIds" value="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);return;
+  if(c.actor!==c.turnActor){toast('急牌需轮到当前这手才能使用。');return;}
+  const wild=wildcardPayload(),urgentIds=g.hand.filter(x=>selected.has(x.id)&&(x.rank===18||x.rank===14&&(x.suit==='S'||c.skill==='wild')&&(typeof wild==='object'?wildRank(wild[x.id])===18:wild===18))).map(x=>x.id);
+  if(urgentIds.length!==1){toast('每次选择一张急牌。');return;}
+  showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form">${urgentIds.map(id=>`<input type="hidden" name="urgentIds" value="${esc(id)}">`).join('')}<label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><div class="urgent-discard-picker" hidden><p class="urgent-discard-count">选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!urgentIds.includes(x.id)&&x.rank!==18).map(x=>`<label class="urgent-discard-card ${['H','D'].includes(x.suit)?'red':''}"><span>${ranks[x.rank]}${suits[x.suit]}</span><input type="checkbox" name="discardIds" value="${esc(x.id)}" ${selected.has(x.id)?'checked':''}></label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);conveyorUrgentUpdate($('#cv-urgent-form'));return;
  }
  const args={ids:[...selected],actor:c.actor};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;if(conveyorDouble&&selected.has(conveyorDouble.id))args.double=conveyorDouble;
  if(await gameAction('auto',args)){conveyorDouble=null;wildcard='';wildcardMap={};resetConveyorSelection();renderedKey='';render();}
@@ -114,8 +117,14 @@ document.addEventListener('click',async e=>{
  }
  }catch(error){toast(error.message);}
 });
+function conveyorUrgentUpdate(form){
+ const boxes=[...form.querySelectorAll('[name=discardIds]')],count=boxes.filter(x=>x.checked).length,discard=form.elements.effect.value==='discard';
+ form.querySelector('.urgent-discard-count').textContent='已选 '+count+' / 2 张，可不选';
+ boxes.forEach(x=>{x.disabled=count>=2&&!x.checked;x.closest('label').classList.toggle('chosen',x.checked);});
+ form.querySelector('button.primary').disabled=discard&&count>2;
+}
 document.addEventListener('change',e=>{
- const f=e.target.closest('form');if(!f||e.target.name!=='effect')return;
+ const f=e.target.closest('form');if(!f)return;if(f.id==='cv-urgent-form')conveyorUrgentUpdate(f);if(e.target.name!=='effect')return;
  if(f.id==='cv-urgent-form'){f.querySelector('.urgent-discard-picker').hidden=e.target.value!=='discard';f.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum'].includes(e.target.value);f.querySelector('[data-urgent-direction]').hidden=e.target.value!=='rotate';}
  if(f.id==='cv-skill-form'&&f.querySelector('.seven-picker'))f.querySelector('.seven-picker').hidden=e.target.value!=='release';
 });
@@ -129,7 +138,7 @@ document.addEventListener('submit',async e=>{
   action='choice';args.ids=c.choice.cards?conveyorChosen:[...selected];
   if(f.elements.value)args.value=['duel-start','blood-deal'].includes(c.choice.kind)?f.elements.value.value==='1':Number(f.elements.value.value);
  }
- if(f.id==='cv-urgent-form'){action='urgent';if(f.elements.effect.value==='discard')args.ids=[...new Set([...args.ids,...[...f.querySelectorAll('[name=discardIds]:checked')].map(x=>x.value)])];args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;}
+ if(f.id==='cv-urgent-form'){action='urgent';args.ids=[...f.querySelectorAll('[name=urgentIds]')].map(x=>x.value);if(f.elements.effect.value==='discard')args.ids.push(...[...f.querySelectorAll('[name=discardIds]:checked')].map(x=>x.value));args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=typeof wild==='object'?Object.fromEntries(Object.entries(wild).filter(([id])=>args.ids.includes(id))):wild;}
  if(f.elements.target&&f.elements.target.value!=='')args.target=Number(f.elements.target.value);
  if(f.elements.effect)args.effect=f.elements.effect.value;
  if(f.elements.markRank0&&args.effect==='release'){args.ranks=Array.from({length:7},(_,i)=>Number(f.elements['markRank'+i].value));args.suits=Array.from({length:7},(_,i)=>f.elements['markSuit'+i].value);}
