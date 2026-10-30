@@ -154,3 +154,9 @@
 实际收贡按钮在桌面中央偏小，返还指引远离手牌，现将进贡操作与接收关系放入手牌旁面板，显示“选一张手牌返还”“还给3号”等具体目标，贡牌改为较大的牌面按钮。进贡阶段适度缩短牌桌，手机还牌/清空并排，避免确认按钮落在第二行。截图 experience-tribute-before.png、experience-tribute-return-before.png / experience-tribute-return-after.png、experience-tribute-complete.png；最后并排布局为后续CSS修正。
 
 结算截图还出现迟到的提示请求重新显示旧toast，提示返回时现在检查房间/牌局身份、阶段和已完成状态，避免旧提示覆盖结果。41项JS通过，静态更新刷新可用。
+
+## 实际天命发动与弹窗错误可见性
+
+通过UI选天命、开局12张、完成保留与确认，轮到本人后实际打开技能。发现纯翻牌技能仍显示12张手牌和选中数量，去掉无关选牌区并将按钮改为翻牌判定，提交不携带无关手牌。七印切到使用印记时隐藏储存手牌选择，只保留七张组合设置。
+
+实际点击发动，规则返回“有能管上的牌时不能使用天命”，但旧窗口错误区为空，提示在dialog背后，用户看似点不动。修复行动错误在当前弹窗内显示，重新实际点击后已直接看到该原因。截图 experience-judgment-before.png、experience-judgment-error-before.png / experience-judgment-error-after.png。错误提示也统一素描墨色强调，红色留给扑克牌。42项JS通过，静态刷新即可加载。

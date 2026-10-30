@@ -497,3 +497,6 @@ footer{gap:24px}
 
 .tribute-panel{padding:14px;border:1px solid var(--line);border-radius:4px;margin:14px 0;background:var(--panel)}.tribute-panel h3{font-size:18px;margin:0 0 8px}.tribute-panel p{font-size:13px;line-height:1.6}.tribute-panel .tribute-offers{justify-content:center;margin:12px 0 0}.tribute-panel .tribute-card{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px;min-height:74px;min-width:100px}.tribute-card span{font-size:21px}.tribute-card small{font-size:11px;color:var(--ink)}@media(max-width:720px){.in-game.tribute-phase .board{height:260px;min-height:260px}.tribute-phase .table-center{top:50%}.tribute-panel{margin:12px 0;padding:12px}}
 @media(max-width:720px){.tribute-phase .hand-controls{flex-direction:row;justify-content:space-between;align-items:center}.tribute-phase .hand-controls>button{min-height:44px}}
+
+.skill-hand-picker[hidden],.skill-picked-count[hidden]{display:none}
+.form-error{color:var(--ink);font-weight:600}.form-error:not(:empty){border-left:3px solid var(--ink);padding-left:10px;line-height:1.7}

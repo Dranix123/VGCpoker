@@ -105,3 +105,12 @@ test('an eligible player sees the tie result beside the next rps choice',()=>{
  const waiting=table(false,false,{phase:'rps',reveals:[1,2],ready:[],log:['猜拳平局，请重出。']});
  assert.ok(!waiting.includes('class="rps-feedback"'));
 });
+
+test('judgment asks for a draw judgment without a hand picker',()=>{
+ let html='';const ctx=context({showModal:(_,value)=>html=value});
+ ctx.state.features.conveyorSkills.push({id:'judgment',name:'天命',text:'翻牌判定'});
+ ctx.state.room={game:{hand:[{id:'card',rank:4,suit:'H'}],conveyor:{skill:'judgment',resources:{}}}};
+ vm.runInContext('conveyorUseSkill()',ctx);
+ assert.ok(html.includes('翻牌判定'));
+ assert.ok(!html.includes('skill-hand-picker'));assert.ok(!html.includes('当前选中'));
+});

@@ -46,7 +46,7 @@ async function mutation(path, body = {}) {
   const sequence=++mutationSequence;
   busy = true;
   try { const result = await requestMutation(path,body,()=>sequence===mutationSequence);if(sequence!==mutationSequence)return; if ('room' in result) {if(['leave','resign'].includes(path)&&!result.room){screen='home';closeModal();window.scrollTo({top:0,behavior:'instant'});} state.room = result.room; markResponse(); renderedKey = ''; render();} await sync(); return result; }
-  catch(e) {if(sequence===mutationSequence){toast(e.message);await sync();}}
+  catch(e) {if(sequence===mutationSequence){const error=modal.open?$('.form-error',modal):null;if(error)error.textContent=e.message;else toast(e.message);await sync();}}
   finally {if(sequence===mutationSequence)busy = false;}
 }
 async function sync() {

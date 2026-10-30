@@ -95,7 +95,7 @@ function conveyorUseSkill(){
  const c=state.room.game.conveyor;
  const active={balance:'制衡',gift:'馈赠',pressure:'施压',ascend:'升格',seven:'七印',judgment:'天命',trade:'易牌'};
  if(!active[c.skill]){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p class="skill-description">${esc(s.text)}</p><p>对应时机会提供操作。</p><button class="secondary" data-action="close">关闭</button>`);return;}
- showModal('cv-skill',`<h2>${active[c.skill]}</h2><p class="skill-description">${esc(conveyorSkill(c.skill).text)}</p><p class="skill-picked-count">当前选中 ${selected.size} 张牌。</p><div class="skill-hand-picker" aria-label="技能选牌">${state.room.game.hand.map(x=>`<button type="button" class="choice-card ${selected.has(x.id)?'chosen':''} ${['H','D'].includes(x.suit)?'red':''}" aria-pressed="${selected.has(x.id)}" data-action="cv-skill-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</button>`).join('')}</div><form class="form" id="cv-skill-form">${['gift','pressure'].includes(c.skill)?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}${c.skill==='seven'?`<label>操作<select name="effect"><option value="store">储存所选手牌</option><option value="release" ${c.resources.marks!==7?'disabled':''}>使用七印（${c.resources.marks||0} / 7）</option></select></label><fieldset class="seven-picker" hidden><legend>组成七张牌</legend>${Array.from({length:7},(_,i)=>`<label><span>${i+1}</span><select name="markRank${i}" aria-label="第 ${i+1} 张点数">${Array.from({length:15},(_,n)=>n+3).map(n=>`<option value="${n}" ${n===i+3?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="markSuit${i}" aria-label="第 ${i+1} 张花色">${['S','H','C','D'].map(v=>`<option value="${v}">${suits[v]}</option>`).join('')}</select></label>`).join('')}</fieldset>`:''}<p class="form-error"></p><button class="primary">${c.skill==='balance'?'换 '+selected.size+' 张并结束行动':'确认使用'}</button></form>`);
+ showModal('cv-skill',`<h2>${active[c.skill]}</h2><p class="skill-description">${esc(conveyorSkill(c.skill).text)}</p>${c.skill==='judgment'?'':`<p class="skill-picked-count">当前选中 ${selected.size} 张牌。</p><div class="skill-hand-picker" aria-label="技能选牌">${state.room.game.hand.map(x=>`<button type="button" class="choice-card ${selected.has(x.id)?'chosen':''} ${['H','D'].includes(x.suit)?'red':''}" aria-pressed="${selected.has(x.id)}" data-action="cv-skill-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</button>`).join('')}</div>`}<form class="form" id="cv-skill-form">${['gift','pressure'].includes(c.skill)?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}${c.skill==='seven'?`<label>操作<select name="effect"><option value="store">储存所选手牌</option><option value="release" ${c.resources.marks!==7?'disabled':''}>使用七印（${c.resources.marks||0} / 7）</option></select></label><fieldset class="seven-picker" hidden><legend>组成七张牌</legend>${Array.from({length:7},(_,i)=>`<label><span>${i+1}</span><select name="markRank${i}" aria-label="第 ${i+1} 张点数">${Array.from({length:15},(_,n)=>n+3).map(n=>`<option value="${n}" ${n===i+3?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="markSuit${i}" aria-label="第 ${i+1} 张花色">${['S','H','C','D'].map(v=>`<option value="${v}">${suits[v]}</option>`).join('')}</select></label>`).join('')}</fieldset>`:''}<p class="form-error"></p><button class="primary">${c.skill==='balance'?'换 '+selected.size+' 张并结束行动':c.skill==='judgment'?'翻牌判定':'确认使用'}</button></form>`);
 }
 document.addEventListener('click',async e=>{
  const b=e.target.closest('[data-action^="cv-"]');if(!b||b.disabled)return;
@@ -127,14 +127,15 @@ function conveyorUrgentUpdate(form){
 document.addEventListener('change',e=>{
  const f=e.target.closest('form');if(!f)return;if(f.id==='cv-urgent-form')conveyorUrgentUpdate(f);if(e.target.name!=='effect')return;
  if(f.id==='cv-urgent-form'){f.querySelector('.urgent-discard-picker').hidden=e.target.value!=='discard';f.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum'].includes(e.target.value);f.querySelector('[data-urgent-direction]').hidden=e.target.value!=='rotate';}
- if(f.id==='cv-skill-form'&&f.querySelector('.seven-picker'))f.querySelector('.seven-picker').hidden=e.target.value!=='release';
+ if(f.id==='cv-skill-form'&&f.querySelector('.seven-picker')){const release=e.target.value==='release';f.querySelector('.seven-picker').hidden=!release;$('#modal .skill-hand-picker').hidden=release;$('#modal .skill-picked-count').hidden=release;}
 });
 document.addEventListener('submit',async e=>{
  const f=e.target;if(!f.id.startsWith('cv-'))return;e.preventDefault();
  const c=state.room.game?.conveyor;
  try{
  if(f.id==='cv-double-form'){conveyorDouble={id:f.elements.id.value,ranks:[0,1].map(i=>Number(f.elements['rank'+i].value)),suits:[0,1].map(i=>f.elements['suit'+i].value)};closeModal();renderedKey='';render();return;}
- const args={actor:c.actor,ids:[...selected]};let action='skill';
+ const error=f.querySelector('.form-error');if(error)error.textContent='';
+ const args={actor:c.actor,ids:c.skill==='judgment'&&f.id==='cv-skill-form'?[]:[...selected]};let action='skill';
  if(f.id==='cv-choice-form'){
   action='choice';args.ids=c.choice.cards?conveyorChosen:[...selected];
   if(f.elements.value)args.value=['duel-start','blood-deal'].includes(c.choice.kind)?f.elements.value.value==='1':Number(f.elements.value.value);
