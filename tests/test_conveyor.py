@@ -422,5 +422,32 @@ class ConveyorRules(unittest.TestCase):
         self.assertIn(move['effect'],('ban','discard'))
         g.action(1,**move)
 
+    def test_first_two_empty_hands_refill_once_third_can_finish(self):
+        for turns in (0,1,2):
+            g=self.game();c=self.table(g,[[7],[8,9],[10,11],[12,13]])
+            c.resources[0]['turns']=turns
+            before=len(c.pile)
+            g.action(0,'auto',[c.hands[0][0]['id']])
+            if turns<2:
+                self.assertNotIn(0,c.finished);self.assertEqual(len(c.hands[0]),1)
+                self.assertEqual(len(c.pile),before-1)
+            else:self.assertIn(0,c.finished)
+
+    def test_twins_keep_seven_assigns_remaining_seven_to_second(self):
+        g=self.game('twins','anchor','leap','stars');c=g.core
+        ids=[x['id'] for x in c.hands[0][:7]];other=[x['id'] for x in c.hands[0][7:]]
+        g.action(0,'keep',ids)
+        self.assertEqual([x['id'] for x in c.hands[0]],ids)
+        self.assertEqual([x['id'] for x in c.hands[1]],other)
+        self.assertFalse(any(q['kind']=='split' for q in c.pending))
+
+    def test_special_interrupt_deals_to_skipped_actor(self):
+        g=self.game('balance','anchor','money','stars');c=self.table(g,[[7,8],[9,10],[7,11],[7,7,12]])
+        g.action(0,'auto',[c.hands[0][0]['id']]);before=len(c.hands[3])
+        # Turn order is 0,3,2,1: actor 2 interrupts actor 3 with a cross.
+        c.hands[2][1]['rank']=7
+        g.action(2,'auto',[x['id'] for x in c.hands[2] if x['rank']==7])
+        self.assertEqual(len(c.hands[3]),before+1)
+
 
 if __name__=='__main__':unittest.main()

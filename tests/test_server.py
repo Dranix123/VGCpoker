@@ -193,6 +193,25 @@ class ServerIntegration(unittest.TestCase):
         self.request(self.clients[0],'audio-ack',{'event':event['id'],'code':code,'matchId':'current'})
         self.assertEqual(event['acknowledged'],[self.users[0]['id']])
 
+    def test_confirmation_moves_counterclockwise(self):
+        code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code]
+        for seat in [0,3,2,1]:
+            self.assertEqual(server.confirmation_seat(room),seat)
+            if seat==0:self.assertEqual(self.request(self.clients[1],'action',{'action':'confirm','revision':room['revision']})[0],400)
+            self.assertEqual(self.request(self.clients[seat],'action',{'action':'confirm','revision':room['revision']})[0],200)
+        self.assertNotEqual(room['game'].phase,'setup')
+
+    def test_priority_clock_is_public_and_expires_without_solo_takeover(self):
+        code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];g=room['game'];g.phase='play';g.priority={'pending':[1,2],'bots':[]}
+        server.update_priority_clock(room)
+        self.assertEqual(server.room_view(room,self.users[3]['id'])['game']['priorityClock']['seat'],1)
+        room['priorityClock']['expires']=0;server.update_priority_clock(room)
+        self.assertNotIn(1,g.priority['pending'])
+        room['single']=True;server.update_priority_clock(room)
+        self.assertNotIn('priorityClock',room)
+
     def test_draw_voice_is_visible_only_to_recipient(self):
         code=self.new_room('basic',4);room=server.ROOMS[code]
         server.queue_audio(room,[{'voice':'cv-deal-2','recipient':self.users[1]['id']},{'dealTo':1,'count':2}])
@@ -645,6 +664,7 @@ class ServerIntegration(unittest.TestCase):
             g=room['game']
             if g.phase=='over':break
             for seat in range(4):
+                if g.phase=='setup' and server.confirmation_seat(room)!=seat: continue
                 move={'action':'priority-decline'} if g.priority and seat in g.priority['pending'] else g.bot_action(seat)
                 if move:
                     move={k:v for k,v in move.items() if k in ('action','ids','target','rank','value','wildcard')}

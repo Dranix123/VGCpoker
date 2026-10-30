@@ -58,6 +58,8 @@ def user_view(row):
 
 def persist_result(room, reason='normal'):
     g = room['game']
+    clock = room.get('priorityClock')
+    if clock and clock['seat'] != seat: raise RuleError('等待优先管牌倒计时结束。')
     if g.phase != 'over' or room.get('settled'): return
     rated = all(not p.get('bot') for p in room['players'])
     room['rated'] = rated
@@ -108,9 +110,35 @@ def queue_audio(room, items):
     room['audioSequence'] = room.get('audioSequence', 0) + 1
     room['audioEvent'] = {'id': room['audioSequence'], 'items': items, 'listeners': [p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled')], 'acknowledged': []}
 
+def confirmation_seat(room):
+    g = room.get('game')
+    if not g or g.phase != 'setup': return None
+    ready = set(g.view(None)['ready'])
+    start = g.view(None).get('openingFirst')
+    start = 0 if start is None else start
+    return next(((start-i) % len(room['players']) for i in range(len(room['players'])) if (start-i) % len(room['players']) not in ready), None)
+
+def update_priority_clock(room):
+    g = room.get('game')
+    if not g or g.phase != 'play' or room.get('single') or not g.priority or not g.priority['pending']:
+        room.pop('priorityClock', None); return
+    if audio_waiting(room): return
+    pending = g.priority['pending']
+    seat = pending[0]
+    key = (room.get('matchId'), g.play_number, seat)
+    clock = room.get('priorityClock')
+    if not clock or clock['key'] != key:
+        room['priorityClock'] = dict(key=key, seat=seat, expires=time.time()+5)
+        room['revision'] += 1
+    elif time.time() >= clock['expires'] and not audio_waiting(room):
+        perform_game_action(room, seat, {'action':'priority-decline'})
+        room.pop('priorityClock', None); room['revision'] += 1
+
 def perform_game_action(room, seat, move):
     if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
-    g = room['game']; previous = g.last_voice_play; old_phase = g.phase
+    g = room['game']
+    if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
+    previous = g.last_voice_play; old_phase = g.phase
     g.action(seat, **move)
     room.pop('idleWait', None)
     action = move['action']; items = []
@@ -168,6 +196,10 @@ def room_view(room, uid):
     seat = next((i for i, p in enumerate(room['players']) if p['id'] == uid and not p.get('departed')), None)
     spectator = seat is None
     game = room['game'].view(seat) if room.get('game') else None
+    if game:
+        game['confirmTurn'] = confirmation_seat(room)
+        clock = room.get('priorityClock')
+        game['priorityClock'] = {'seat':clock['seat'], 'remaining':max(0, __import__('math').ceil(clock['expires']-time.time()))} if clock else None
     if spectator and game: game['response'] = None; game['priority'] = None
 
     return {'single': bool(room.get('single')), 'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay', 'skill')} for p in room['players']],
@@ -261,7 +293,9 @@ def bot_loop():
                 g = room.get('game')
                 if not g or g.phase == 'over': continue
                 update_autoplay(room)
+                update_priority_clock(room)
                 if room['code'] in BOT_BUSY or audio_waiting(room): continue
+                if room.get('priorityClock') and not room['players'][room['priorityClock']['seat']].get('autoplay'): continue
                 if g.priority_paused(): continue
                 if g.forced_pass():
                     perform_game_action(room, g.turn, {'action': 'pass'})
@@ -269,6 +303,7 @@ def bot_loop():
                     continue
                 for seat, p in enumerate(room['players']):
                     if not (p.get('bot') or p.get('autoplay')): continue
+                    if g.phase == 'setup' and confirmation_seat(room) != seat: continue
                     move = g.bot_action(seat)
                     if not move: continue
                     config = room.get('modelConfig') if p.get('bot') and p.get('model') else None

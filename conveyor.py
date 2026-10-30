@@ -482,7 +482,9 @@ class ConveyorRound(Game):
                     if cards: self.offer(other, 'buy', '聚财：花四金钱买一张，或放弃', cards=copy.deepcopy(cards))
             if self.skill(seat, 'reflux') and play['n'] >= 4 and self.phase != 'over':
                 self.pending.append(dict(seat=seat, kind='_reflux-draw', count=play['n'] - 2))
-        if ordinary: self.resources[seat]['turns'] += 1
+        if ordinary:
+            self.resources[seat]['turns'] += 1
+            if self.resources[seat]['turns'] >= 3: self.finish(seat)
         if ordinary or self.play_number != old_play:
             self.end_deal(seat, played=self.play_number != old_play, own_turn=ordinary)
         if not self.pending:
@@ -593,6 +595,7 @@ class ConveyorRound(Game):
             return
         old_last = {**self.last, 'seat': self.last_seat} if self.last else None
         old_play = self.play_number
+        prior_turn = self.turn
         ordinary = seat == self.turn and action not in ('priority-decline', 'priority-play', 'accept', 'reject', 'negotiate')
         self.extra_args = args
         self._defer_priority = True
@@ -603,6 +606,15 @@ class ConveyorRound(Game):
             self.extra_args = {}
             self._defer_priority = False
         if action == 'pass' and self.skill(seat, 'blood'): self.resources[seat]['blood'] += 1
+        if self.play_number != old_play and self.last and self.last.get('special') in ('cross','hook','dot','press','dead','dead4'):
+            cursor = prior_turn if prior_turn != seat else (self.next_seat(seat) if self.turn == seat else seat)
+            visited = set()
+            while cursor != seat and cursor not in visited:
+                visited.add(cursor)
+                if cursor not in self.finished:
+                    self.resources[cursor]['turns'] += 1
+                    self.end_deal(cursor, False)
+                cursor = self.next_seat(cursor)
         self.after_action(seat, old_last, old_play, ordinary)
         if self.play_number != old_play: self.open_priority()
 
@@ -792,8 +804,9 @@ class ConveyorRound(Game):
         self.display_action(seat, {**self.last, 'order': self.play_number})
         self.announce(self.name(seat) + '：' + combo['kind'] + '。')
         self.turn = self.next_seat(seat)
+        self.finish(seat)
         self.resources[seat]['turns'] += 1
-        self.finish(seat); self.end_deal(seat); self.open_priority(); self.enter_turn()
+        self.end_deal(seat); self.open_priority(); self.enter_turn()
 
     def resolve(self, seat, ids, **args):
         q = self.pending[0]
