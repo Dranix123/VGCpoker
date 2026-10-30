@@ -107,6 +107,9 @@ def audio_waiting(room):
 def queue_audio(room, items):
     room['audioSequence'] = room.get('audioSequence', 0) + 1
     room['audioEvent'] = {'id': room['audioSequence'], 'items': items, 'listeners': [p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled')], 'acknowledged': []}
+    g = room.get('game')
+    if room.get('priorityClock') and (audio_waiting(room) or g and g.mode == 'conveyor' and g.core.pending):
+        room['priorityClock'].setdefault('pausedAt', time.time())
 
 def confirmation_seat(room):
     g = room.get('game')
@@ -120,7 +123,11 @@ def update_priority_clock(room):
     g = room.get('game')
     if not g or g.phase != 'play' or room.get('single') or not g.priority or not g.priority['pending']:
         room.pop('priorityClock', None); return
-    if audio_waiting(room): return
+    clock = room.get('priorityClock')
+    if audio_waiting(room) or g.mode == 'conveyor' and g.core.pending:
+        if clock: clock.setdefault('pausedAt', time.time())
+        return
+    if clock and 'pausedAt' in clock: clock['expires'] += time.time() - clock.pop('pausedAt')
     actor = g.core.priority['pending'][0] if g.mode == 'conveyor' else g.priority['pending'][0]
     seat = g.core.owners[actor] if g.mode == 'conveyor' else actor
     key = (room.get('matchId'), g.play_number, actor)
@@ -134,9 +141,11 @@ def update_priority_clock(room):
 
 def perform_game_action(room, seat, move):
     clock = room.get('priorityClock')
-    if clock and room['game'].priority and clock['key'][1] == room['game'].play_number and (clock['seat'] != seat or room['game'].mode == 'conveyor' and room['game'].actor(seat,move.get('actor')) != clock['actor']): raise RuleError('等待优先管牌倒计时结束。')
-    if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
     g = room['game']
+    pressure = g.mode == 'conveyor' and move.get('action') == 'skill' and g.core.skills[g.actor(seat, move.get('actor'))] == 'pressure'
+    choice = g.mode == 'conveyor' and move.get('action') == 'choice' and g.core.pending and g.core.owners[g.core.pending[0]['seat']] == seat
+    if clock and not pressure and not choice and room['game'].priority and clock['key'][1] == room['game'].play_number and (clock['seat'] != seat or room['game'].mode == 'conveyor' and room['game'].actor(seat,move.get('actor')) != clock['actor']): raise RuleError('等待优先管牌倒计时结束。')
+    if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
     if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
     previous = g.last_voice_play; old_phase = g.phase
     g.action(seat, **move)
@@ -199,7 +208,7 @@ def room_view(room, uid):
     if game:
         game['confirmTurn'] = confirmation_seat(room)
         clock = room.get('priorityClock')
-        game['priorityClock'] = {'seat':clock['seat'], 'actor':clock['actor'], 'remaining':max(0, __import__('math').ceil(clock['expires']-time.time()))} if clock else None
+        game['priorityClock'] = {'seat':clock['seat'], 'actor':clock['actor'], 'remaining':max(0, __import__('math').ceil(clock['expires']-clock.get('pausedAt', time.time())))} if clock else None
     if spectator and game: game['response'] = None; game['priority'] = None
 
     return {'single': bool(room.get('single')), 'code': room['code'], 'mode': room['mode'], 'host': room['host'], 'seat': seat, 'players': [{k: p.get(k) for k in ('id', 'name', 'bot', 'model', 'connected', 'autoplay', 'skill')} for p in room['players']],
@@ -295,14 +304,15 @@ def bot_loop():
                 update_autoplay(room)
                 update_priority_clock(room)
                 if room['code'] in BOT_BUSY or audio_waiting(room): continue
-                if room.get('priorityClock') and not room['players'][room['priorityClock']['seat']].get('autoplay'): continue
+                clock = room.get('priorityClock') if not (g.mode == 'conveyor' and g.core.pending) else None
+                if clock and not room['players'][clock['seat']].get('autoplay'): continue
                 if g.priority_paused(): continue
-                if not room.get('priorityClock') and g.forced_pass():
+                if not clock and g.forced_pass():
                     perform_game_action(room, g.turn, {'action': 'pass'})
                     room['revision'] += 1
                     continue
                 for seat, p in enumerate(room['players']):
-                    if room.get('priorityClock') and room['priorityClock']['seat'] != seat: continue
+                    if clock and clock['seat'] != seat: continue
                     if not (p.get('bot') or p.get('autoplay')): continue
                     if g.phase == 'setup' and confirmation_seat(room) != seat: continue
                     move = g.bot_action(seat)
@@ -637,7 +647,7 @@ class Handler(BaseHTTPRequestHandler):
                 if room['players'][seat].get('autoplay'): raise RuleError('请先取消托管。')
                 if not room['game']: raise RuleError('对局尚未开始。')
                 if b.get('revision') != room['revision']: raise RuleError('牌桌已变化，请按最新局面出牌。')
-                args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special', 'actor', 'effect', 'direction', 'double', 'ranks', 'suits')}
+                args = {k: v for k, v in b.items() if k in ('action', 'ids', 'value', 'rank', 'target', 'wildcard', 'special', 'actor', 'effect', 'direction', 'double', 'ranks', 'suits', 'suit')}
                 if room['mode'] == 'conveyor' and args.get('action') == 'focus': room['game'].action(seat, **args)
                 else: perform_game_action(room, seat, args)
                 persist_result(room)
