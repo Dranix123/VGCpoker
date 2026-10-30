@@ -58,8 +58,6 @@ def user_view(row):
 
 def persist_result(room, reason='normal'):
     g = room['game']
-    clock = room.get('priorityClock')
-    if clock and clock['seat'] != seat: raise RuleError('等待优先管牌倒计时结束。')
     if g.phase != 'over' or room.get('settled'): return
     rated = all(not p.get('bot') for p in room['players'])
     room['rated'] = rated
@@ -135,6 +133,8 @@ def update_priority_clock(room):
         room.pop('priorityClock', None); room['revision'] += 1
 
 def perform_game_action(room, seat, move):
+    clock = room.get('priorityClock')
+    if clock and room['game'].priority and clock['key'][1] == room['game'].play_number and clock['seat'] != seat: raise RuleError('等待优先管牌倒计时结束。')
     if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
     g = room['game']
     if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
@@ -583,7 +583,8 @@ class Handler(BaseHTTPRequestHandler):
                 event = room.get('audioEvent')
                 if event and b.get('event') == event['id'] and uid not in event['acknowledged']: event['acknowledged'].append(uid)
                 return self.respond({'ok': True})
-            if path in ('/api/start', '/api/action') and audio_waiting(room): raise RuleError('等待本次行动播报完成。')
+            viewing_hand = path == '/api/action' and room['mode'] == 'conveyor' and b.get('action') == 'focus'
+            if path in ('/api/start', '/api/action') and audio_waiting(room) and not viewing_hand: raise RuleError('等待本次行动播报完成。')
             if path == '/api/leave':
                 leave_room(room, uid)
             elif path == '/api/bot':

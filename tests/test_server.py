@@ -761,6 +761,23 @@ class ServerIntegration(unittest.TestCase):
             metric=c.execute('SELECT * FROM usage_matches WHERE id=?',(room['matchId'],)).fetchone()
             self.assertEqual((metric['mode'],metric['channel']),('conveyor','single'))
 
+    def test_twins_can_view_other_hand_during_audio(self):
+        client=self.clients[0]
+        self.request(client,'create',{'mode':'conveyor','single':True,'options':{'skillDlc':[3]}})
+        self.request(client,'skill',{'skill':'twins'})
+        for _ in range(3):self.request(client,'bot',{})
+        self.request(client,'start',{})
+        room=server.room_of(self.users[0]['id']);g=room['game']
+        self.request(client,'action',{'action':'keep','actor':0,'ids':[x['id'] for x in g.core.hands[0][:7]],'revision':room['revision']})
+        room['players'][0].update(audioEnabled=True,seen=__import__('time').time())
+        server.queue_audio(room,[{'voice':'cv-keep'}])
+        self.assertTrue(server.audio_waiting(room))
+        status,data=self.request(client,'action',{'action':'focus','actor':1,'revision':room['revision']})
+        self.assertEqual(status,200,data)
+        self.assertEqual(data['room']['game']['conveyor']['actor'],1)
+        self.assertEqual(len(data['room']['game']['hand']),7)
+        self.assertTrue(server.audio_waiting(room))
+
     def test_conveyor_skills_cannot_conflict_or_select_disabled(self):
         _,data=self.request(self.clients[0],'create',{'mode':'conveyor','options':{'disabledSkills':['balance']}})
         code=data['room']['code']
