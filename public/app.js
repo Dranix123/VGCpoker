@@ -88,6 +88,7 @@ function render() {
     const actions=new Set(['play','pass','hint','bid','reveal','confirm','promote','rps','tribute-pick','tribute-return','accept','reject','gift-player']);
     $$('[data-action]').filter(b=>actions.has(b.dataset.action)).forEach(b=>b.disabled=true);
   }
+  if($('.hand-area')&&!r.spectator)selectionUpdate();
   if(g && lastPhase!==g.phase){if(lastPhase==='rps'&&g.phase==='play')toast('猜拳获胜：'+r.players[g.turn].name+'，先出牌。');hintMoves=[];hintIndex=0;lastPhase=g.phase;}
   if(!g)lastPhase='';
   gameAudio.observe(r);
@@ -213,7 +214,9 @@ function selectionUpdate(){
  if(state.room?.mode==='conveyor')conveyorAfterRender();
  $$('.hand .card').forEach(b=>{b.classList.toggle('selected',selected.has(b.dataset.card));b.setAttribute('aria-pressed',selected.has(b.dataset.card));});
  const returned=$('[data-action="tribute-return"]');if(returned)returned.disabled=selected.size!==1||state.room.audioWaiting;
- const btn=$('[data-action="play"]');if(btn)btn.disabled=state.room.audioWaiting||state.room.players[state.room.seat].autoplay||!selected.size||!!state.room?.game?.negotiation||!!state.room?.game?.priority&&state.room.players.filter(p=>!p.bot).length===1&&!state.room.game.priority.pending.includes(state.room.seat);
+ const g=state.room.game,r=state.room,canAct=(!g.priorityClock||g.priorityClock.seat===r.seat)&&(!!g.response||g.turn===r.seat&&(!g.conveyor||g.conveyor.turnActor===g.conveyor.actor));
+ const pass=$('[data-action="pass"]');if(pass)pass.disabled=!!r.audioWaiting||r.players[r.seat].autoplay||!canAct||!g.response&&(!g.last||g.lastSeat===(g.conveyor?g.conveyor.actor:r.seat));
+ const btn=$('[data-action="play"]');if(btn)btn.disabled=!canAct||state.room.audioWaiting||state.room.players[state.room.seat].autoplay||!selected.size||!!state.room?.game?.negotiation||!!state.room?.game?.priority&&state.room.players.filter(p=>!p.bot).length===1&&!state.room.game.priority.pending.includes(state.room.seat);
  const note=$('#selection-note');if(note){const text=note.firstChild;if(text?.nodeType===Node.TEXT_NODE)text.textContent=(selected.size?'已选择 '+selected.size+' 张牌':'选择手牌')+(state.room.game.mode==='landlord'?'':' ');}
 }
 let cardSweep=null, suppressCardClick=false;

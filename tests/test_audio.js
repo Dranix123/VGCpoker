@@ -80,3 +80,9 @@ test('background interruption does not acknowledge unfinished narration',async()
   f.sources[1].onended();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(f.acknowledgements.length,1);
 });
+
+test('music fade tolerates a frame timestamp preceding its start',async()=>{
+ const f=await fixture();f.audio.observe(room());f.advance(-20);
+ assert.ok(f.tracks.every(t=>t.volume>=0&&t.volume<=1));
+ f.advance(1520);assert.ok(f.tracks.every(t=>t.volume>=0&&t.volume<=1));
+});

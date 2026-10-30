@@ -1,4 +1,5 @@
 'use strict';
+function resetConveyorSelection(){selected.clear();responseKey='';markResponse();}
 let conveyorChosen=[], conveyorChoiceKey='', conveyorDouble=null;
 const conveyorActiveSkills=new Set(['balance','gift','pressure','ascend','seven','judgment','trade']);
 const conveyorGroups={0:'标准',1:'突破',2:'重生',3:'多多益善',4:'智谋'};
@@ -85,7 +86,7 @@ async function conveyorPlay(){
   showModal('cv-urgent',`<h2>急牌</h2><form id="cv-urgent-form" class="form"><label>效果<select name="effect"><option value="draw">目标获得两张</option><option value="discard">弃置附带的零至两张牌</option><option value="ban">目标禁手两回合</option><option value="shield">自己三回合免发牌</option><option value="maximum">目标弃最大牌</option><option value="rotate">轮换手牌</option></select></label><div class="urgent-discard-picker" hidden><p>选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!selected.has(x.id)&&x.rank!==18).map(x=>`<label class="urgent-discard-card"><input type="checkbox" name="discardIds" value="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);return;
  }
  const args={ids:[...selected],actor:c.actor};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;if(conveyorDouble&&selected.has(conveyorDouble.id))args.double=conveyorDouble;
- if(await gameAction('auto',args)){selected.clear();conveyorDouble=null;wildcard='';wildcardMap={};renderedKey='';render();}
+ if(await gameAction('auto',args)){conveyorDouble=null;wildcard='';wildcardMap={};resetConveyorSelection();renderedKey='';render();}
 }
 function conveyorUseSkill(){
  const c=state.room.game.conveyor;
@@ -99,8 +100,8 @@ document.addEventListener('click',async e=>{
  try{
  if(action==='cv-skill-info'){const s=conveyorSkill(b.dataset.skill),taken=state.room.players.find(p=>!p.bot&&p.skill===s.id&&p.id!==state.user.id);showModal('cv-skill-info',`<h2>${esc(s.name)}</h2><p>${s.deal} 选 ${s.keep} · ${conveyorGroups[s.group]}</p><p class="skill-description">${esc(s.text)}</p><div class="phase-actions"><button class="secondary" data-action="close">取消</button><button class="primary" data-action="cv-skill-select" data-skill="${s.id}" ${taken?'disabled':''}>${taken?esc(taken.name)+' 已选择':'确认选择'}</button></div>`);}
  if(action==='cv-skill-select'){if(await mutation('skill',{skill:b.dataset.skill}))closeModal();}
- if(action==='cv-keep'){if(await gameAction('keep',{ids:[...selected],actor:c.actor})){selected.clear();renderedKey='';render();}}
- if(action==='cv-focus'){await gameAction('focus',{actor:Number(b.dataset.actor)});selected.clear();}
+ if(action==='cv-keep'){if(await gameAction('keep',{ids:[...selected],actor:c.actor})){resetConveyorSelection();renderedKey='';render();}}
+ if(action==='cv-focus'){await gameAction('focus',{actor:Number(b.dataset.actor)});resetConveyorSelection();}
  if(action==='cv-confirm')await gameAction('confirm',{actor:c.actor});
  if(action==='cv-choice-card'){const id=b.dataset.id;conveyorChosen=conveyorChosen.includes(id)?conveyorChosen.filter(i=>i!==id):[...conveyorChosen,id];renderedKey='';render();}
  if(action==='cv-skill-card'){const id=b.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);b.classList.toggle('chosen',selected.has(id));b.setAttribute('aria-pressed',selected.has(id));$('.skill-picked-count').textContent='当前选中 '+selected.size+' 张牌。';if(c.skill==='balance')$('#cv-skill-form button[type=submit], #cv-skill-form button.primary').textContent='换 '+selected.size+' 张并结束行动';selectionUpdate();}
@@ -132,7 +133,7 @@ document.addEventListener('submit',async e=>{
  if(f.elements.target&&f.elements.target.value!=='')args.target=Number(f.elements.target.value);
  if(f.elements.effect)args.effect=f.elements.effect.value;
  if(f.elements.markRank0&&args.effect==='release'){args.ranks=Array.from({length:7},(_,i)=>Number(f.elements['markRank'+i].value));args.suits=Array.from({length:7},(_,i)=>f.elements['markSuit'+i].value);}
- if(await gameAction(action,args)){selected.clear();conveyorChosen=[];if(f.id!=='cv-choice-form')closeModal();renderedKey='';render();}
+ if(await gameAction(action,args)){resetConveyorSelection();conveyorChosen=[];if(f.id!=='cv-choice-form')closeModal();renderedKey='';render();}
  }catch(error){const target=f.querySelector('.form-error');if(target)target.textContent=error.message;else toast(error.message);}
 });
 

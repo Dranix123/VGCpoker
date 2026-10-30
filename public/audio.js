@@ -12,7 +12,7 @@ const gameAudio = (() => {
     }
     const mode=musicMode;musicMode='';setMusic(mode);
   }).catch(()=>{});
-  function applyVolumes() {for(const [name,track] of Object.entries(tracks)) track.volume=volumes.music*mixes[name];}
+  function applyVolumes() {for(const [name,track] of Object.entries(tracks)) track.volume=Math.max(0,Math.min(1,volumes.music*mixes[name]));}
   function startMusic() {
     if(!unlocked || document.hidden) return;
     const active = musicMode==='menu'?['menu']:musicMode==='conveyor'?['conveyor']:['table','tension'];
@@ -34,7 +34,7 @@ const gameAudio = (() => {
     const target={menu:effective==='menu'?1:0,table:effective==='table'?1:0,tension:effective==='tension'?1:0,conveyor:effective==='conveyor'?1:0};
     cancelAnimationFrame(fadeFrame);
     const from={...mixes}, started=performance.now();
-    function fade(now){const p=Math.min(1,(now-started)/1500);for(const k in mixes)mixes[k]=from[k]+(target[k]-from[k])*p;applyVolumes();if(p<1)fadeFrame=requestAnimationFrame(fade);}
+    function fade(now){const p=Math.max(0,Math.min(1,(now-started)/1500));for(const k in mixes)mixes[k]=from[k]+(target[k]-from[k])*p;applyVolumes();if(p<1)fadeFrame=requestAnimationFrame(fade);}
     fadeFrame=requestAnimationFrame(fade); startMusic();
   }
   function unlock() {
