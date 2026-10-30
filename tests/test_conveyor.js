@@ -6,12 +6,12 @@ function context(extra={}){
  const ctx={state:{user:{id:1},features:{conveyorSkills:skills}},esc:String,ranks:{3:'3',4:'4',5:'5',13:'K',14:'A',18:'急'},suits:{S:'♠',H:'♥',C:'♣',D:'♦'},selected:new Set(),roomHeading:()=>'',card:c=>`<button data-card="${c.id}">${c.rank}</button>`,document:{addEventListener:()=>{}},...extra};
  vm.createContext(ctx);vm.runInContext(source,ctx);return ctx;
 }
-function table(spectator=false,autoplay=false){
+function table(spectator=false,autoplay=false,extra={}){
  const players=Array.from({length:4},(_,i)=>({id:i+1,name:'玩家'+i,skill:i===0?'twins':'balance',autoplay:i===0&&autoplay}));
  const actors=Array.from({length:5},(_,i)=>({id:i,owner:i<2?0:i-1,name:'分身'+i,count:2,resources:{},skill:i<2?'twins':'balance'}));
  const c={actor:0,turnActor:1,skill:'twins',actors,pile:50,discard:4,resources:{money:0,blood:0},zone:[],boundHands:[],choice:null};
  const r={seat:spectator?null:0,players,spectator},g={conveyor:c,phase:'play',finished:[],turn:0,hand:[{id:'own',rank:4,suit:'S'}],scores:[0,0],log:[],main:3};
- const ctx=context({r,g});return vm.runInContext('conveyorTable(r,g)',ctx);
+ Object.assign(g,extra);const ctx=context({r,g});return vm.runInContext('conveyorTable(r,g)',ctx);
 }
 test('conveyor creation exposes opt-in DLC, default recycling and skill bans',()=>{
  const html=vm.runInContext('conveyorCreateOptions()',context());
@@ -88,4 +88,20 @@ test('seven marks uses seven rank and suit selectors instead of raw codes',()=>{
 test('waiting room post-render does not require a running game',()=>{
  const ctx=context();ctx.state.room={game:null};
  assert.doesNotThrow(()=>vm.runInContext('conveyorAfterRender()',ctx));
+});
+
+test('rps offers actions only to eligible players who have not submitted',()=>{
+ for(const [reveals,ready,count] of [[[0,1],[],3],[[0,1],[0],0],[[1,2],[],0]]){
+  const html=table(false,false,{phase:'rps',reveals,ready});
+  assert.equal((html.match(/data-action="rps"/g)||[]).length,count);
+  if(ready.includes(0))assert.ok(html.includes('已出拳，等待其他玩家'));
+ }
+});
+
+test('an eligible player sees the tie result beside the next rps choice',()=>{
+ const html=table(false,false,{phase:'rps',reveals:[0,1],ready:[],log:['猜拳平局，请重出。']});
+ assert.ok(html.includes('class="rps-feedback"'));
+ assert.ok(html.includes('猜拳平局，请重出。'));
+ const waiting=table(false,false,{phase:'rps',reveals:[1,2],ready:[],log:['猜拳平局，请重出。']});
+ assert.ok(!waiting.includes('class="rps-feedback"'));
 });
