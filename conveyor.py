@@ -395,8 +395,11 @@ class ConveyorRound(Game):
         seat = self.turn
         if not self.hands[seat] and not self.zones[seat]:
             self.finish(seat)
-            if self.phase != 'over': self.turn = self.next_seat(seat); self.enter_turn()
-            return
+            if self.phase == 'over': return
+            if seat in self.finished or not self.hands[seat]:
+                if seat not in self.finished: self.resources[seat]['turns'] += 1
+                self.turn = self.next_seat(seat); self.enter_turn()
+                return
         marks = self.resources[seat]['suits']
         while len(marks) >= 2:
             pair = sorted(marks[:2]); del marks[:2]
@@ -965,7 +968,7 @@ class ConveyorRound(Game):
             if urgent:
                 others = sorted((s for s in self.active() if self.owners[s] % 2 != self.owners[seat] % 2), key=lambda s: len(self.hands[s]))
                 if len(self.hands[seat]) <= 3:
-                    return dict(action='urgent', ids=[urgent['id']] + [c['id'] for c in self.hands[seat] if c != urgent][:2], effect='discard')
+                    return dict(action='urgent', ids=[urgent['id']] + [c['id'] for c in self.hands[seat] if c['rank'] != 18][:2], effect='discard')
                 if others: return dict(action='urgent', ids=[urgent['id']], effect='ban', target=others[0])
             if self.skill(seat, 'stash') and self.zones[seat] and len(self.hands[seat]) < 3:
                 return dict(action='skill', effect='retrieve', ids=[c['id'] for c in self.zones[seat]])

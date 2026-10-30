@@ -449,5 +449,24 @@ class ConveyorRules(unittest.TestCase):
         g.action(2,'auto',[x['id'] for x in c.hands[2] if x['rank']==7])
         self.assertEqual(len(c.hands[3]),before+1)
 
+    def test_empty_pile_early_empty_turn_advances_without_stalling(self):
+        g=self.game();c=self.table(g,[[],[7,8],[9,10],[11,12]])
+        c.pile=[];c.resources[0]['turns']=0
+        c.enter_turn()
+        self.assertEqual(c.resources[0]['turns'],1)
+        self.assertNotIn(0,c.finished)
+        self.assertEqual(c.turn,3)
+        c.turn=0;c.start_turn=None;c.enter_turn()
+        self.assertEqual(c.resources[0]['turns'],2)
+        c.turn=0;c.start_turn=None;c.enter_turn()
+        self.assertIn(0,c.finished)
+
+    def test_bot_with_two_urgent_cards_discards_only_ordinary_card(self):
+        g=self.game();c=self.table(g,[[18,7,18],[8,9],[10,11],[12,13]])
+        move=g.bot_action(0)
+        self.assertEqual(move['effect'],'discard')
+        self.assertEqual(len([x for x in c.select(0,move['ids']) if x['rank']==18]),1)
+        g.action(0,**move)
+
 
 if __name__=='__main__':unittest.main()

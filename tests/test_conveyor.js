@@ -79,7 +79,7 @@ test('blood ending choice explains the actual gain instead of ambiguous use or a
 test('seven marks uses seven rank and suit selectors instead of raw codes',()=>{
  let html='';const ctx=context({showModal:(_,value)=>html=value});
  ctx.state.features.conveyorSkills.push({id:'seven',name:'七印',text:'储存七枚印记'});
- ctx.state.room={game:{conveyor:{skill:'seven',resources:{marks:7}}}};
+ ctx.state.room={game:{hand:[],conveyor:{skill:'seven',resources:{marks:7}}}};
  vm.runInContext('conveyorUseSkill()',ctx);
  assert.equal((html.match(/name="markRank/g)||[]).length,7);
  assert.equal((html.match(/name="markSuit/g)||[]).length,7);
