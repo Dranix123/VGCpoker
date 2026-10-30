@@ -212,6 +212,30 @@ class ServerIntegration(unittest.TestCase):
         room['single']=True;server.update_priority_clock(room)
         self.assertNotIn('priorityClock',room)
 
+    def test_suitmark_selected_suit_reaches_the_game_through_http(self):
+        from conveyor import ConveyorGame
+        code=self.new_room('basic',4);room=server.ROOMS[code]
+        for player,skill in zip(room['players'],['suitmark','balance','anchor','leap']):player['skill']=skill
+        g=ConveyorGame('conveyor',room['players'],{'skillDlc':[1]})
+        room.update(game=g,mode='conveyor');g.phase='play';g.core.pending=[];g.core.turn=0
+        g.core.offer(0,'suitmark','烙印',target=1,suits=['C','H'])
+        status,data=self.request(self.clients[0],'action',{'action':'choice','actor':0,'suit':'C','revision':room['revision']})
+        self.assertEqual(status,200,data)
+        self.assertEqual(data['room']['game']['conveyor']['actors'][1]['resources']['suits'],['C'])
+
+    def test_priority_clock_pauses_during_an_intervening_announcement(self):
+        code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];g=room['game'];g.phase='play';g.priority={'pending':[1],'bots':[]}
+        with patch.object(server.time,'time',return_value=100):server.update_priority_clock(room)
+        room['players'][0].update(audioEnabled=True,seen=100);server.queue_audio(room,[{'voice':'pass'}])
+        with patch.object(server.time,'time',return_value=102):server.update_priority_clock(room)
+        with patch.object(server.time,'time',return_value=106):
+            self.assertEqual(server.room_view(room,self.users[3]['id'])['game']['priorityClock']['remaining'],3)
+        room['audioEvent']['acknowledged']=[self.users[0]['id']]
+        with patch.object(server.time,'time',return_value=107):server.update_priority_clock(room)
+        self.assertEqual(room['priorityClock']['expires'],110)
+        self.assertEqual(g.priority['pending'],[1])
+
     def test_autoplay_response_precedes_automatic_pass_for_other_seat(self):
         code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
         room=server.ROOMS[code];g=room['game'];g.phase='play'

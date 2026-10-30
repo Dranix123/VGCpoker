@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
 const source=fs.readFileSync('public/conveyor.js','utf8');
 function context(extra={}){
- const skills=[{id:'twins',name:'双身',group:3,deal:14,keep:14,text:'两个独立玩家'},{id:'balance',name:'制衡',group:0,deal:7,keep:7,text:'弃置再发牌'}];
+ const skills=[{id:'twins',name:'如影随形',group:3,deal:14,keep:14,text:'两个独立玩家'},{id:'balance',name:'转换',group:0,deal:7,keep:7,text:'弃置再发牌'}];
  const ctx={state:{user:{id:1},features:{conveyorSkills:skills}},esc:String,ranks:{3:'3',4:'4',5:'5',13:'K',14:'A',18:'急'},suits:{S:'♠',H:'♥',C:'♣',D:'♦'},selected:new Set(),roomHeading:()=>'',card:c=>`<button data-card="${c.id}">${c.rank}</button>`,document:{addEventListener:()=>{}},...extra};
  vm.createContext(ctx);vm.runInContext(source,ctx);return ctx;
 }
@@ -50,7 +50,7 @@ test('choice cards select without submitting the form',()=>{
 });
 test('passive skill is described as view rather than activation',()=>{
  const html=table();
- assert.ok(html.includes('查看双身'));assert.ok(!html.includes('发动双身'));
+ assert.ok(html.includes('查看如影随形'));assert.ok(!html.includes('发动如影随形'));
 });
 
 test('choice validation permits declining optional picks and enforces mandatory counts',()=>{
@@ -70,15 +70,16 @@ test('choice validation permits declining optional picks and enforces mandatory 
  vm.runInContext('conveyorChosen=["b","a"]',ctx);
  assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),true);
 });
-test('blood ending choice explains the actual gain instead of ambiguous use or abandon',()=>{
- const ctx=context({q:{kind:'blood-deal',seat:0,title:'血契'},c:{actor:0,actors:[],skill:'blood'}});
+test('blood ending uses mandatory hand trimming without the former draw opt-out',()=>{
+ const ctx=context({q:{kind:'discard',seat:0,count:2,title:'重铸·嗜血：弃置两张'},c:{actor:0,actors:[],skill:'blood'}});
  const html=vm.runInContext('conveyorChoice(q,c)',ctx);
- assert.ok(html.includes('本次不发牌'));assert.ok(html.includes('获得一张牌'));
- assert.ok(!html.includes('请在手牌中选择'));
+ assert.ok(html.includes('hand-choice'));assert.ok(!html.includes('本次不发牌'));assert.ok(!html.includes('name="value"'));
+ assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),false);
+ ctx.selected=new Set(['a','b']);assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),true);
 });
 test('seven marks uses seven rank and suit selectors instead of raw codes',()=>{
  let html='';const ctx=context({showModal:(_,value)=>html=value});
- ctx.state.features.conveyorSkills.push({id:'seven',name:'七印',text:'储存七枚印记'});
+ ctx.state.features.conveyorSkills.push({id:'seven',name:'七音',text:'储存七枚印记'});
  ctx.state.room={game:{hand:[],conveyor:{skill:'seven',resources:{marks:7}}}};
  vm.runInContext('conveyorUseSkill()',ctx);
  assert.equal((html.match(/name="markRank/g)||[]).length,7);
@@ -125,9 +126,24 @@ test('priority countdown occupies its actor area and suspends ordinary turn mark
 test('public player resources include marks and counters for other players',()=>{
  const ctx=context({actor:{skill:'blood',zoneCount:3,resources:{bloodReady:true,blood:4,debt:2,shield:1,ban:2,suits:['S','D']}}});
  const html=vm.runInContext('conveyorResources(actor)',ctx);
- for(const text of ['血 4','追债 2','免发 1 回合','禁手 2 回合','分区 3 张','花印 ♠ ♦'])assert.ok(html.includes(text));
+ for(const text of ['嗜血 4','奉还 2','免发 1 回合','禁手 2 回合','展示区 3 张','烙印 ♠ ♦'])assert.ok(html.includes(text));
  assert.ok(html.includes('class="red">♦'));
  assert.ok(vm.runInContext("conveyorResources({skill:'money',resources:{money:5}})",ctx).includes('金钱 5'));
- assert.ok(vm.runInContext("conveyorResources({skill:'seven',resources:{marks:3}})",ctx).includes('七印 3/7'));
- assert.ok(vm.runInContext("conveyorResources({skill:'ascend',resources:{boost:2}})",ctx).includes('升格 +3'));
+ assert.ok(vm.runInContext("conveyorResources({skill:'seven',resources:{marks:3}})",ctx).includes('七音 3/7'));
+ assert.ok(vm.runInContext("conveyorResources({skill:'ascend',resources:{boost:2}})",ctx).includes('强化 2 枚 · +3'));
+});
+
+test('the fourth use of an urgent card offers only rotation and destruction',async()=>{
+ let html='';const ctx=context({state:{room:{game:{hand:[{id:'urgent',rank:18,suit:'U',urgentUses:3},{id:'kept',rank:7,suit:'S'}],conveyor:{actor:0,turnActor:0,actors:[]}}}},selected:new Set(['urgent']),urgentSelected:()=>true,wildcardPayload:()=>undefined,showModal:(kind,body)=>{html=body;},$:()=>null});
+ vm.runInContext('conveyorUrgentUpdate=()=>{}',ctx);await vm.runInContext('conveyorPlay()',ctx);
+ assert.match(html,/value="rotate" selected/);
+ for(const effect of ['draw','discard','ban','shield','maximum'])assert.match(html,new RegExp('value="'+effect+'"[^>]*disabled'));
+ assert.ok(html.includes('本次必须轮换并销毁'));
+});
+
+test('suitmark offers only the suits present in the winning play',()=>{
+ const ctx=context({q:{kind:'suitmark',seat:0,title:'烙印',suits:['S','D']},c:{},conveyorTargets:()=>''});
+ const html=vm.runInContext('conveyorChoice(q,c)',ctx);
+ assert.ok(html.includes('name="suit"'));assert.ok(html.includes('value="S"'));assert.ok(html.includes('value="D"'));
+ assert.ok(!html.includes('value="H"'));assert.ok(!html.includes('value="C"'));
 });

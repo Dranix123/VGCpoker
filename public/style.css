@@ -505,3 +505,12 @@ footer{gap:24px}
 
 .conveyor-resources{display:flex;flex-wrap:wrap;gap:2px 6px;max-width:110px;font-size:11px;line-height:1.4;margin-top:3px}
 .conveyor-resources>span{white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis}.conveyor-resources .conveyor-marks{margin:0}
+
+.urgent-count{position:absolute;left:3px;top:54px;max-width:24px;font:9px var(--sans);background:var(--panel);color:var(--ink);padding:1px;border:1px solid var(--line);border-radius:2px}
+
+@media(max-width:720px){
+ body.hand-choice-phase{padding-bottom:90px}
+ .hand-choice .choice-actions{position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));z-index:25;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--line);border-radius:5px;background:var(--panel);box-shadow:0 -3px 14px #25272312}
+ .hand-choice .choice-actions .choice-progress{flex:1;margin:0;font-size:12px;line-height:1.4}
+ .hand-choice .choice-actions button{flex:0 0 auto;min-height:44px}
+}

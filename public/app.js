@@ -3,7 +3,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {conveyor:'传送带',landlord:'斗地主',standard:'4A4A4',trio:'4A4A4 · 三人',basic:'4A4 · 基础'};
 const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急'};
-const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent?[18]:[])];
+const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
 let mutationSequence=0;
@@ -70,8 +70,9 @@ function requireUser(fn) {if(!state.user) {showAuth();return;} fn();}
 function card(c, interactive=false, g=null) {
   const red = c.suit==='H'||c.suit==='D'||c.rank===17;
   const wild = g && !['landlord','basic'].includes(g.mode) && c.suit==='S' && c.rank===14;
-  const label = `${ranks[c.rank]}${suits[c.suit]}`;
-  return `<${interactive?'button':'div'} class="card ${red?'red':''} ${c.rank>=16?'joker':''} ${selected.has(c.id)&&interactive?'selected':''} ${wild?'wild':''} ${g&&g.mode!=='landlord'&&c.rank===g.main?'main-card':''}" ${interactive?`data-card="${esc(c.id)}" aria-pressed="${selected.has(c.id)}" aria-label="${esc(label)}${wild?'，混子':''}"`:''}><span class="card-rank">${ranks[c.rank]}</span><span class="card-suit">${c.rank>=16?'':suits[c.suit]}</span><span class="card-center">${c.rank>=16?(c.rank===18?'↗':'✦'):suits[c.suit]}</span>${c.effective&&c.effective!==c.rank?`<span class="effective-rank">→ ${ranks[c.effective]}</span>`:''}<span class="card-bottom">${label}</span></${interactive?'button':'div'}>`;
+  const urgentUses=g?.mode==='conveyor'&&(c.rank===18||c.urgentUses)?c.urgentUses||0:null;
+  const label = `${ranks[c.rank]}${suits[c.suit]}`+(urgentUses===null?'':`，已使用 ${urgentUses} 次${urgentUses>=3?'，下次必须轮换销毁':''}`);
+  return `<${interactive?'button':'div'} class="card ${red?'red':''} ${c.rank>=16?'joker':''} ${selected.has(c.id)&&interactive?'selected':''} ${wild?'wild':''} ${g&&g.mode!=='landlord'&&c.rank===g.main?'main-card':''}" ${interactive?`data-card="${esc(c.id)}" aria-pressed="${selected.has(c.id)}" aria-label="${esc(label)}${wild?'，混子':''}"`:''}><span class="card-rank">${ranks[c.rank]}</span><span class="card-suit">${c.rank>=16?'':suits[c.suit]}</span><span class="card-center">${c.rank>=16?(c.rank===18?'↗':'✦'):suits[c.suit]}</span>${c.effective&&c.effective!==c.rank?`<span class="effective-rank">→ ${ranks[c.effective]}</span>`:''}${urgentUses===null?'':`<span class="urgent-count" title="${esc(label)}">${urgentUses}/3</span>`}<span class="card-bottom">${ranks[c.rank]}${suits[c.suit]}</span></${interactive?'button':'div'}>`;
 }
 function render() {
   const u=state.user,r=state.room,g=r?.game;
@@ -81,6 +82,7 @@ function render() {
   document.body.classList.toggle('round-over',g?.phase==='over');
   document.body.classList.toggle('tribute-phase',g?.phase==='tribute');
   document.body.classList.toggle('opening-phase',['setup','rps','draft','tribute'].includes(g?.phase));
+  document.body.classList.toggle('hand-choice-phase',!!g?.conveyor?.choice&&!g.conveyor.choice.cards&&conveyorHandChoices.has(g.conveyor.choice.kind));
   const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,screen==='create'?state.matchCounts:null]);
   if(key===renderedKey){gameAudio.observe(r);return;}
   renderedKey=key;
