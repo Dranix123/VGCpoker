@@ -16,7 +16,7 @@ function table(spectator=false,autoplay=false){
 test('conveyor creation exposes opt-in DLC, default recycling and skill bans',()=>{
  const html=vm.runInContext('conveyorCreateOptions()',context());
  assert.equal((html.match(/name="skillDlc"/g)||[]).length,4);
- assert.ok(/name="recycle"[^>]*checked/.test(html));
+ assert.ok(!html.includes('name="recycle"'));
  assert.ok(html.includes('name="disabledSkills"'));
 });
 test('four visible seats render five independent actor play areas',()=>{

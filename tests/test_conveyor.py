@@ -30,6 +30,7 @@ class ConveyorRules(unittest.TestCase):
         c.pile=[dict(id='pile-'+str(i),rank=7+i%8,suit='C') for i in range(40)]
         c.discard=[];c.zones=[[] for _ in c.hands];c.all_cards={x['id']:x for x in cards+c.pile}
         c.seat_plays=[None for _ in c.hands];c.initial_counts=list(map(len,c.hands))
+        for resource in c.resources: resource['turns']=2
         c.priority=None;c.claims={};c.start_turn=None;c.lead_key=None
         return c
 
@@ -135,7 +136,7 @@ class ConveyorRules(unittest.TestCase):
             g=self.game(recycle=enabled);c=self.table(g,[[4],[7],[8],[9]])
             c.pile=[];c.discard=[dict(id='old',rank=10,suit='S')]
             gained=c.gain(0,1)
-            self.assertEqual(len(gained),int(enabled))
+            self.assertEqual(len(gained),0)
 
     def test_balance_replaces_ordinary_deal(self):
         g=self.game('balance');c=self.table(g,[[4,5,6],[7],[8],[9]])
@@ -180,6 +181,7 @@ class ConveyorRules(unittest.TestCase):
     def test_scavenge_first_two_own_turns(self):
         g=self.game('balance','scavenge');c=self.table(g,[[4,6],[7],[8],[9]])
         id=c.hands[0][0]['id'];g.action(0,'auto',[id]);c.turn=1
+        c.resources[1]['turns']=0
         g.action(1,'pass');self.assertEqual(c.pending[0]['kind'],'scavenge')
         g.action(1,'choice',[id]);self.assertEqual(c.resources[1]['turns'],1)
         self.assertEqual(len(c.hands[1]),3)
@@ -366,8 +368,8 @@ class ConveyorRules(unittest.TestCase):
     def test_next_round_bonus_deals_and_keeps_one_extra_for_first_and_next(self):
         players=[dict(id=i,name=str(i),bot=True,skill=k) for i,k in enumerate(['balance','anchor','leap','stars'])]
         g=ConveyorGame('conveyor',players,{},previous={'first':1,'main':4,'scores':[0,1]})
-        self.assertEqual(g.core.deal_counts,[8,9,10,9])
-        self.assertEqual(g.core.keep_counts,[8,7,8,6])
+        self.assertEqual(g.core.deal_counts,[7,8,10,9])
+        self.assertEqual(g.core.keep_counts,[7,6,8,6])
 
     def test_all_ten_suit_pairs_resolve_and_clear(self):
         for pair in itertools.combinations_with_replacement('SHCD',2):

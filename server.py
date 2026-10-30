@@ -479,7 +479,7 @@ class Handler(BaseHTTPRequestHandler):
             if mode == 'conveyor':
                 options['dlc'] = False
                 options['tribute'] = False
-                options['recycle'] = b.get('options', {}).get('recycle', True) is True
+                options['recycle'] = False
                 groups = b.get('options', {}).get('skillDlc', [])
                 disabled = b.get('options', {}).get('disabledSkills', [])
                 if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4) for n in groups): raise RuleError('技能 DLC 选项无效。')

@@ -45,7 +45,7 @@ class ConveyorRound(Game):
         self.defer_finish = False
         self.extra_args = {}
         self._generating = False
-        bonus = {self.owners[self.first], (self.owners[self.first] - 1) % 4} if self.first is not None else set()
+        bonus = set()
         self.deal_counts = [0 if p.get('second') else SKILLS[p['skill']]['deal'] + int(p['owner'] in bonus) for p in players]
         self.keep_counts = [0 if p.get('second') else SKILLS[p['skill']]['keep'] + int(p['owner'] in bonus) for p in players]
         order = self.turn_order[:]
@@ -92,10 +92,8 @@ class ConveyorRound(Game):
         return partner if partner is not None else self.next_seat(seat)
 
     def recycle(self):
-        if not self.pile and self.options.get('recycle', True) and self.discard:
-            self.pile, self.discard = self.discard, []
-            random.shuffle(self.pile)
-            self.announce('牌堆已轮回。')
+        # Only urgent hand rotation returns the played cards to the pile.
+        return
 
     def draw_card(self):
         self.recycle()
@@ -197,6 +195,10 @@ class ConveyorRound(Game):
 
     def finish(self, seat):
         if self.defer_finish or self.hands[seat] or self.zones[seat] or seat in self.finished: return
+        if self.resources[seat]['turns'] < 2:
+            self.gain(seat, 1)
+            self.resources[seat]['earlyRefill'] = True
+            return
         owner = self.owners[seat]
         if owner in self.complete_owners: return
         self.complete_owners.append(owner)
@@ -403,7 +405,6 @@ class ConveyorRound(Game):
             if self.last and not (self.last.get('direct') and self.last_seat == seat) and not self.candidates(seat):
                 for _ in range(10):
                     if not self.gain(seat, 1) or self.candidates(seat): break
-            else: self.offer(seat, 'pursuit', '追击：选择行动前获得的牌数', maximum=10)
 
     def suit_effect(self, seat, pair):
         code = ''.join(pair)
@@ -436,6 +437,7 @@ class ConveyorRound(Game):
             self.pending.append(dict(seat=seat, kind='_end-deal', played=played, own_turn=own_turn))
             return
         if seat in self.finished or self.phase == 'over': return
+        if self.resources[seat].pop('earlyRefill', False): return
         state, key = self.resources[seat], self.skills[seat]
         if played and key == 'pursuit': return
         if state['shield']:
@@ -536,12 +538,16 @@ class ConveyorRound(Game):
         if self.phase == 'draft':
             if action != 'keep' or self.players[seat].get('second') or seat in self.drafted: raise RuleError('请选择开局保留的牌。')
             cards = self.select(seat, ids)
-            keep = self.keep_counts[seat]
+            keep = self.keep_counts[seat] // 2 if self.skill(seat, 'twins') else self.keep_counts[seat]
             if len(cards) != min(keep, len(self.hands[seat])): raise RuleError('需保留%d张牌。' % min(keep, len(self.hands[seat])))
             rejected = [c for c in self.hands[seat] if c not in cards]
-            self.take(seat, rejected, 'bottom', mirror=False)
+            if self.skill(seat, 'twins'):
+                second = next(i for i,p in enumerate(self.players) if p.get('second') and self.owners[i] == self.owners[seat])
+                self.hands[seat] = cards
+                self.hands[second] = rejected
+                self.split.add(seat)
+            else: self.take(seat, rejected, 'bottom', mirror=False)
             self.drafted.add(seat)
-            if self.skill(seat, 'twins'): self.offer(seat, 'split', '双身：选择分给第二手的牌')
             if self.skill(seat, 'blood'): self.offer(seat, 'blood', '血契：选择零至五张牌作为血')
             self.draft_ready()
             return
@@ -740,7 +746,7 @@ class ConveyorRound(Game):
         else: raise RuleError('此技能在对应时机自动提示。')
 
     def can_draw(self, number):
-        return len(self.pile) + (len(self.discard) if self.options.get('recycle', True) else 0) >= number
+        return len(self.pile) >= number
 
     def skip_action(self, seat, deal=False):
         if self.phase == 'over': return
@@ -929,7 +935,7 @@ class ConveyorRound(Game):
             return dict(action='choice', ids=ids, **args)
         if self.phase == 'draft':
             if self.players[seat].get('second') or seat in self.drafted: return None
-            keep = self.keep_counts[seat]
+            keep = self.keep_counts[seat] // 2 if self.skill(seat, 'twins') else self.keep_counts[seat]
             # Preserve groups, controls and easy urgent exits in the opening hand.
             counts = Counter(self.effective_rank(seat, c['rank']) for c in self.hands[seat])
             chosen = sorted(self.hands[seat], key=lambda c: (counts[self.effective_rank(seat, c['rank'])], strength(self.effective_rank(seat, c['rank']), self.main)), reverse=True)[:keep]
@@ -1124,7 +1130,7 @@ class ConveyorGame:
         own_q = q if q and seat is not None and c.owners[q['seat']] == seat else None
         view['conveyor'] = dict(actor=actor, turnActor=c.turn, skill=c.skills[actor] if actor is not None else None,
             pile=len(c.pile), discard=len(c.discard), drafted=actor in c.drafted if actor is not None else False,
-            keep=min(c.keep_counts[actor], len(c.hands[actor])) if actor is not None else 0,
+            keep=min(c.keep_counts[actor] // 2 if c.skill(actor, 'twins') else c.keep_counts[actor], len(c.hands[actor])) if actor is not None else 0,
             zone=copy.deepcopy(c.zones[actor]) if actor is not None else [],
             resources=copy.deepcopy(c.resources[actor]) if actor is not None else None,
             actors=[dict(id=s, owner=o, confirmed=s in c.rps, drafted=s in c.drafted, name=c.name(s), count=len(c.hands[s]), initialCount=c.initial_counts[s], zoneCount=len(c.zones[s]),
