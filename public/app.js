@@ -58,6 +58,7 @@ function render() {
   const u=state.user,r=state.room,g=r?.game;
   document.body.classList.toggle('home-screen',!r&&screen==='home');
   document.body.classList.toggle('in-game',!!g);
+  document.body.classList.toggle('landlord-game',r?.mode==='landlord'&&!!g);
   document.body.classList.toggle('round-over',g?.phase==='over');
   document.body.classList.toggle('opening-phase',['setup','rps','draft','tribute'].includes(g?.phase));
   const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,screen==='create'?state.matchCounts:null]);
@@ -89,7 +90,7 @@ function render() {
     $$('[data-action]').filter(b=>actions.has(b.dataset.action)).forEach(b=>b.disabled=true);
   }
   if($('.hand-area')&&!r.spectator)selectionUpdate();
-  if(g && lastPhase!==g.phase){if(lastPhase==='rps'&&g.phase==='play')toast('猜拳获胜：'+r.players[g.turn].name+'，先出牌。');hintMoves=[];hintIndex=0;lastPhase=g.phase;}
+  if(g && lastPhase!==g.phase){if(g.phase==='over'){clearTimeout(toastTimer);$('#toast').classList.remove('show');}if(lastPhase==='rps'&&g.phase==='play')toast('猜拳获胜：'+r.players[g.turn].name+'，先出牌。');hintMoves=[];hintIndex=0;lastPhase=g.phase;}
   if(!g)lastPhase='';
   gameAudio.observe(r);
 

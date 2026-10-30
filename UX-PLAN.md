@@ -122,3 +122,11 @@
 在上一局双身继续操作，发现B的优先响应“不出”未带actor，默认作用到A，造成看似点不动/后续操作不连贯。已明确传当前手牌actor。实际先完成B响应放弃，再继续出叉取得B牌权，进入急牌使用。
 
 急牌弃牌窗口此前隐藏原先附带选中的8♦，无法改选，且复选框与牌面挤成两排。现在完整列出非急牌、默认勾选原选牌，能取消与改选；实时显示已选/2，满两张限制其余选择。切到其他效果时不会夹带普通牌。实际取消8♦，改选5♣与K♥，确认使用后弹窗关闭、牌局继续，37项JS通过。截图 experience-urgent-before.png / experience-urgent-after.png。未轮到当前手牌时不允许进入急牌效果选择，避免填完后才报错。
+
+## 实际斗地主完整两局与短屏操作
+
+通过UI叫3分成为地主，按提示选牌/出牌或不出，两局各操作11次，均自然结算；随后从结算点击再来一局并重新叫分成功。没有用认输代替完整流程。脚本 /tmp/vgc-play-landlord-ui.txt，截图 experience-landlord-progress.png、experience-landlord-result-before.png / experience-landlord-result.png。
+
+开局20张两行手牌在手机将操作挤出视口，牌桌上方大量留白。仅针对手机斗地主缩短牌桌，短屏进一步压缩留白/行距，保持卡牌大小和三座位。实际390×844和360×740开局20张，操作按钮均在视口内；360修正前操作区y755底811，修正后y638底694。截图 experience-landlord-opening.png / experience-landlord-opening-after.png，experience-landlord-360.png / experience-landlord-360-after.png。
+
+自然结算截图发现旧“没有能管上的牌”提示遮挡再来一局，阶段结束时清除旧提示。第二局自然结算后确认没有残留toast遮挡。37项JS通过。本批静态修改刷新即可加载。
