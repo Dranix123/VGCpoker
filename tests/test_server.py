@@ -212,6 +212,31 @@ class ServerIntegration(unittest.TestCase):
         room['single']=True;server.update_priority_clock(room)
         self.assertNotIn('priorityClock',room)
 
+    def test_autoplay_response_precedes_automatic_pass_for_other_seat(self):
+        code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];g=room['game'];g.phase='play'
+        g.priority={'pending':[1],'bots':[]};room['players'][1]['autoplay']=True
+        g.forced_pass=lambda:True
+        g.bot_action=lambda seat:{'action':'priority-decline'}
+        with patch.object(server,'update_autoplay'),patch.object(server,'perform_game_action') as action,patch.object(server.time,'sleep',side_effect=[None,RuntimeError('loop stopped')]):
+            with self.assertRaisesRegex(RuntimeError,'loop stopped'):server.bot_loop()
+        action.assert_called_once_with(room,1,{'action':'priority-decline'})
+
+    def test_priority_clock_tracks_twins_b_hand(self):
+        from conveyor import ConveyorGame
+        code=self.new_room('basic',4);room=server.ROOMS[code]
+        for player,skill in zip(room['players'],['twins','balance','anchor','leap']):player['skill']=skill
+        g=ConveyorGame('conveyor',room['players'],{'skillDlc':[3]})
+        room.update(game=g,mode='conveyor')
+        g.phase='play';g.core.pending=[];g.core.turn=0
+        g.core.priority={'pending':[1],'bots':[]}
+        server.update_priority_clock(room)
+        self.assertEqual(server.room_view(room,self.users[3]['id'])['game']['priorityClock']['actor'],1)
+        with self.assertRaisesRegex(server.RuleError,'等待优先'):
+            server.perform_game_action(room,0,{'action':'pass','actor':0})
+        room['priorityClock']['expires']=0;server.update_priority_clock(room)
+        self.assertFalse(g.core.priority)
+
     def test_draw_voice_is_visible_only_to_recipient(self):
         code=self.new_room('basic',4);room=server.ROOMS[code]
         server.queue_audio(room,[{'voice':'cv-deal-2','recipient':self.users[1]['id']},{'dealTo':1,'count':2}])
@@ -766,9 +791,11 @@ class ServerIntegration(unittest.TestCase):
         self.request(client,'create',{'mode':'conveyor','single':True,'options':{'skillDlc':[3]}})
         self.request(client,'skill',{'skill':'twins'})
         for _ in range(3):self.request(client,'bot',{})
+        for player,skill in zip(server.room_of(self.users[0]['id'])['players'][1:],['balance','anchor','leap']):player['skill']=skill
         self.request(client,'start',{})
         room=server.room_of(self.users[0]['id']);g=room['game']
-        self.request(client,'action',{'action':'keep','actor':0,'ids':[x['id'] for x in g.core.hands[0][:7]],'revision':room['revision']})
+        status,_=self.request(client,'action',{'action':'keep','actor':0,'ids':[x['id'] for x in g.core.hands[0][:7]],'revision':room['revision']})
+        self.assertEqual(status,200)
         room['players'][0].update(audioEnabled=True,seen=__import__('time').time())
         server.queue_audio(room,[{'voice':'cv-keep'}])
         self.assertTrue(server.audio_waiting(room))

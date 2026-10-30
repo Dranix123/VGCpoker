@@ -1120,7 +1120,9 @@ class ConveyorGame:
 
     def bot_action(self, seat):
         self.sync_players()
-        for actor in [s for s, o in enumerate(self.core.owners) if o == seat]:
+        actors = [s for s, o in enumerate(self.core.owners) if o == seat]
+        if self.core.priority: actors.sort(key=lambda s: s not in self.core.priority['pending'])
+        for actor in actors:
             move = self.core.bot_action(actor)
             if move: return {**move, 'actor':actor}
         return None
@@ -1150,7 +1152,7 @@ class ConveyorGame:
             zone=copy.deepcopy(c.zones[actor]) if actor is not None else [],
             resources=copy.deepcopy(c.resources[actor]) if actor is not None else None,
             actors=[dict(id=s, owner=o, confirmed=s in c.rps, drafted=s in c.drafted, name=c.name(s), count=len(c.hands[s]), initialCount=c.initial_counts[s], zoneCount=len(c.zones[s]),
-                         finished=s in c.finished, skill=c.skills[s], resources={k:v for k,v in c.resources[s].items() if k not in ('markCards',)}, play=c.seat_plays[s]) for s, o in enumerate(c.owners)],
+                         finished=s in c.finished, skill=c.skills[s], boundTo=[c.name(target) for bond in c.bonds if s in bond['seats'] for target in bond['seats'] if target != s], resources={k:v for k,v in c.resources[s].items() if k not in ('markCards',)}, play=c.seat_plays[s]) for s, o in enumerate(c.owners)],
             choice=copy.deepcopy(own_q), waiting=c.name(q['seat']) if q else None,
             remainingActorHands=[copy.deepcopy(h) for h in c.hands] if c.phase == 'over' else None,
             boundHands=[dict(name=c.name(s), cards=copy.deepcopy(c.hands[s])) for b in c.bonds if actor in b['seats'] for s in b['seats'] if s != actor] if actor is not None else [])

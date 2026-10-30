@@ -355,7 +355,7 @@ footer{justify-content:flex-end}
 .main-indicator{display:inline-block;margin-top:9px;border:1px solid var(--ink);border-radius:3px;padding:5px 9px;font-size:11px;line-height:1.3}
 .main-indicator b{font:17px Georgia,serif;margin-left:3px}
 
-#response-notice{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);z-index:99;background:var(--ink);color:var(--panel);border-radius:4px;padding:13px 24px;font-size:12px;box-shadow:2px 3px 0 #b6b6ab;max-width:90vw;text-align:center;pointer-events:none}
+#response-notice{background:var(--ink);color:var(--panel);border-radius:4px;padding:8px 12px;margin:10px 0;font-size:12px;box-shadow:2px 3px 0 #b6b6ab;text-align:center}
 
 .settlement-hands{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px;text-align:left}.settlement-hand{padding:14px;border:1px solid var(--line);border-radius:3px}.settlement-hand h3{font-size:13px;margin-bottom:10px}.settlement-hand h3 small{font-size:11px;font-weight:normal;color:var(--muted);margin-left:8px}.settlement-cards{display:flex;flex-wrap:wrap;gap:5px}.settlement-card{padding:5px 8px;border:1px solid var(--line);border-radius:2px;background:var(--paper);font:16px Georgia,serif}.settlement-card.red{color:var(--red)}
 @media(max-width:600px){.settlement-hands{grid-template-columns:1fr}}
@@ -479,7 +479,6 @@ footer{gap:24px}
 
 .opening-display .playing{font-weight:bold;font-size:15px;padding:8px 10px;background:var(--ink);color:var(--panel);border-radius:4px;width:max-content}.seat.top .opening-display>.playing,.seat.bottom .opening-display>.playing{margin:auto}.opening-display .seat-play-label{font-size:13px;font-weight:bold;margin-bottom:6px}.opening-display .seat-play-cards{margin-top:5px}
 
-.priority-clock{position:absolute;left:50%;bottom:86px;transform:translateX(-50%);padding:8px 12px;background:var(--ink);color:var(--panel);border-radius:4px;font-size:13px;white-space:nowrap;z-index:5}
 
 .skill-hand-picker{display:flex;flex-wrap:wrap;gap:8px;max-height:210px;overflow:auto;padding:4px 3px 8px;margin-bottom:16px}.skill-hand-picker button{min-width:48px;min-height:54px;font-size:18px}.skill-hand-picker .chosen{outline:2px solid var(--ink);background:#dedbd2}
 .conveyor-opening-actions{justify-content:center;margin:12px 0}.conveyor-opening-actions button{min-height:44px;min-width:110px;font-size:15px}
@@ -500,3 +499,9 @@ footer{gap:24px}
 
 .skill-hand-picker[hidden],.skill-picked-count[hidden]{display:none}
 .form-error{color:var(--ink);font-weight:600}.form-error:not(:empty){border-left:3px solid var(--ink);padding-left:10px;line-height:1.7}
+
+.conveyor-marks{display:flex;flex-wrap:wrap;gap:3px;align-items:center;max-width:110px;font-size:11px;line-height:1.2;margin-top:3px}
+.conveyor-marks b{font-size:14px}.conveyor-marks .red{color:var(--red)}
+
+.conveyor-resources{display:flex;flex-wrap:wrap;gap:2px 6px;max-width:110px;font-size:11px;line-height:1.4;margin-top:3px}
+.conveyor-resources>span{white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis}.conveyor-resources .conveyor-marks{margin:0}

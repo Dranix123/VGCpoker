@@ -114,3 +114,20 @@ test('judgment asks for a draw judgment without a hand picker',()=>{
  assert.ok(html.includes('翻牌判定'));
  assert.ok(!html.includes('skill-hand-picker'));assert.ok(!html.includes('当前选中'));
 });
+
+test('priority countdown occupies its actor area and suspends ordinary turn marker',()=>{
+ const html=table(false,false,{priorityClock:{seat:0,actor:1,remaining:4}});
+ assert.equal((html.match(/priority-clock/g)||[]).length,1);
+ assert.ok(html.includes('优先管牌 4 秒'));
+ assert.ok(!html.includes('出牌中...'));
+});
+
+test('public player resources include marks and counters for other players',()=>{
+ const ctx=context({actor:{skill:'blood',zoneCount:3,resources:{bloodReady:true,blood:4,debt:2,shield:1,ban:2,suits:['S','D']}}});
+ const html=vm.runInContext('conveyorResources(actor)',ctx);
+ for(const text of ['血 4','追债 2','免发 1 回合','禁手 2 回合','分区 3 张','花印 ♠ ♦'])assert.ok(html.includes(text));
+ assert.ok(html.includes('class="red">♦'));
+ assert.ok(vm.runInContext("conveyorResources({skill:'money',resources:{money:5}})",ctx).includes('金钱 5'));
+ assert.ok(vm.runInContext("conveyorResources({skill:'seven',resources:{marks:3}})",ctx).includes('七印 3/7'));
+ assert.ok(vm.runInContext("conveyorResources({skill:'ascend',resources:{boost:2}})",ctx).includes('升格 +3'));
+});

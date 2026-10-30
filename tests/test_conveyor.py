@@ -297,6 +297,14 @@ class ConveyorRules(unittest.TestCase):
         c.turn=1;c.start_turn=None;before=len(c.hands[1]);c.enter_turn()
         self.assertEqual(len(c.hands[1]),before+2);self.assertEqual(c.resources[1]['suits'],[])
 
+    def test_binding_partners_are_public_but_their_hands_remain_private(self):
+        g=self.game('bond');g.core.bonds=[dict(owner=0,seats=[0,1])]
+        for viewer in (None,2):
+            view=g.view(viewer)['conveyor']
+            self.assertEqual(view['actors'][0]['boundTo'],['玩家1'])
+            self.assertEqual(view['actors'][1]['boundTo'],['玩家0'])
+            self.assertEqual(view['boundHands'],[])
+
     def test_spectators_never_receive_hands_choices_or_zone_cards(self):
         g=self.game('twins');c=g.core
         c.offer(0,'retain','private',cards=[c.pile.pop(0)])
