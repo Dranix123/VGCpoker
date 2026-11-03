@@ -147,3 +147,19 @@ test('suitmark offers only the suits present in the winning play',()=>{
  assert.ok(html.includes('name="suit"'));assert.ok(html.includes('value="S"'));assert.ok(html.includes('value="D"'));
  assert.ok(!html.includes('value="H"'));assert.ok(!html.includes('value="C"'));
 });
+
+test('skill selection remains available when another player chose the same skill',()=>{
+ const ctx=context({r:{host:1,seat:0,players:[{id:1,name:'自己',skill:null},{id:2,name:'别人',skill:'balance'}],skills:[{id:'balance',name:'转换',group:0,deal:7,keep:7,text:'转换'}]}});
+ const html=vm.runInContext('conveyorWaiting(r)',ctx);
+ assert.ok(html.includes('data-skill="balance"'));
+ assert.ok(!html.includes('taken'));
+ assert.ok(!html.includes('别人 已选'));
+});
+
+test('trade extra draw offers one through thirteen, excluding zero',()=>{
+ const ctx=context({q:{kind:'trade-extra',seat:0,title:'献祭',maximum:13},c:{actor:0,actors:[],skill:'trade'}});
+ const html=vm.runInContext('conveyorChoice(q,c)',ctx);
+ assert.ok(!html.includes('<option value="0">'));
+ assert.ok(html.includes('<option value="1">'));
+ assert.ok(html.includes('<option value="13">'));
+});

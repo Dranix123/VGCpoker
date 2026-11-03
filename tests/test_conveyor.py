@@ -59,6 +59,18 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(g.phase,'setup');self.conservation(g)
         with self.assertRaises(RuleError):g.action(0,'promote',rank=7)
 
+    def test_repeated_skills_and_multiple_twins_keep_independent_actors(self):
+        for key in ('balance', 'twins'):
+            g = self.game(*([key] * 4))
+            self.assertEqual(len(g.core.players), 8 if key == 'twins' else 4)
+            for owner in range(4):
+                seat = g.actor(owner)
+                keep = SKILLS[key]['keep'] // (2 if key == 'twins' else 1)
+                g.action(owner, 'keep', [c['id'] for c in g.core.hands[seat][:keep]])
+            self.assertEqual(g.phase, 'setup')
+            if key == 'twins': self.assertEqual(list(map(len, g.core.hands)), [7] * 8)
+            self.conservation(g)
+
     def test_initial_filtering_and_no_infinite_rejection(self):
         g=self.game('clean','gather')
         self.assertTrue(all(c['rank'] not in (4,5,6) for c in g.core.hands[0]))
@@ -68,15 +80,27 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(c.gain(0,2),[])
         self.assertEqual(len(c.discard),1)
 
-    def test_clean_replacement_main_can_also_be_kept_or_rejected(self):
-        g=self.game('clean');c=self.table(g,[[3,8,9,10],[7],[8],[9]]);c.phase='draft'
-        c.pile[0]['rank']=3;replacement=c.pile[0]['id']
-        c.offer(0,'clean-main','净化',cards=[c.hands[0][0]])
-        g.action(0,'choice',[])
-        self.assertEqual(c.pending[0]['kind'],'clean-main')
-        self.assertEqual(c.pending[0]['cards'][0]['id'],replacement)
-        g.action(0,'choice',[replacement])
-        self.assertFalse(c.pending);self.assertIn(replacement,[card['id'] for card in c.hands[0]])
+    def test_clean_always_keeps_main_without_a_choice(self):
+        g = self.game('clean')
+        c = self.table(g, [[8], [7], [8], [9]])
+        c.pile[0]['rank'] = c.main
+        drawn = c.pile[0]['id']
+        c.gain(0, 1)
+        self.assertIn(drawn, [card['id'] for card in c.hands[0]])
+        self.assertFalse(c.pending)
+        c.receive(0, [dict(id='received-main', rank=c.main, suit='S')])
+        self.assertFalse(c.pending)
+
+    def test_trade_black_judgment_requires_at_least_one_extra_card(self):
+        g = self.game('trade')
+        c = self.table(g, [[8], [7], [8], [9]])
+        c.pile[0]['suit'] = 'S'
+        c.offer(0, 'deal', '结束发牌', maximum=1)
+        g.action(0, 'choice', effect='judge')
+        self.assertEqual(c.pending[0]['kind'], 'trade-extra')
+        with self.assertRaises(RuleError): g.action(0, 'choice', value=0)
+        g.action(0, 'choice', value=1)
+        self.assertFalse(c.pending)
 
     def test_rank_mapping_and_no_temporary_maximum(self):
         g=self.game('leap','ascend');c=g.core;c.main=5
@@ -409,14 +433,32 @@ class ConveyorRules(unittest.TestCase):
 
     def test_bond_both_directions_no_recursion_and_private_hands(self):
         g=self.game('bond');c=self.table(g,[[4,6],[7,8,9],[10],[11]])
-        g.action(0,'auto',[c.hands[0][0]['id']]);self.assertEqual(c.pending[0]['kind'],'bond')
+        g.action(0,'skill');self.assertEqual(c.pending[0]['kind'],'bond')
         g.action(0,'choice',target=1)
-        # Binding precedes the scheduled ordinary deal.
+        g.action(0,'auto',[c.hands[0][0]['id']])
         g.action(0,'choice',value=1)
+        self.assertEqual(c.bonds[0]['seats'], [0,1])
         before=len(c.hands[0]);c.gain(1,2);self.assertEqual(len(c.hands[0]),before+2)
         count=len(c.hands[0]);c.take(1,[c.hands[1][0]]);self.assertEqual(c.pending,[]);self.assertEqual(len(c.hands[0]),count)
         self.assertEqual(g.view(0)['conveyor']['boundHands'][0]['name'],c.name(1))
         self.assertEqual(g.view(2)['conveyor']['boundHands'],[])
+
+    def test_bond_draft_requires_target_and_switch_replaces_only_own_link(self):
+        g = self.game('bond', 'bond', 'stash', 'balance')
+        c = g.core
+        g.action(0, 'keep', [card['id'] for card in c.hands[0][:3]])
+        self.assertTrue(c.pending[0]['required'])
+        with self.assertRaises(RuleError): g.action(0, 'choice')
+        g.action(0, 'choice', target=2)
+        c.phase = 'play'; c.turn = 0; c.pending = []
+        c.bonds.append(dict(owner=1, seats=[1,2]))
+        c.zones[2] = [c.hands[2].pop()]
+        self.assertEqual(g.view(0)['conveyor']['boundHands'][0]['zone'], c.zones[2])
+        self.assertEqual(g.view(3)['conveyor']['boundHands'], [])
+        g.action(0, 'skill')
+        g.action(0, 'choice', target=3)
+        self.assertEqual(c.bonds, [dict(owner=1,seats=[1,2]),dict(owner=0,seats=[0,3])])
+        self.conservation(g)
 
     def test_duel_simultaneous_reveal_and_short_hands_keep_smallest(self):
         g=self.game('duel');c=self.table(g,[[13,4],[5,6],[7,8],[9,10]])

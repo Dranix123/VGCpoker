@@ -531,7 +531,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4) for n in groups): raise RuleError('技能 DLC 选项无效。')
                 if not isinstance(disabled, list) or any(k not in SKILLS for k in disabled): raise RuleError('禁用技能选项无效。')
                 options['skillDlc'] = list(set(groups)); options['disabledSkills'] = list(set(disabled))
-                if len(conveyor_skills(options)) < 4: raise RuleError('至少需要开放四个技能。')
+                if not conveyor_skills(options): raise RuleError('至少需要开放一个技能。')
             if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if b.get('single') is True: room['single'] = True
@@ -568,9 +568,6 @@ class Handler(BaseHTTPRequestHandler):
                 if room['mode'] != 'conveyor' or room.get('game') and room['game'].phase != 'over': raise RuleError('请在开局前选择技能。')
                 key = b.get('skill')
                 if key not in {s['id'] for s in conveyor_skills(room['options'])}: raise RuleError('该技能未开放。')
-                if any(p.get('skill') == key for i, p in enumerate(room['players']) if i != seat and not p.get('bot')): raise RuleError('该技能已被选择。')
-                for p in room['players']:
-                    if p.get('bot') and p.get('skill') == key: p.pop('skill', None)
                 room['players'][seat]['skill'] = key
                 room['revision'] += 1
                 return self.respond({'ok':True, 'room':room_view(room, uid)})
@@ -628,8 +625,7 @@ class Handler(BaseHTTPRequestHandler):
                     if None in used: raise RuleError('请等待所有玩家选择技能。')
                     for p in room['players']:
                         if p.get('bot'):
-                            choices_left = [s['id'] for s in choices if s['id'] not in used]
-                            p['skill'] = secrets.choice(choices_left); used.add(p['skill'])
+                            p['skill'] = secrets.choice([s['id'] for s in choices])
                     room['game'] = ConveyorGame(room['mode'], room['players'], room['options'], previous, interactive=True)
                 else: room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
                 room.pop('idleWait', None)

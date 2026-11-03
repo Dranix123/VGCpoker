@@ -55,11 +55,7 @@ class ConveyorRound(Game):
             start = order.index(self.first); order = order[start:] + order[:start]
         for index in range(max(self.deal_counts)):
             for s in order:
-                if index < self.deal_counts[s]: self.gain(s, 1, initial=True, main_choice=False)
-        for s in order:
-            if self.skill(s, 'clean'):
-                optional = [c for c in self.hands[s] if c['rank'] == self.main and c['rank'] in (3, 4, 5, 6)]
-                if optional: self.offer(s, 'clean-main', '净化：选择保留的主牌，其余换牌', cards=copy.deepcopy(optional))
+                if index < self.deal_counts[s]: self.gain(s, 1, initial=True)
         self.initial_counts = [len(h) for h in self.hands]
         if self.first is not None and self.skill(self.first, 'scavenge'): self.first = self.next_seat(self.first)
         self.announce('请选择开局保留的牌。')
@@ -133,7 +129,7 @@ class ConveyorRound(Game):
             return card['rank'] not in (15, self.main, 16, 17)
         return True
 
-    def gain(self, seat, number, initial=False, mirror=True, main_choice=True, blood_mark=None):
+    def gain(self, seat, number, initial=False, mirror=True, blood_mark=None):
         if seat in self.finished or self.phase == 'over': return []
         obtained = []
         rejected = []
@@ -150,9 +146,6 @@ class ConveyorRound(Game):
             if card is None: break
         self.discard.extend(rejected)
         self.hands[seat].extend(obtained)
-        if main_choice and self.skill(seat, 'clean'):
-            optional = [c for c in obtained if c['rank'] == self.main and c['rank'] in (3, 4, 5, 6)]
-            if optional: self.offer(seat, 'clean-main', '净化：选择保留的主牌，其余换牌', cards=copy.deepcopy(optional))
         if not initial and obtained:
             if hasattr(self, 'action_gains'): self.action_gains.append((seat, len(obtained)))
             self.announce(self.name(seat) + '获得%d张牌。' % len(obtained))
@@ -169,9 +162,6 @@ class ConveyorRound(Game):
         replacements = self.gain(seat, len(rejected), mirror=False) if rejected else []
         if mirror: self.mirror(seat, len(accepted) + len(replacements))
         if self.skill(seat, 'blood') and seat != getattr(self, '_playing_seat', None): self.resources[seat]['blood'] += len(accepted)
-        if self.skill(seat, 'clean'):
-            optional = [c for c in accepted if c['rank'] == self.main and c['rank'] in (3,4,5,6)]
-            if optional: self.offer(seat, 'clean-main', '净化：选择保留的主牌，其余换牌', cards=copy.deepcopy(optional))
         self.report(seat)
 
     def take(self, seat, cards, destination='discard', mirror=True):
@@ -499,8 +489,6 @@ class ConveyorRound(Game):
                 cards = [c for c in self.discard if c['id'] in {x['id'].split(':')[0] for x in play['cards']}]
                 if cards: self.offer(seat, 'reflux', '回收：选择置于牌堆底的已出牌', cards=copy.deepcopy(cards))
             if self.skill(seat, 'stash') and self.hands[seat]: self.offer(seat, 'stash', '藏拙：选择存入展示区的手牌')
-            self.bonds = [b for b in self.bonds if b['owner'] != seat]
-            if self.skill(seat, 'bond'): self.offer(seat, 'bond', '灵魂绑定：选择绑定对象或取消')
             for other in self.active():
                 if other != seat and self.skill(other, 'money') and self.resources[other]['money'] >= 4:
                     cards = [c for c in self.discard if c['id'] in {x['id'].split(':')[0] for x in play['cards']}]
@@ -587,6 +575,7 @@ class ConveyorRound(Game):
                 self.split.add(seat)
             else: self.take(seat, rejected, 'bottom', mirror=False)
             self.drafted.add(seat)
+            if self.skill(seat, 'bond'): self.offer(seat, 'bond', '灵魂绑定：选择绑定对象', required=True)
             if self.skill(seat, 'blood'): self.offer(seat, 'blood', '重铸·嗜血：选择零至五张牌作为血')
             self.draft_ready()
             return
@@ -732,6 +721,8 @@ class ConveyorRound(Game):
         cards = self.select(seat, ids)
         if key == 'scavenge':
             self.scavenge(seat)
+        elif key == 'bond':
+            self.offer(seat, 'bond', '灵魂绑定：更换绑定对象，或保持现状')
         elif key == 'balance':
             if not self.can_draw(len(cards)): raise RuleError('牌堆不足，无法完成转换。')
             self.take(seat, cards)
@@ -901,10 +892,6 @@ class ConveyorRound(Game):
         elif kind == 'stars':
             if set(ids) != {c['id'] for c in q['cards']}: raise RuleError('请排列全部牌。')
             self.pile = chosen + self.pile
-        elif kind == 'clean-main':
-            rejected = [c for c in q['cards'] if c['id'] not in ids]
-            self.take(seat, rejected, mirror=False)
-            self.gain(seat, len(rejected), initial=self.phase == 'draft', mirror=False)
         elif kind == 'retain':
             if len(chosen) > 1: raise RuleError('至多保留一张。')
             self.discard.extend(c for c in q['cards'] if c not in chosen)
@@ -931,8 +918,10 @@ class ConveyorRound(Game):
             cards = self.select(seat, ids); self.take(seat, cards, 'zone', mirror=False)
         elif kind == 'bond':
             target = args.get('target')
+            if target is None and q.get('required'): raise RuleError('请选择绑定对象。')
             if target is not None:
-                if target not in self.active() or target == seat: raise RuleError('请选择另一名在场玩家。')
+                if target not in self.active() or self.owners[target] == self.owners[seat]: raise RuleError('请选择另一名玩家的手牌。')
+                self.bonds = [b for b in self.bonds if b['owner'] != seat]
                 self.bonds.append(dict(owner=seat, seats=[seat, target]))
                 self.announce(self.name(seat) + '与' + self.name(target) + '绑定。')
         elif kind == 'duel-start':
@@ -970,12 +959,12 @@ class ConveyorRound(Game):
                 if not card: raise RuleError('牌堆已耗尽。')
                 self.discard.append(card); self.announce('献祭判定：' + card_name(card) + '。')
                 self.gain(seat, 1)
-                if card['suit'] in ('S', 'C'): self.offer(seat, 'trade-extra', '献祭：额外获得零至十三张', maximum=13)
+                if card['suit'] in ('S', 'C'): self.offer(seat, 'trade-extra', '献祭：额外获得一至十三张', maximum=13)
             else:
                 if not isinstance(value, int) or not 1 <= value <= q['maximum']: raise RuleError('发牌数量无效。')
                 self.gain(seat, value)
         elif kind == 'trade-extra':
-            if not isinstance(value, int) or not 0 <= value <= 13: raise RuleError('请选择零至十三张。')
+            if not isinstance(value, int) or not 1 <= value <= 13: raise RuleError('请选择一至十三张。')
             self.gain(seat, value)
         elif kind == 'give':
             cards = self.select(seat, ids)
@@ -1000,11 +989,12 @@ class ConveyorRound(Game):
             elif kind in ('maximum', 'urgent-max'): ids = [q['cards'][0]['id']]
             elif kind == 'stars': ids = [c['id'] for c in sorted(q['cards'], key=lambda c: -strength(c['rank'], self.main))]
             elif kind == 'scavenge': ids = [q['cards'][0]['id']]
-            elif kind == 'clean-main': ids = [c['id'] for c in q['cards']]
             elif kind == 'retain': ids = []
             elif kind == 'suitmark': args = dict(suit=q['suits'][0])
+            elif kind == 'bond': args = dict(target=next(s for s in self.active() if self.owners[s] != self.owners[seat]))
             elif kind == 'deal': args = dict(value=1)
-            elif kind in ('pursuit', 'trade-extra'): args = dict(value=0)
+            elif kind == 'pursuit': args = dict(value=0)
+            elif kind == 'trade-extra': args = dict(value=1)
             elif kind == 'duel-start': args = dict(value=False)
             return dict(action='choice', ids=ids, **args)
         if self.phase == 'draft':
@@ -1096,7 +1086,7 @@ class ConveyorGame:
         self.options = {**(options or {}), 'tribute':False, 'dlc':False}
         choices = {s['id'] for s in available(self.options)}
         chosen = [p.get('skill') for p in players]
-        if len(set(chosen)) != 4 or any(s not in choices for s in chosen): raise RuleError('每位玩家须选择一个不同且已启用的技能。')
+        if any(s not in choices for s in chosen): raise RuleError('每位玩家须选择一个已启用的技能。')
         actors = []
         for owner, p in enumerate(players):
             actors.append({**p, 'owner':owner})
@@ -1216,7 +1206,7 @@ class ConveyorGame:
                          finished=s in c.finished, skill=c.skills[s], boundTo=[c.name(target) for bond in c.bonds if s in bond['seats'] for target in bond['seats'] if target != s], resources={k:v for k,v in c.resources[s].items() if k not in ('markCards',)}, play=c.seat_plays[s]) for s, o in enumerate(c.owners)],
             choice=copy.deepcopy(own_q), waiting=c.name(q['seat']) if q else None, waitingActor=q['seat'] if q else None,
             remainingActorHands=[copy.deepcopy(h) for h in c.hands] if c.phase == 'over' else None,
-            boundHands=[dict(name=c.name(s), cards=copy.deepcopy(c.hands[s])) for b in c.bonds if actor in b['seats'] for s in b['seats'] if s != actor] if actor is not None else [])
+            boundHands=[dict(name=c.name(s), cards=copy.deepcopy(c.hands[s]), zone=copy.deepcopy(c.zones[s])) for b in c.bonds if actor in b['seats'] for s in b['seats'] if s != actor] if actor is not None else [])
         if own_q is None and q:
             view['response'] = None
         if actor is not None and c.players[actor].get('second'): view['conveyor']['drafted'] = True

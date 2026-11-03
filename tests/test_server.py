@@ -799,8 +799,8 @@ class ServerIntegration(unittest.TestCase):
         status,data=self.request(client,'start',{})
         self.assertEqual(status,200,data)
         self.assertEqual(data['room']['game']['phase'],'draft')
-        self.assertEqual(len(data['room']['game']['conveyor']['actors']),5)
-        self.assertEqual(len(set(p['skill'] for p in data['room']['players'])),4)
+        self.assertEqual(len(data['room']['game']['conveyor']['actors']),4 + sum(p['skill']=='twins' for p in data['room']['players']))
+        self.assertTrue(all(p['skill'] in server.SKILLS for p in data['room']['players']))
         room=server.room_of(self.users[0]['id'])
         public=server.room_view(room,self.users[1]['id'])
         self.assertEqual(public['game']['hand'],[])
@@ -829,15 +829,26 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(len(data['room']['game']['hand']),7)
         self.assertTrue(server.audio_waiting(room))
 
-    def test_conveyor_skills_cannot_conflict_or_select_disabled(self):
+    def test_conveyor_skills_can_repeat_but_cannot_select_disabled(self):
         _,data=self.request(self.clients[0],'create',{'mode':'conveyor','options':{'disabledSkills':['balance']}})
         code=data['room']['code']
         self.request(self.clients[1],'join',{'code':code})
         self.assertEqual(self.request(self.clients[0],'skill',{'skill':'balance'})[0],400)
         self.assertEqual(self.request(self.clients[0],'skill',{'skill':'anchor'})[0],200)
-        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],400)
+        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],200)
         self.assertEqual(self.request(self.clients[1],'skill',{'skill':'leap'})[0],200)
         self.assertEqual(self.request(self.clients[1],'skill',{'skill':'twins'})[0],400)
+
+    def test_conveyor_can_start_with_only_one_enabled_skill(self):
+        disabled = [key for key in server.SKILLS if key != 'balance']
+        status, data = self.request(self.clients[0], 'create', {'mode':'conveyor', 'options':{'disabledSkills':disabled}})
+        self.assertEqual(status, 200, data)
+        code = data['room']['code']
+        for client in self.clients[1:]: self.assertEqual(self.request(client, 'join', {'code':code})[0], 200)
+        for client in self.clients: self.assertEqual(self.request(client, 'skill', {'skill':'balance'})[0], 200)
+        status, data = self.request(self.clients[0], 'start', {})
+        self.assertEqual(status, 200, data)
+        self.assertEqual([p['skill'] for p in data['room']['players']], ['balance'] * 4)
 
     def test_conveyor_waiting_skill_choice_auto_takeover(self):
         from conveyor import ConveyorGame
