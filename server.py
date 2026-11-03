@@ -528,7 +528,7 @@ class Handler(BaseHTTPRequestHandler):
                 options['recycle'] = False
                 groups = b.get('options', {}).get('skillDlc', [])
                 disabled = b.get('options', {}).get('disabledSkills', [])
-                if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4) for n in groups): raise RuleError('技能 DLC 选项无效。')
+                if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4, 5) for n in groups): raise RuleError('技能 DLC 选项无效。')
                 if not isinstance(disabled, list) or any(k not in SKILLS for k in disabled): raise RuleError('禁用技能选项无效。')
                 options['skillDlc'] = list(set(groups)); options['disabledSkills'] = list(set(disabled))
                 if not conveyor_skills(options): raise RuleError('至少需要开放一个技能。')

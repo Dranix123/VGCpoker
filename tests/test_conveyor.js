@@ -15,7 +15,7 @@ function table(spectator=false,autoplay=false,extra={}){
 }
 test('conveyor creation exposes opt-in DLC, default recycling and skill bans',()=>{
  const html=vm.runInContext('conveyorCreateOptions()',context());
- assert.equal((html.match(/name="skillDlc"/g)||[]).length,4);
+ assert.equal((html.match(/name="skillDlc"/g)||[]).length,5);
  assert.ok(!html.includes('name="recycle"'));
  assert.ok(html.includes('name="disabledSkills"'));
 });
@@ -56,8 +56,8 @@ test('passive skill is described as view rather than activation',()=>{
 test('choice validation permits declining optional picks and enforces mandatory counts',()=>{
  const ctx=context();
  const check=(kind,count,extra={})=>{ctx.q={kind,...extra};ctx.selected=new Set(Array.from({length:count},(_,i)=>String(i)));return vm.runInContext('conveyorChoiceProgress(q,7)',ctx);};
- assert.equal(check('blood',0).valid,true);
- assert.equal(check('blood',6).valid,false);
+ assert.equal(check('inspire',0,{maximum:5}).valid,true);
+ assert.equal(check('inspire',6,{maximum:5}).valid,false);
  assert.equal(check('split',0).valid,false);
  assert.equal(check('split',7).valid,false);
  assert.equal(check('split',3).valid,true);
@@ -162,4 +162,13 @@ test('trade extra draw offers one through thirteen, excluding zero',()=>{
  assert.ok(!html.includes('<option value="0">'));
  assert.ok(html.includes('<option value="1">'));
  assert.ok(html.includes('<option value="13">'));
+});
+
+test('new public marks and optional skill discards are visible and validated',()=>{
+ const ctx=context({actor:{skill:'encourage',resources:{inspire:3,prison:1,skillBan:1}}});
+ const html=vm.runInContext('conveyorResources(actor)',ctx);
+ assert.ok(html.includes('激励 3'));assert.ok(html.includes('禁锢 1'));assert.ok(html.includes('技能封禁'));
+ ctx.q={kind:'inspire',maximum:2,title:'激励之力'};
+ ctx.selected=new Set(['a','b','c']);assert.equal(vm.runInContext('conveyorChoiceProgress(q,5).valid',ctx),false);
+ ctx.selected.clear();assert.equal(vm.runInContext('conveyorChoiceProgress(q,5).valid',ctx),true);
 });

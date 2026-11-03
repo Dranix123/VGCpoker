@@ -1,13 +1,13 @@
 'use strict';
 function resetConveyorSelection(){selected.clear();responseKey='';markResponse();}
 let conveyorChosen=[], conveyorChoiceKey='', conveyorDouble=null;
-const conveyorHandChoices=new Set(['split','blood','discard','give','duel','stash']);
+const conveyorHandChoices=new Set(['split','discard','give','duel','stash','redemption','inspire']);
 const conveyorActiveSkills=new Set(['balance','gift','pressure','ascend','seven','judgment','trade','scavenge','bond']);
-const conveyorGroups={0:'标准',1:'突破',2:'重生',3:'多多益善',4:'智谋'};
+const conveyorGroups={0:'标准',1:'突破',2:'重生',3:'多多益善',4:'智谋',5:'终极力量'};
 const conveyorSkill = id => (state.features?.conveyorSkills||state.room?.skills||[]).find(s=>s.id===id);
 function conveyorCreateOptions(){
  const skills=state.features?.conveyorSkills||[];
- return `<fieldset class="conveyor-options"><legend>传送带</legend>${[1,2,3,4].map(n=>`<label class="checkbox"><input name="skillDlc" value="${n}" type="checkbox">DLC · ${conveyorGroups[n]}</label>`).join('')}<details><summary>禁用技能</summary><div class="skill-ban-list">${skills.map(s=>`<label class="checkbox" title="${esc(s.text)}"><input type="checkbox" name="disabledSkills" value="${s.id}">${s.name}<small>${conveyorGroups[s.group]} · ${s.deal} 选 ${s.keep}</small></label>`).join('')}</div></details></fieldset>`;
+ return `<fieldset class="conveyor-options"><legend>传送带</legend>${[1,2,3,4,5].map(n=>`<label class="checkbox"><input name="skillDlc" value="${n}" type="checkbox">DLC · ${conveyorGroups[n]}</label>`).join('')}<details><summary>禁用技能</summary><div class="skill-ban-list">${skills.map(s=>`<label class="checkbox" title="${esc(s.text)}"><input type="checkbox" name="disabledSkills" value="${s.id}">${s.name}<small>${conveyorGroups[s.group]} · ${s.deal} 选 ${s.keep}</small></label>`).join('')}</div></details></fieldset>`;
 }
 function conveyorFormOptions(form){return {skillDlc:[...form.querySelectorAll('[name="skillDlc"]:checked')].map(e=>Number(e.value)),disabledSkills:[...form.querySelectorAll('[name="disabledSkills"]:checked')].map(e=>e.value)};}
 function conveyorWaiting(r){
@@ -34,9 +34,12 @@ function conveyorPlayCards(play,g){
 function conveyorResources(actor,label=''){
  const r=actor.resources,stats=[];
  if(actor.skill==='money')stats.push('金钱 '+r.money);
- if(actor.skill==='blood')stats.push(r.bloodReady?'嗜血 '+r.blood:'嗜血 待选择');
+ if(actor.skill==='blood')stats.push('嗜血 '+r.blood);
  if(actor.skill==='seven')stats.push('七音 '+(r.marks||0)+'/7');
  if(actor.skill==='ascend')stats.push('强化 '+r.boost+' 枚 · +'+(1+r.boost));
+ if(r.prison)stats.push('禁锢 '+r.prison);
+ if(r.inspire)stats.push('激励 '+r.inspire);
+ if(r.skillBan)stats.push('技能封禁 '+r.skillBan+' 回合');
  if(r.debt)stats.push('奉还 '+r.debt);
  if(r.shield)stats.push('免发 '+r.shield+' 回合');
  if(r.ban)stats.push('禁手 '+r.ban+' 回合');
@@ -84,9 +87,9 @@ function conveyorChoice(q,c){
 function conveyorChoiceProgress(q,handCount){
  const count=q.cards?conveyorChosen.length:selected.size;
  const exact=['maximum','urgent-max','duel'].includes(q.kind)?1:['discard','give'].includes(q.kind)?Math.min(q.count,handCount):q.kind==='stars'?q.cards.length:null;
- const maximum=['retain','buy'].includes(q.kind)?1:q.kind==='blood'?5:q.kind==='split'?handCount-1:null;
+ const maximum=['retain','buy'].includes(q.kind)?1:q.kind==='split'?handCount-1:['redemption','inspire','scavenge'].includes(q.kind)?q.maximum??null:null;
  const minimum=['split','scavenge'].includes(q.kind)?1:0;
- const labels={discard:q.title,give:q.title,duel:q.title,stars:'按点击顺序排列，左侧先发',retain:'选中的牌会保留',buy:'选中的牌会买入',reflux:'选中的已出牌放回牌堆底',stash:'选中的手牌存入展示区',blood:q.title||'选中的牌作为嗜血印记',split:'选中的牌分给手牌 B'};
+ const labels={redemption:q.title,inspire:q.title,discard:q.title,give:q.title,duel:q.title,stars:'按点击顺序排列，左侧先发',retain:'选中的牌会保留',buy:'选中的牌会买入',reflux:'选中的已出牌放回牌堆底',stash:'选中的手牌存入展示区',split:'选中的牌分给手牌 B'};
  const hasCards=!!q.cards||conveyorHandChoices.has(q.kind);
  return {valid:exact!==null?count===exact:count>=minimum&&(maximum===null||count<=maximum),text:hasCards?`${labels[q.kind]||'选择手牌'} · 已选 ${count}${exact!==null?' / '+exact:maximum!==null?' / 最多 '+maximum:minimum?' / 至少 '+minimum:''} 张`:''};
 }
@@ -103,10 +106,10 @@ async function conveyorPlay(){
  const g=state.room.game,c=g.conveyor;
  if(urgentSelected()){
   if(c.actor!==c.turnActor){toast('急牌需轮到当前这手才能使用。');return;}
-  const wild=wildcardPayload(),urgentIds=g.hand.filter(x=>selected.has(x.id)&&(x.rank===18||x.rank===14&&(x.suit==='S'||c.skill==='wild')&&(typeof wild==='object'?wildRank(wild[x.id])===18:wild===18))).map(x=>x.id);
+  const wild=wildcardPayload(),urgentIds=g.hand.filter(x=>selected.has(x.id)&&((x.effective??x.rank)===18||x.rank===14&&(x.suit==='S'||c.skill==='wild')&&(typeof wild==='object'?wildRank(wild[x.id])===18:wild===18))).map(x=>x.id);
   if(urgentIds.length!==1){toast('每次选择一张急牌。');return;}
   const uses=g.hand.find(x=>x.id===urgentIds[0]).urgentUses||0,forced=uses>=3;
-  showModal('cv-urgent',`<h2>急牌</h2><p>此牌已使用 ${uses} 次${forced?'，本次必须轮换并销毁':'；不废弃使用最多三次'}。</p><form id="cv-urgent-form" class="form">${urgentIds.map(id=>`<input type="hidden" name="urgentIds" value="${esc(id)}">`).join('')}<label>效果<select name="effect">${[['draw','目标获得两张'],['discard','弃置零至两张，至少留一张'],['ban','目标禁手两回合'],['shield','自己三回合免发牌'],['maximum','目标弃最大牌（剩一张无效）'],['rotate','轮换手牌并销毁急牌']].map(([effect,text])=>`<option value="${effect}" ${effect==='rotate'&&forced?'selected':''} ${forced&&effect!=='rotate'||effect==='discard'&&g.hand.length===1?'disabled':''}>${text}</option>`).join('')}</select></label><div class="urgent-discard-picker" hidden><p class="urgent-discard-count">选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!urgentIds.includes(x.id)&&x.rank!==18).map(x=>`<label class="urgent-discard-card ${['H','D'].includes(x.suit)?'red':''}"><span>${ranks[x.rank]}${suits[x.suit]}</span><input type="checkbox" name="discardIds" value="${esc(x.id)}" ${selected.has(x.id)?'checked':''}></label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);conveyorUrgentUpdate($('#cv-urgent-form'));return;
+  showModal('cv-urgent',`<h2>急牌</h2><p>此牌已使用 ${uses} 次${forced?'，本次必须轮换并销毁':'；不废弃使用最多三次'}。</p><form id="cv-urgent-form" class="form">${urgentIds.map(id=>`<input type="hidden" name="urgentIds" value="${esc(id)}">`).join('')}<label>效果<select name="effect">${[['draw','目标获得两张'],['discard','弃置零至两张，至少留一张'],['ban','目标禁手两回合'],['shield','自己三回合免发牌'],['maximum','目标弃最大牌（剩一张无效）'],['rotate','轮换手牌并销毁急牌']].map(([effect,text])=>`<option value="${effect}" ${effect==='rotate'&&forced?'selected':''} ${forced&&effect!=='rotate'||effect==='discard'&&g.hand.length===1?'disabled':''}>${text}</option>`).join('')}</select></label><div class="urgent-discard-picker" hidden><p class="urgent-discard-count">选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!urgentIds.includes(x.id)&&(x.effective??x.rank)!==18).map(x=>`<label class="urgent-discard-card ${['H','D'].includes(x.suit)?'red':''}"><span>${ranks[x.rank]}${suits[x.suit]}</span><input type="checkbox" name="discardIds" value="${esc(x.id)}" ${selected.has(x.id)?'checked':''}></label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);conveyorUrgentUpdate($('#cv-urgent-form'));return;
  }
  const args={ids:[...selected],actor:c.actor};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;if(conveyorDouble&&selected.has(conveyorDouble.id))args.double=conveyorDouble;
  if(await gameAction('auto',args)){conveyorDouble=null;wildcard='';wildcardMap={};resetConveyorSelection();renderedKey='';render();}

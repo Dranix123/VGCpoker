@@ -850,6 +850,18 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertEqual([p['skill'] for p in data['room']['players']], ['balance'] * 4)
 
+    def test_conveyor_ultimate_dlc_is_opt_in_and_repeated_skills_start(self):
+        client=self.clients[0]
+        _,data=self.request(client,'create',{'mode':'conveyor','options':{'skillDlc':[5]}})
+        code=data['room']['code']
+        self.assertEqual(len(data['room']['skills']),13)
+        for other in self.clients[1:]:self.request(other,'join',{'code':code})
+        for other in self.clients:self.assertEqual(self.request(other,'skill',{'skill':'encourage'})[0],200)
+        status,data=self.request(client,'start',{})
+        self.assertEqual(status,200,data)
+        self.assertEqual([p['skill'] for p in data['room']['players']],['encourage']*4)
+        self.assertEqual([a['count'] for a in data['room']['game']['conveyor']['actors']],[12]*4)
+
     def test_conveyor_waiting_skill_choice_auto_takeover(self):
         from conveyor import ConveyorGame
         players=[{'id':self.users[i]['id'],'name':str(i),'skill':skill,'seen':100,'connected':True} for i,skill in enumerate(['balance','anchor','leap','stars'])]

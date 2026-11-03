@@ -70,7 +70,7 @@ function requireUser(fn) {if(!state.user) {showAuth();return;} fn();}
 function card(c, interactive=false, g=null) {
   const red = c.suit==='H'||c.suit==='D'||c.rank===17;
   const wild = g && !['landlord','basic'].includes(g.mode) && c.suit==='S' && c.rank===14;
-  const urgentUses=g?.mode==='conveyor'&&(c.rank===18||c.urgentUses)?c.urgentUses||0:null;
+  const urgentUses=g?.mode==='conveyor'&&((c.effective??c.rank)===18||c.urgentUses)?c.urgentUses||0:null;
   const label = `${ranks[c.rank]}${suits[c.suit]}`+(urgentUses===null?'':`，已使用 ${urgentUses} 次${urgentUses>=3?'，下次必须轮换销毁':''}`);
   return `<${interactive?'button':'div'} class="card ${red?'red':''} ${c.rank>=16?'joker':''} ${selected.has(c.id)&&interactive?'selected':''} ${wild?'wild':''} ${g&&g.mode!=='landlord'&&c.rank===g.main?'main-card':''}" ${interactive?`data-card="${esc(c.id)}" aria-pressed="${selected.has(c.id)}" aria-label="${esc(label)}${wild?'，混子':''}"`:''}><span class="card-rank">${ranks[c.rank]}</span><span class="card-suit">${c.rank>=16?'':suits[c.suit]}</span><span class="card-center">${c.rank>=16?(c.rank===18?'↗':'✦'):suits[c.suit]}</span>${c.effective&&c.effective!==c.rank?`<span class="effective-rank">→ ${ranks[c.effective]}</span>`:''}${urgentUses===null?'':`<span class="urgent-count" title="${esc(label)}">${urgentUses}/3</span>`}<span class="card-bottom">${ranks[c.rank]}${suits[c.suit]}</span></${interactive?'button':'div'}>`;
 }
@@ -231,7 +231,7 @@ function wildcardPayload(){
 }
 function urgentSelected(){
  const wild=wildcardPayload();
- return state.room.game.hand.some(c=>selected.has(c.id)&&(c.rank===18||c.rank===14&&(c.suit==='S'||state.room.game.conveyor?.skill==='wild')&&(typeof wild==='object'?wildRank(wild[c.id])===18:wild===18)));
+ return state.room.game.hand.some(c=>selected.has(c.id)&&((c.effective??c.rank)===18||c.rank===14&&(c.suit==='S'||state.room.game.conveyor?.skill==='wild')&&(typeof wild==='object'?wildRank(wild[c.id])===18:wild===18)));
 }
 function showWildcard(){
   const wild=state.room?.game?.hand.filter(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild'))||[];

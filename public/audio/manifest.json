@@ -391,7 +391,13 @@
     "cv-suit-S": "/audio/voices/cv-suit-S.mp3?v=2d95cad791d8",
     "cv-suit-H": "/audio/voices/cv-suit-H.mp3?v=c2dacd6916ab",
     "cv-suit-C": "/audio/voices/cv-suit-C.mp3?v=ed9d0fb7997f",
-    "cv-suit-D": "/audio/voices/cv-suit-D.mp3?v=070224eaeb04"
+    "cv-suit-D": "/audio/voices/cv-suit-D.mp3?v=070224eaeb04",
+    "cv-skill-redemption": "/audio/voices/cv-skill-redemption.mp3?v=cbaa3c0b186d",
+    "cv-skill-chase_force": "/audio/voices/cv-skill-chase_force.mp3?v=d0db38e01cbc",
+    "cv-skill-equilibrium": "/audio/voices/cv-skill-equilibrium.mp3?v=75324510e62f",
+    "cv-skill-shadow": "/audio/voices/cv-skill-shadow.mp3?v=7719324bc505",
+    "cv-skill-imprison": "/audio/voices/cv-skill-imprison.mp3?v=258573db9299",
+    "cv-skill-encourage": "/audio/voices/cv-skill-encourage.mp3?v=f61719d138ea"
   },
   "voiceText": {
     "deal": "发牌",
@@ -485,6 +491,12 @@
     "cv-suit-S": "黑桃",
     "cv-suit-H": "红桃",
     "cv-suit-C": "梅花",
-    "cv-suit-D": "方片"
+    "cv-suit-D": "方片",
+    "cv-skill-redemption": "救赎之力",
+    "cv-skill-chase_force": "追击之力",
+    "cv-skill-equilibrium": "平衡之力",
+    "cv-skill-shadow": "阴影之力",
+    "cv-skill-imprison": "禁锢之力",
+    "cv-skill-encourage": "激励之力"
   }
 }
