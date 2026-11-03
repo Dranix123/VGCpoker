@@ -174,3 +174,5 @@ Automatic autoplay: an active game's host is taken over after 15 seconds without
 - 九组完整规则 AI 对局覆盖全部 36 项技能的组合，另五组测试四人同追击、同禁锢、同平衡及救赎/激励/七音/嗜血、双阴影/绑定/双身；14 局均正常结算并通过实体牌守恒（包含销毁牌、展示区及待选牌）。模拟并不代表每项主动技能在每局都发动，具体行为由针对性测试覆盖。日志在 /tmp/vgc09-games.log 和 /tmp/vgc09-stress.log。
 - Playwright 在隔离 SQLite 与 4142 预览服务中实际注册、勾选 DLC 5、查看说明、选择激励、开局保留 10 张、确认进入对局；同局两名 AI 随机选到聚宝，流程正常。截图 output/playwright/v09-natural-game.png。未创建正式服测试账号。
 - 另以隔离服务 4144 的预设局面验证 390×844 手机尺寸：两枚激励印记的弃牌确认按钮位于视口内，实际选两张、提交后手牌减少两张、印记消耗、窗口关闭。截图 output/playwright/v09-mobile-inspire.png 与 v09-mobile-inspire-done.png；该部分为预设场景，不是随机自然发牌。
+
+发布确认：已重启 tmux `poker` 的 4141 服务；HTTP 返回 V0.9、36 个技能及 DLC 5 六项技能，app.js/conveyor.js/audio.js/style.css 的线上资源版本哈希与提交文件一致。`experiment-platform` 未改动。正式服未添加测试账号；隔离预览服务已停止。
