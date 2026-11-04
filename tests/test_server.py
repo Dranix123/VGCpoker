@@ -862,6 +862,34 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual([p['skill'] for p in data['room']['players']],['encourage']*4)
         self.assertEqual([a['count'] for a in data['room']['game']['conveyor']['actors']],[12]*4)
 
+    def test_conveyor_new_round_resets_all_four_personal_grades(self):
+        client=self.clients[0]
+        self.request(client,'create',{'mode':'conveyor','single':True})
+        for _ in range(3):self.request(client,'bot',{})
+        self.request(client,'skill',{'skill':'balance'});self.request(client,'start',{})
+        room=server.room_of(self.users[0]['id']);g=room['game'];c=g.core
+        c.phase='play';c.pending=[];c.main=14;c.scores=[11,7,4,3]
+        for r in c.resources:r['turns']=2
+        for owner in (0,1,2):
+            actor=next(s for s,o in enumerate(c.owners) if o==owner)
+            c.hands[actor]=[];c.finish(actor)
+        self.assertTrue(c.round_complete)
+        status,data=self.request(client,'start',{})
+        self.assertEqual(status,200,data)
+        self.assertEqual(room['game'].scores,[0,0,0,0]);self.assertEqual(room['game'].main,3)
+        self.assertIsNone(room['game'].first)
+
+    def test_conveyor_ending_practice_keeps_all_grades_and_no_winner(self):
+        client=self.clients[0]
+        self.request(client,'create',{'mode':'conveyor','single':True})
+        for _ in range(3):self.request(client,'bot',{})
+        self.request(client,'skill',{'skill':'balance'});self.request(client,'start',{})
+        room=server.room_of(self.users[0]['id']);room['game'].core.scores=[1,3,5,7]
+        status,data=self.request(client,'resign',{})
+        self.assertEqual(status,200,data)
+        self.assertEqual(data['room']['game']['winner'],[])
+        self.assertEqual(data['room']['game']['scores'],[1,3,5,7])
+
     def test_conveyor_waiting_skill_choice_auto_takeover(self):
         from conveyor import ConveyorGame
         players=[{'id':self.users[i]['id'],'name':str(i),'skill':skill,'seen':100,'connected':True} for i,skill in enumerate(['balance','anchor','leap','stars'])]

@@ -10,7 +10,7 @@ function table(spectator=false,autoplay=false,extra={}){
  const players=Array.from({length:4},(_,i)=>({id:i+1,name:'玩家'+i,skill:i===0?'twins':'balance',autoplay:i===0&&autoplay}));
  const actors=Array.from({length:5},(_,i)=>({id:i,owner:i<2?0:i-1,name:'分身'+i,count:2,resources:{},skill:i<2?'twins':'balance'}));
  const c={actor:0,turnActor:1,skill:'twins',actors,pile:50,discard:4,resources:{money:0,blood:0},zone:[],boundHands:[],choice:null};
- const r={seat:spectator?null:0,players,spectator},g={conveyor:c,phase:'play',finished:[],turn:0,hand:[{id:'own',rank:4,suit:'S'}],scores:[0,0],log:[],main:3};
+ const r={seat:spectator?null:0,players,spectator},g={conveyor:c,phase:'play',finished:[],turn:0,hand:[{id:'own',rank:4,suit:'S'}],scores:[0,0,0,0],log:[],main:3};
  Object.assign(g,extra);const ctx=context({r,g});return vm.runInContext('conveyorTable(r,g)',ctx);
 }
 test('conveyor creation exposes opt-in DLC, default recycling and skill bans',()=>{
@@ -171,4 +171,19 @@ test('new public marks and optional skill discards are visible and validated',()
  ctx.q={kind:'inspire',maximum:2,title:'激励之力'};
  ctx.selected=new Set(['a','b','c']);assert.equal(vm.runInContext('conveyorChoiceProgress(q,5).valid',ctx),false);
  ctx.selected.clear();assert.equal(vm.runInContext('conveyorChoiceProgress(q,5).valid',ctx),true);
+});
+
+test('conveyor displays individual grades and first-place-only victory',()=>{
+ const html=table(false,false,{phase:'over',winner:[0],finished:[0,2,1],scores:[2,0,1,0],nextMain:5});
+ assert.ok(!html.includes('同队'));assert.ok(!html.includes('对手'));
+ assert.ok(html.includes('等级 5'));assert.ok(html.includes('等级 4'));
+ assert.ok(html.includes('conveyor-standings'));
+ assert.ok(html.includes('玩家0 获胜'));
+ assert.ok(!html.includes('玩家0、玩家2 获胜'));
+ assert.ok(html.includes('（不变）'));
+});
+test('ending single-player practice does not invent a winner or grade reward',()=>{
+ const html=table(false,false,{phase:'over',winner:[],finished:[],scores:[0,0,0,0],nextMain:3});
+ assert.ok(html.includes('本局结束'));assert.ok(html.includes('等级不变'));
+ assert.ok(!html.includes('conveyor-standings'));assert.ok(!html.includes(' 获胜'));
 });

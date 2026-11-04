@@ -239,7 +239,9 @@ def model_move(config, g, seat):
     if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
     # Only this bot's hand and public table state are shared with its configured provider.
     prompt = {'table': g.view(seat), 'legal_moves': [{**m, 'index': i} for i, m in enumerate(moves)]}
-    payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': 'You are a card-game player. Choose one legal_moves index to maximize your winning chance. Return only JSON: {"index": 0}.'}, {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)}], 'temperature': .2, 'max_tokens': 80}
+    system = 'You are a card-game player. Choose one legal_moves index to maximize your winning chance. Return only JSON: {"index": 0}.'
+    if g.mode == 'conveyor': system += ' This is free-for-all: there are no teammates; first place gains two levels, second place one, others none.'
+    payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)}], 'temperature': .2, 'max_tokens': 80}
     req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['key']})
     with urllib.request.build_opener(NoRedirect).open(req, timeout=12) as response:
         raw = response.read(65537)
@@ -618,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
                     if p.get('departed'): p.update(id='bot-' + secrets.token_hex(4), bot=True, model=False)
                 prev = room.get('game')
                 previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores, 'captured': prev.captured} if prev and prev.mode != 'landlord' else None
-                if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0, 0], 'captured': []}
+                if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0] * (4 if prev.mode == 'conveyor' else 2), 'captured': []}
                 if room['mode'] == 'conveyor':
                     choices = conveyor_skills(room['options'])
                     used = {p.get('skill') for p in room['players'] if not p.get('bot')}
@@ -655,6 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                     room['revision'] += 1
                     return self.respond({'ok':True, 'room':None})
                 if g.mode == 'landlord': g.winner = [s for s in range(len(g.players)) if (s == g.landlord) != (seat == g.landlord)]
+                elif g.mode == 'conveyor': g.winner = []
                 elif g.mode == 'trio': g.winner = [s for s in range(len(g.players)) if s != seat]
                 else: g.winner = [s for s in range(len(g.players)) if s % 2 != seat % 2]
                 g.phase = 'over'; g.announce(user['username'] + '认输。'); queue_audio(room, [{'voice': 'resign'}, {'effect': 'result'}]); persist_result(room, reason='resign')

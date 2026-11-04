@@ -518,3 +518,5 @@ footer{gap:24px}
  .hand-choice .choice-actions .choice-progress{flex:1;margin:0;font-size:12px;line-height:1.4}
  .hand-choice .choice-actions button{flex:0 0 auto;min-height:44px}
 }
+
+.conveyor-standings{width:100%;max-width:560px;margin:18px auto;border-collapse:collapse;text-align:left;font-size:13px}.conveyor-standings th,.conveyor-standings td{padding:9px 12px;border-bottom:1px solid var(--line)}.conveyor-standings th{font-weight:500;color:var(--muted)}

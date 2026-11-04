@@ -215,15 +215,80 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(len(c.hands[3]),3)
         self.assertEqual(c.turn,2)
 
-    def test_no_deal_when_finished_and_partner_settlement(self):
+    def test_free_for_all_waits_for_third_finisher_and_rewards_first_two(self):
         g=self.game();c=self.table(g,[[4],[7],[8],[9]])
         before=len(c.pile)
         g.action(0,'auto',[c.hands[0][0]['id']])
         self.assertIn(0,g.finished);self.assertEqual(len(c.pile),before)
-        c.hands[2]=[];c.finish(2)
-        self.assertEqual(g.phase,'over');self.assertEqual(g.winner,[0,2])
-        self.assertEqual(c.next_main,5)
-        self.assertEqual(g.view(0)['remainingHands'][1][0]['rank'],7)
+        self.assertEqual(c.scores,[2,0,0,0])
+        c.take(2,c.hands[2][:]);c.finish(2)
+        self.assertEqual(g.phase,'play');self.assertEqual(c.scores,[2,0,1,0])
+        c.take(1,c.hands[1][:]);c.finish(1)
+        self.assertEqual(g.phase,'over');self.assertEqual(g.winner,[0])
+        self.assertEqual(c.scores,[2,0,1,0]);self.assertEqual(c.next_main,5)
+        self.assertEqual(g.view(0)['remainingHands'][3][0]['rank'],9)
+
+    def test_individual_grades_follow_every_finish_order_and_persist(self):
+        for order in itertools.permutations(range(4)):
+            g=self.game();c=self.table(g,[[7],[8],[9],[10]])
+            c.scores=[0,3,6,8];c.initial_scores=c.scores[:]
+            expected=c.scores[:]
+            expected[order[0]]=min(11,expected[order[0]]+2)
+            expected[order[1]]=min(11,expected[order[1]]+1)
+            for index,owner in enumerate(order[:3]):
+                c.take(owner,c.hands[owner][:]);c.finish(owner)
+                self.assertEqual(g.phase,'over' if index==2 else 'play')
+            self.assertEqual(c.scores,expected)
+            self.assertEqual(g.winner,[order[0]])
+            self.assertEqual(c.next_main,expected[order[0]]+3)
+            self.assertEqual(g.view(0)['conveyor']['gradeChanges'],[expected[i]-[0,3,6,8][i] for i in range(4)])
+            c.take(order[3],c.hands[order[3]][:]);c.finish(order[3])
+            self.assertEqual(c.scores,expected)
+            following=ConveyorGame('conveyor',g.players,{},previous={'first':order[0],'main':c.next_main,'scores':c.scores})
+            self.assertEqual(following.scores,expected)
+            self.assertEqual(following.main,expected[order[0]]+3)
+
+    def test_individual_grade_caps_at_ace_and_requires_an_ace_round(self):
+        g=self.game();c=self.table(g,[[7],[8],[9],[10]])
+        c.scores=[10,11,5,2];c.main=13
+        for owner in (0,1,2):c.take(owner,c.hands[owner][:]);c.finish(owner)
+        self.assertEqual(c.scores,[11,11,5,2]);self.assertEqual(c.next_main,14)
+        self.assertFalse(c.round_complete)
+        g=self.game();c=self.table(g,[[7],[8],[9],[10]])
+        c.scores=[11,11,5,2];c.main=14
+        for owner in (0,2,1):c.take(owner,c.hands[owner][:]);c.finish(owner)
+        self.assertTrue(c.round_complete);self.assertEqual(c.next_main,3)
+        self.assertEqual(c.scores,[11,11,6,2])
+
+    def test_finished_free_for_all_lead_goes_to_next_seat(self):
+        g=self.game();c=self.table(g,[[17],[7,8],[9,10],[11,12]])
+        g.action(0,'auto',[c.hands[0][0]['id']])
+        for owner in (3,2,1):g.action(owner,'pass')
+        self.assertIsNone(c.last);self.assertEqual(c.turn,3)
+
+    def test_twins_share_one_individual_grade_and_one_finish_place(self):
+        g=self.game('twins');c=g.core;c.phase='play';c.pending=[]
+        for r in c.resources:r['turns']=2
+        for owner in (0,1,2):
+            actor=next(s for s,o in enumerate(c.owners) if o==owner)
+            c.take(actor,c.hands[actor][:]);c.finish(actor)
+        self.assertEqual(g.finished,[0,1,2]);self.assertEqual(g.winner,[0])
+        self.assertEqual(c.scores,[2,1,0,0]);self.assertEqual(len(c.finished),4)
+        self.conservation(g)
+
+    def test_rule_ai_targets_former_opposite_player_as_an_opponent(self):
+        g=self.game('pressure');c=self.table(g,[[15,7,8],[6,7,8,9],[10],[6,7,8,9]])
+        self.assertEqual(c.bot_action(0)['target'],2)
+        g=self.game('balance');c=self.table(g,[[18,7,8,9],[6,7,8,9],[10],[6,7,8,9]])
+        self.assertEqual(c.bot_action(0)['target'],2)
+
+    def test_special_chain_keeps_urgent_options_instead_of_auto_skipping(self):
+        for skill,hand in [('balance',[18,7,8]),('balance',[(14,'S'),7,8]),('chase_force',[17,7,8])]:
+            g=self.game(skill,'gift','anchor','formless');c=self.table(g,[hand,[6,9],[5,5,9],[5,8]])
+            c.turn=3
+            g.action(3,'play',[c.hands[3][0]['id']]);g.action(2,'cross',[x['id'] for x in c.hands[2][:2]]);g.action(1,'pass')
+            self.assertEqual(c.turn,0);self.assertFalse(c.forced_pass(),skill)
+            c.resources[0]['ban']=1;self.assertTrue(c.forced_pass())
 
     def test_unplayed_stash_blocks_finish_marks_do_not(self):
         g=self.game('stash');c=self.table(g,[[],[7],[8],[9]])
