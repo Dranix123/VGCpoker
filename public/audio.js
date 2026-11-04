@@ -37,6 +37,7 @@ const gameAudio = (() => {
     function fade(now){const p=Math.max(0,Math.min(1,(now-started)/1500));for(const k in mixes)mixes[k]=from[k]+(target[k]-from[k])*p;applyVolumes();if(p<1)fadeFrame=requestAnimationFrame(fade);}
     fadeFrame=requestAnimationFrame(fade); startMusic();
   }
+  function canAnnounce(){return unlocked&&!document.hidden;}
   function unlock() {
     if(!context){const AudioContext=window.AudioContext||window.webkitAudioContext;if(AudioContext)context=new AudioContext();}
     context?.resume().catch(()=>{});
@@ -162,5 +163,5 @@ const gameAudio = (() => {
   document.addEventListener('pointerdown',unlock,{passive:true});document.addEventListener('touchend',unlock,{passive:true});document.addEventListener('keydown',unlock);
   document.addEventListener('click',e=>{if(e.target.closest('button:not(:disabled)')){unlock();effect('click');}},true);
   document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const track of Object.values(tracks))track.pause();stopVoice();}else startMusic();});
-  return {volumes, setVolume, effect, speak:(...args)=>eventJob?undefined:speak(...args), observe};
+  return {volumes, canAnnounce, setVolume, effect, speak:(...args)=>eventJob?undefined:speak(...args), observe};
 })();

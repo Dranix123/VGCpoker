@@ -725,6 +725,50 @@ class Rules(unittest.TestCase):
         g.hands[2]=cards([14],'S','w')+cards([9],prefix='x')
         self.assertFalse(g.forced_pass())
 
+    def test_declining_hook_does_not_ask_again_on_the_same_cross(self):
+        for mode in ('basic', 'standard'):
+            g=table(mode);g.interactive=True;g.turn=3
+            for seat in (1,2,3):g.players[seat]['bot']=True
+            g.hands[3]=cards([5,8],prefix='d');g.hands[2]=cards([5,5,9],prefix='c')
+            g.hands[1]=cards([6,7],prefix='b');g.hands[0]=cards([5,9],prefix='a')
+            g.action(3,'play',['d0']);g.action(2,'cross',['c0','c1'])
+            self.assertEqual(g.priority['pending'],[0])
+            g.action(0,'pass')
+            self.assertTrue(g.forced_pass());g.action(1,'pass')
+            self.assertEqual(g.turn,0)
+            self.assertTrue(g.forced_pass(), 'a declined hook must not be requested a second time')
+            with self.assertRaises(RuleError):g.action(0,'auto',['a0'])
+            g.action(0,'pass');g.action(3,'pass')
+            self.assertIsNone(g.last);self.assertEqual(g.turn,2)
+            g.action(2,'play',['c2'])
+            self.assertEqual(g.last['ranks'],[9])
+
+    def test_declining_cross_keeps_normal_play_and_new_hand_opportunities(self):
+        for next_play in (False, True):
+            g=table();g.interactive=True;g.turn=2
+            for seat in (1,2,3):g.players[seat]['bot']=True
+            g.hands[2]=cards([5,9],prefix='c');g.hands[1]=cards([6,8],prefix='b')
+            g.hands[0]=cards([5,5,6,6,8],prefix='a')
+            g.action(2,'play',['c0']);g.action(0,'pass')
+            if next_play:
+                g.action(1,'play',['b0'])
+                self.assertTrue(any(m['action']=='cross' for m in g.candidates(0)))
+            else:
+                g.action(1,'pass')
+                self.assertTrue(any(m['action']=='play' and m['ids']==['a4'] for m in g.candidates(0)))
+                self.assertFalse(any(m['action']=='cross' for m in g.candidates(0)))
+            self.assertEqual(g.snapshot()['priority_declined'],{0:1})
+
+    def test_declining_hook_keeps_urgent_gift_available(self):
+        g=table();g.interactive=True;g.turn=3
+        for seat in (1,2,3):g.players[seat]['bot']=True
+        g.hands[3]=cards([5,8],prefix='d');g.hands[2]=cards([5,5,9],prefix='c')
+        g.hands[1]=cards([6,7],prefix='b');g.hands[0]=cards([5,18,9],prefix='a')
+        g.action(3,'play',['d0']);g.action(2,'cross',['c0','c1']);g.action(0,'pass');g.action(1,'pass')
+        self.assertFalse(g.forced_pass())
+        g.action(0,'urgent',['a1','a2'],target=1)
+        self.assertTrue(g.forced_pass())
+
     def test_unanswered_cross_auto_passes_back_to_owner_or_partner(self):
         for finished in (False, True):
             g=table('basic');g.turn=0

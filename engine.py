@@ -240,6 +240,7 @@ class Game:
         self.negotiation = None
         self.interactive = interactive
         self.priority = None
+        self.priority_declined = {}
         self.claims = {}
         self.display_seen = set()
         self.round_complete = False
@@ -298,7 +299,7 @@ class Game:
 
     def snapshot(self):
         import copy
-        return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last', 'reported')}
+        return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'priority_declined', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last', 'reported')}
 
     def open_priority(self):
         self.priority = None
@@ -441,6 +442,7 @@ class Game:
             if not window or seat not in window[group] or group == 'bots' and self.priority_paused(): raise RuleError('没有轮到你响应的优先管牌机会。')
             if action == 'priority-decline':
                 self.claims.pop(seat, None)
+                self.priority_declined[seat] = self.play_number
                 window[group].remove(seat)
                 if not window['pending'] and not window['bots']: self.priority = None
                 return
@@ -571,6 +573,7 @@ class Game:
     def validate_play(self, seat, cards, action='play', wildcard=None):
         if not cards or any(c['rank'] == 18 for c in cards): raise RuleError('急牌请通过赠牌使用。')
         if action not in ('play', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'hui'): raise RuleError('未知出牌方式。')
+        if action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and self.priority_declined.get(seat) == self.play_number: raise RuleError('已放弃这次优先管牌。')
         if self.priority and any(not self.players[s].get('autoplay') for s in self.priority['pending']) and (self.players[seat].get('bot') or self.players[seat].get('autoplay')) and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('等待真人优先决定管牌。')
         old = self.last
         special = action != 'play'

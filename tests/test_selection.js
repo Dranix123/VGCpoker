@@ -72,3 +72,15 @@ test('leaving cancels a narration-delayed confirmation before resubmission',asyn
  await assert.rejects(vm.runInContext('requestMutation("action",{action:"confirm"},isCurrent)',ctx),/操作已取消/);
  assert.equal(calls,1);
 });
+
+test('API advertises audio only after the current page can acknowledge narration',async()=>{
+ const source=fs.readFileSync('public/app.js','utf8');
+ const fn=source.slice(source.indexOf('async function api('),source.indexOf('function markResponse('));
+ const sent=[],document={hidden:false};let unlocked=false;
+ const ctx={document,gameAudio:{canAnnounce:()=>unlocked&&!document.hidden},fetch:async(path,options)=>{sent.push(options.headers['X-Poker-Audio']);return {ok:true,json:async()=>({ok:true})};},JSON,Error};
+ vm.createContext(ctx);vm.runInContext(fn,ctx);
+ await vm.runInContext('api("state")',ctx);
+ unlocked=true;await vm.runInContext('api("action",{action:"confirm"})',ctx);
+ document.hidden=true;await vm.runInContext('api("state")',ctx);
+ assert.deepEqual(sent,['0','1','0']);
+});
