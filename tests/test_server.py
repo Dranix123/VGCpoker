@@ -869,7 +869,7 @@ class ServerIntegration(unittest.TestCase):
         self.request(client,'skill',{'skill':'balance'});self.request(client,'start',{})
         room=server.room_of(self.users[0]['id']);g=room['game'];c=g.core
         c.phase='play';c.pending=[];c.main=14;c.scores=[11,7,4,3]
-        for r in c.resources:r['turns']=2
+        for r in c.resources:r.update(turns=2,turnStart=2)
         for owner in (0,1,2):
             actor=next(s for s,o in enumerate(c.owners) if o==owner)
             c.hands[actor]=[];c.finish(actor)

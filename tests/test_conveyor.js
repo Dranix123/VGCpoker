@@ -6,12 +6,12 @@ function context(extra={}){
  const ctx={state:{user:{id:1},features:{conveyorSkills:skills}},esc:String,ranks:{3:'3',4:'4',5:'5',13:'K',14:'A',18:'急'},suits:{S:'♠',H:'♥',C:'♣',D:'♦'},selected:new Set(),roomHeading:()=>'',card:c=>`<button data-card="${c.id}">${c.rank}</button>`,document:{addEventListener:()=>{}},...extra};
  vm.createContext(ctx);vm.runInContext(source,ctx);return ctx;
 }
-function table(spectator=false,autoplay=false,extra={}){
+function table(spectator=false,autoplay=false,extra={},conveyorExtra={}){
  const players=Array.from({length:4},(_,i)=>({id:i+1,name:'玩家'+i,skill:i===0?'twins':'balance',autoplay:i===0&&autoplay}));
  const actors=Array.from({length:5},(_,i)=>({id:i,owner:i<2?0:i-1,name:'分身'+i,count:2,resources:{},skill:i<2?'twins':'balance'}));
  const c={actor:0,turnActor:1,skill:'twins',actors,pile:50,discard:4,resources:{money:0,blood:0},zone:[],boundHands:[],choice:null};
  const r={seat:spectator?null:0,players,spectator},g={conveyor:c,phase:'play',finished:[],turn:0,hand:[{id:'own',rank:4,suit:'S'}],scores:[0,0,0,0],log:[],main:3};
- Object.assign(g,extra);const ctx=context({r,g});return vm.runInContext('conveyorTable(r,g)',ctx);
+ Object.assign(c,conveyorExtra);Object.assign(g,extra);const ctx=context({r,g});return vm.runInContext('conveyorTable(r,g)',ctx);
 }
 test('conveyor creation exposes opt-in DLC, default recycling and skill bans',()=>{
  const html=vm.runInContext('conveyorCreateOptions()',context());
@@ -26,6 +26,11 @@ test('four visible seats render five independent actor play areas',()=>{
  assert.ok(!html.includes('第 1 手'));assert.ok(!html.includes('第 2 手'));
  assert.ok(html.includes('手牌 A'));assert.ok(html.includes('手牌 B'));
  assert.ok(html.includes('出牌中...'));
+});
+test('opening hand selection is marked as selection rather than confirmation',()=>{
+ const html=table(false,false,{phase:'draft',reveals:[],ready:[]});
+ assert.ok(html.includes('选牌中...'));
+ assert.ok(!html.includes('等待确认...'));
 });
 test('conveyor spectators get no hand, target choices or gameplay controls',()=>{
  const html=table(true);
@@ -174,13 +179,18 @@ test('new public marks and optional skill discards are visible and validated',()
 });
 
 test('conveyor displays individual grades and first-place-only victory',()=>{
- const html=table(false,false,{phase:'over',winner:[0],finished:[0,2,1],scores:[2,0,1,0],nextMain:5});
+ const html=table(false,false,{phase:'over',winner:[0],finished:[0,2,1],scores:[2,0,1,0],nextMain:5},{remainingActorHands:{4:[{rank:4,suit:'H'}]}});
  assert.ok(!html.includes('同队'));assert.ok(!html.includes('对手'));
- assert.ok(html.includes('等级 5'));assert.ok(html.includes('等级 4'));
+ assert.ok(html.includes('<td>5（不变）</td>'));assert.ok(html.includes('<td>4（不变）</td>'));
  assert.ok(html.includes('conveyor-standings'));
  assert.ok(html.includes('玩家0 获胜'));
  assert.ok(!html.includes('玩家0、玩家2 获胜'));
  assert.ok(html.includes('（不变）'));
+ assert.ok(!html.includes('class="board"'));
+ assert.ok(!html.includes('class="hand-area"'));
+ assert.ok(html.includes('settlement-hands'));
+ assert.ok(html.includes('剩余 1 张'));assert.ok(html.includes('settlement-card red'));
+ assert.equal((html.match(/class="settlement-hand"/g)||[]).length,1);
 });
 test('ending single-player practice does not invent a winner or grade reward',()=>{
  const html=table(false,false,{phase:'over',winner:[],finished:[],scores:[0,0,0,0],nextMain:3});

@@ -30,7 +30,7 @@ class ConveyorRules(unittest.TestCase):
         c.pile=[dict(id='pile-'+str(i),rank=7+i%8,suit='C') for i in range(40)]
         c.discard=[];c.zones=[[] for _ in c.hands];c.all_cards={x['id']:x for x in cards+c.pile}
         c.seat_plays=[None for _ in c.hands];c.initial_counts=list(map(len,c.hands))
-        for resource in c.resources: resource['turns']=2
+        for resource in c.resources: resource.update(turns=2,turnStart=2)
         c.priority=None;c.claims={};c.start_turn=None;c.lead_key=None
         return c
 
@@ -268,7 +268,7 @@ class ConveyorRules(unittest.TestCase):
 
     def test_twins_share_one_individual_grade_and_one_finish_place(self):
         g=self.game('twins');c=g.core;c.phase='play';c.pending=[]
-        for r in c.resources:r['turns']=2
+        for r in c.resources:r.update(turns=2,turnStart=2)
         for owner in (0,1,2):
             actor=next(s for s,o in enumerate(c.owners) if o==owner)
             c.take(actor,c.hands[actor][:]);c.finish(actor)
@@ -541,6 +541,25 @@ class ConveyorRules(unittest.TestCase):
         self.assertNotIn(0,g.finished);self.assertEqual(len(c.hands[0]),1)
         self.assertNotIn('earlyRefill',c.resources[0])
 
+    def test_second_turn_pending_discard_cannot_finish_before_third_turn(self):
+        g=self.game('blood');c=self.table(g,[[7,7,7,8],[9,10],[11,12],[13,14]])
+        c.resources[0].update(turns=1,blood=1)
+        c.enter_turn()
+        g.action(0,'auto',[card['id'] for card in c.hands[0][:3]])
+        self.assertEqual(c.resources[0]['turns'],2)
+        self.assertEqual(c.pending[0]['kind'],'discard')
+        before=len(c.pile)
+        g.action(0,'choice',[card['id'] for card in c.hands[0]])
+        self.assertNotIn(0,c.finished)
+        self.assertEqual(c.scores,[0,0,0,0])
+        self.assertEqual(len(c.hands[0]),1)
+        self.assertEqual(len(c.pile),before-1)
+        c.turn=0;c.start_turn=None;c.last=None;c.priority=None;c.claims={}
+        c.enter_turn()
+        g.action(0,'auto',[c.hands[0][0]['id']])
+        self.assertIn(0,c.finished)
+        self.assertEqual(c.scores,[2,0,0,0])
+
     def test_ascend_marks_change_future_actual_values(self):
         g=self.game('ascend');c=self.table(g,[[15,4,6],[7],[8],[9]])
         g.action(0,'skill',[c.hands[0][0]['id']]);self.assertEqual(c.resources[0]['boost'],1)
@@ -733,6 +752,11 @@ class ConveyorRules(unittest.TestCase):
         g=ConveyorGame('conveyor',players,{},previous={'first':1,'main':4,'scores':[0,1]})
         self.assertEqual(g.core.deal_counts,[7,8,10,9])
         self.assertEqual(g.core.keep_counts,[7,6,8,6])
+        for owner in range(4):
+            actor=g.actor(owner)
+            g.action(owner,'keep',[card['id'] for card in g.core.hands[actor][:g.core.keep_counts[actor]]])
+        self.assertEqual(g.phase,'setup')
+        self.assertEqual(g.log[-1],'选牌完成，请确认开始。')
 
     def test_all_ten_suit_pairs_resolve_and_clear(self):
         for pair in itertools.combinations_with_replacement('SHCD',2):

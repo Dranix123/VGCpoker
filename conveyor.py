@@ -35,7 +35,7 @@ class ConveyorRound(Game):
         self.urgent_uses = {}
         self.hands = [[] for _ in players]
         self.zones = [[] for _ in players]
-        self.resources = [dict(money=0, blood=0, boost=0, ban=0, shield=0, turns=0, debt=0, suits=[], bloodReady=False, skillBan=0, prison=0, inspire=0, cycleGains=0) for _ in players]
+        self.resources = [dict(money=0, blood=0, boost=0, ban=0, shield=0, turns=0, turnStart=0, debt=0, suits=[], bloodReady=False, skillBan=0, prison=0, inspire=0, cycleGains=0) for _ in players]
         self.pending = []
         self.bonds = []
         self.complete_owners = []
@@ -234,7 +234,8 @@ class ConveyorRound(Game):
 
     def finish(self, seat):
         if self.phase == 'over' or self.defer_finish or self.hands[seat] or self.zones[seat] or seat in self.finished: return
-        if self.resources[seat]['turns'] < 2:
+        # Pending choices resolve after turns advances; the third turn must actually have started.
+        if min(self.resources[seat]['turns'], self.resources[seat]['turnStart']) < 2:
             self.gain(seat, 1, end=True)
             self.resources[seat]['earlyRefill'] = True
             return
@@ -473,6 +474,7 @@ class ConveyorRound(Game):
         if self.phase != 'play' or self.start_turn == (self.turn, self.resources[self.turn]['turns']): return
         self.start_turn = (self.turn, self.resources[self.turn]['turns'])
         seat = self.turn
+        self.resources[seat]['turnStart'] = self.resources[seat]['turns']
         self.resources[seat]['cycleGains'] = 0
         if not self.hands[seat] and not self.zones[seat]:
             self.finish(seat)
@@ -750,7 +752,7 @@ class ConveyorRound(Game):
         if primary <= self.drafted and not self.pending:
             self.phase = 'setup'
             self.initial_counts = [len(h) for h in self.hands]
-            self.announce('选牌完成，可亮黑桃3并确认开始。')
+            self.announce('选牌完成，可亮黑桃3并确认开始。' if self.first is None else '选牌完成，请确认开始。')
 
     def urgent(self, seat, ids, **args):
         chosen = self.select(seat, ids)
