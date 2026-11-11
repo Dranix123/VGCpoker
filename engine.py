@@ -234,6 +234,7 @@ class Game:
         self.promotions, self.reveals, self.rps = {}, [], {}
         self.urgent_last = []
         self.reported = set()
+        self.report_counts = {}
         self.phase = 'bid' if mode == 'landlord' else 'setup'
         self.winner = None
         self.history = None
@@ -299,7 +300,7 @@ class Game:
 
     def snapshot(self):
         import copy
-        return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'priority_declined', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last', 'reported')}
+        return {k: copy.deepcopy(getattr(self, k)) for k in ('hands', 'turn', 'last', 'last_seat', 'seat_plays', 'play_number', 'display_seen', 'priority', 'priority_declined', 'passes', 'finished', 'hui_used', 'phase', 'winner', 'scores', 'main', 'log', 'urgent_last', 'reported', 'report_counts')}
 
     def open_priority(self):
         self.priority = None
@@ -640,7 +641,7 @@ class Game:
         n = len(self.hands[seat])
         if self.mode != 'landlord' and n <= 10 and seat not in self.reported:
             self.reported.add(seat)
-            self.announce('爆牌 · %s剩余%d张。' % (self.players[seat]['name'], n))
+            self.report_counts[seat] = n
 
     def finish(self, seat):
         if not self.hands[seat] and seat not in self.finished:

@@ -566,6 +566,36 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(self.request(second, 'state')[1]['room']['bubbles'], {})
         self.assertEqual(self.request(self.clients[2], 'chat', {'text': '悲'})[0], 400)
 
+    def test_show_hand_is_public_live_and_resets_next_match(self):
+        first,second=self.clients[:2]
+        _,data=self.request(first,'create',{'mode':'standard'})
+        code=data['room']['code'];self.request(second,'join',{'code':code})
+        for _ in range(2):self.request(first,'bot',{})
+        self.request(first,'start',{});room=server.ROOMS[code];g=room['game']
+        self.assertEqual(self.request(first,'show-hand',{})[0],200)
+        g.phase='play';g.turn=1
+        status,data=self.request(first,'show-hand',{})
+        self.assertEqual(status,200)
+        public=self.request(second,'state')[1]['room']['game']['publicHands']
+        self.assertEqual([h['owner'] for h in public],[0])
+        self.assertEqual(public[0]['cards'],g.hands[0])
+        g.hands[0].pop()
+        self.assertEqual(len(server.room_view(room,None)['game']['publicHands'][0]['cards']),len(g.hands[0]))
+        room['matchId']='next-match'
+        self.assertEqual(server.room_view(room,None)['game']['publicHands'],[])
+
+    def test_report_uses_shared_bubble_once_instead_of_log(self):
+        first=self.clients[0]
+        _,data=self.request(first,'create',{'mode':'standard','single':True})
+        for _ in range(3):self.request(first,'bot',{})
+        self.request(first,'start',{});room=server.room_of(self.users[0]['id']);g=room['game']
+        g.phase='play';g.turn=0;g.last=None;g.priority=None
+        g.hands[0]=[dict(id='report-'+str(i),rank=4,suit='H') for i in range(11)]
+        server.perform_game_action(room,0,dict(action='auto',ids=['report-0']))
+        self.assertEqual(server.room_view(room,None)['bubbles']['0'],'我只剩10张牌了')
+        self.assertFalse(any('爆牌' in line for line in g.log))
+        g.report(0);self.assertEqual(g.report_counts[0],10)
+
     def test_extended_airplane_uses_recorded_voice(self):
         players = [{'id': i, 'name': str(i)} for i in range(4)]
         for wings, voice in (([], '飞机'), ([8, 9, 10, 11], '飞机带单'), ([8, 8, 9, 9, 10, 10, 11, 11], '飞机带对')):

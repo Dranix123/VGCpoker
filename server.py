@@ -148,7 +148,11 @@ def perform_game_action(room, seat, move):
     if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
     if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
     previous = g.last_voice_play; old_phase = g.phase
+    reported = set(g.reported) if g.mode != 'conveyor' else set()
     g.action(seat, **move)
+    if g.mode != 'conveyor':
+        for reporter in g.reported - reported:
+            room.setdefault('bubbles', {})[room['players'][reporter]['id']] = dict(text='我只剩%d张牌了' % g.report_counts[reporter], expires=time.time()+6)
     room.pop('idleWait', None)
     action = move['action']; items = []
     labels = {'pass': 'pass', 'priority-decline': 'pass', 'bid': 'bid-' + str(move.get('value', 0)), 'reveal': 'reveal', 'confirm': 'confirm', 'rps': 'rps', 'promote': 'promote', 'urgent': 'urgent', 'auto': 'urgent', 'tribute-pick': 'tribute-pick', 'tribute-return': 'tribute-return', 'accept': 'accept', 'reject': 'reject', 'negotiate': 'negotiate'}
@@ -206,6 +210,14 @@ def room_view(room, uid):
     spectator = seat is None
     game = room['game'].view(seat) if room.get('game') else None
     if game:
+        game['publicHands'] = []
+        if room.get('shownMatch') == room.get('matchId'):
+            g = room['game']; c = g.core if g.mode == 'conveyor' else g
+            for actor, hand in enumerate(c.hands):
+                owner = c.owners[actor] if g.mode == 'conveyor' else actor
+                if owner in room.get('shownSeats', []):
+                    cards = [{**card, 'effective':c.effective_rank(actor, card['rank'])} for card in hand] if g.mode == 'conveyor' else hand
+                    game['publicHands'].append(dict(owner=owner, actor=actor, cards=cards))
         game['confirmTurn'] = confirmation_seat(room)
         clock = room.get('priorityClock')
         game['priorityClock'] = {'seat':clock['seat'], 'actor':clock['actor'], 'remaining':max(0, __import__('math').ceil(clock['expires']-clock.get('pausedAt', time.time())))} if clock else None
@@ -391,7 +403,7 @@ class Handler(BaseHTTPRequestHandler):
         if not file.is_relative_to(ROOT / 'public') or not file.is_file(): return self.respond({'error': '页面不存在。'}, 404)
         content = file.read_bytes()
         if file.name == 'index.html':
-            for asset in ('app.js', 'conveyor.js', 'audio.js', 'style.css'):
+            for asset in ('app.js', 'conveyor.js', 'audio.js', 'style.css', 'splashes.js'):
                 version = hashlib.sha256((ROOT / 'public' / asset).read_bytes()).hexdigest()[:12]
                 content = content.replace(('/' + asset + '"').encode(), ('/' + asset + '?v=' + version + '"').encode())
         self.send_response(200)
@@ -580,6 +592,13 @@ class Handler(BaseHTTPRequestHandler):
                 room.get('idleWait', {}).pop(seat, None)
                 room['revision'] += 1
                 return self.respond({'ok': True, 'room': room_view(room, uid)})
+            if path == '/api/show-hand':
+                if not room.get('game') or room['game'].phase == 'over': raise RuleError('请在对局中明牌。')
+                if room.get('shownMatch') != room.get('matchId'):
+                    room['shownMatch'] = room.get('matchId'); room['shownSeats'] = []
+                if seat not in room['shownSeats']: room['shownSeats'].append(seat)
+                room['revision'] += 1
+                return self.respond({'ok':True, 'room':room_view(room, uid)})
             if path == '/api/chat':
                 text = b.get('text')
                 if text not in CHAT_PHRASES: raise RuleError('请选择预设发言。')

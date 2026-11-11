@@ -4,7 +4,7 @@ const source=fs.readFileSync('public/conveyor.js','utf8');
 function context(extra={}){
  const skills=[{id:'twins',name:'如影随形',group:3,deal:14,keep:14,text:'两个独立玩家'},{id:'balance',name:'转换',group:0,deal:7,keep:7,text:'弃置再发牌'}];
  const ctx={state:{user:{id:1},features:{conveyorSkills:skills}},esc:String,ranks:{3:'3',4:'4',5:'5',13:'K',14:'A',18:'急'},suits:{S:'♠',H:'♥',C:'♣',D:'♦'},selected:new Set(),roomHeading:()=>'',card:c=>`<button data-card="${c.id}">${c.rank}</button>`,document:{addEventListener:()=>{}},...extra};
- vm.createContext(ctx);vm.runInContext(source,ctx);return ctx;
+ vm.createContext(ctx);const app=fs.readFileSync('public/app.js','utf8');vm.runInContext(app.slice(app.indexOf('function showHandButton'),app.indexOf('function showAuth(')),ctx);vm.runInContext(source,ctx);return ctx;
 }
 function table(spectator=false,autoplay=false,extra={},conveyorExtra={}){
  const players=Array.from({length:4},(_,i)=>({id:i+1,name:'玩家'+i,skill:i===0?'twins':'balance',autoplay:i===0&&autoplay}));
