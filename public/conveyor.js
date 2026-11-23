@@ -20,8 +20,8 @@ function conveyorWaiting(r){
   const skills=r.skills.filter(s=>s.group===Number(group));
   if(!skills.length)return '';
   return `<section class="skill-group"><h3>${name}</h3><div class="skill-grid">${skills.map(s=>{
-   const chosen=mine===s.id;
-   return `<button class="skill-card ${chosen?'chosen':''}" data-action="cv-skill-info" data-skill="${s.id}" aria-pressed="${chosen}"><strong>${s.name}</strong><small>${s.deal} 选 ${s.keep} · ${conveyorActiveSkills.has(s.id)?'主动技能':'按时机生效'}</small><span>${chosen?'已选择 ✓':'查看说明 →'}</span></button>`;
+   const chosen=mine===s.id, taken=r.players.some((p,i)=>i!==r.seat&&!p.bot&&p.skill===s.id);
+   return `<button class="skill-card ${chosen?'chosen':''}" data-action="cv-skill-info" data-skill="${s.id}" aria-pressed="${chosen}" ${taken?'disabled':''}><strong>${s.name}</strong><small>${s.deal} 选 ${s.keep} · ${conveyorActiveSkills.has(s.id)?'主动技能':'按时机生效'}</small><span>${chosen?'已选择 ✓':taken?'已被选择':'查看说明 →'}</span></button>`;
   }).join('')}</div></section>`;
  }).join('');
  const players=Array.from({length:4},(_,i)=>{const p=r.players[i];return `<div class="waiting-seat"><div class="avatar">${p?.bot?'✦':esc(p?.name?.[0]||'＋')}</div><div><strong>${esc(p?.name||'等待加入')}</strong><small>${p?.skill?esc(conveyorSkill(p.skill)?.name):p?.bot?'开局随机选择':'待选择技能'}</small></div>${host&&p?.bot?`<button class="seat-remove" data-action="remove" data-seat="${i}" aria-label="移除${esc(p.name)}">×</button>`:''}</div>`;}).join('');
@@ -29,7 +29,7 @@ function conveyorWaiting(r){
 }
 function conveyorPlayCards(play,g){
  if(!play)return '';
- return `<div class="seat-play-label">${esc(play.kind)}</div><div class="seat-play-cards">${play.cards.map((c,i)=>`<span class="seat-play-card ${['H','D'].includes(c.suit)?'red':''}"><b>${ranks[c.rank]}</b><small>${suits[c.suit]||'○'}${play.ranks[i]!==c.rank?'→'+ranks[play.ranks[i]]:''}${play.suits?.[i]&&play.suits[i]!==c.suit?suits[play.suits[i]]||'○':''}</small></span>`).join('')}</div>`;
+ return `<div class="seat-play-label">${esc(play.kind)}</div><div class="seat-play-cards">${play.cards.map((c,i)=>`<span class="seat-play-card ${['H','D'].includes(c.suit)?'red':''}"><b>${ranks[c.rank]}</b><small>${suits[c.suit]||'○'}${play.ranks[i]!==c.rank?'→'+(play.ranks[i]===g.main?'主':'')+ranks[play.ranks[i]]:''}${play.suits?.[i]&&play.suits[i]!==c.suit?suits[play.suits[i]]||'○':''}</small></span>`).join('')}</div>`;
 }
 function conveyorResources(actor,label=''){
  const r=actor.resources,stats=[];
@@ -40,6 +40,8 @@ function conveyorResources(actor,label=''){
  if(r.prison)stats.push('禁锢 '+r.prison);
  if(r.inspire)stats.push('激励 '+r.inspire);
  if(r.skillBan)stats.push('技能封禁 '+r.skillBan+' 回合');
+ if(r.judgeBoost)stats.push('判定强化 +'+(r.judgeBoost*5));
+ if(r.judgeColor)stats.push('判定同色 '+r.judgeColor+' 枚');
  if(r.debt)stats.push('奉还 '+r.debt);
  if(r.shield)stats.push('免发 '+r.shield+' 回合');
  if(r.ban)stats.push('禁手 '+r.ban+' 回合');
@@ -51,7 +53,7 @@ function conveyorResources(actor,label=''){
 }
 function conveyorTable(r,g){
  const c=g.conveyor, me=r.seat??0, actor=c.actors.find(a=>a.id===c.actor), own=r.players[me], controlled=!r.spectator&&!own.autoplay&&!g.finished.includes(me), q=c.choice;
- const activeSkill=conveyorActiveSkills.has(c.skill),scavenging=g.phase==='play'&&c.skill==='scavenge'&&c.resources.turns<2;
+ const activeSkill=conveyorActiveSkills.has(c.skill)&&!c.resources?.skillBan,scavenging=g.phase==='play'&&c.skill==='scavenge'&&c.resources.turns<2;
  const available=controlled&&g.phase==='play'&&!c.waiting&&!g.finished.includes(me);
  const positions=['bottom','left','top','right'];
  const waitingActor=c.waitingActor??(c.waiting?c.actors.find(a=>a.name===c.waiting)?.id:null);
@@ -80,7 +82,7 @@ function conveyorChoice(q,c){
  const cards=q.cards||[];
  const cardChoice=cards.length?`<div class="choice-cards">${cards.map(x=>`<button type="button" aria-pressed="${conveyorChosen.includes(x.id)}" class="choice-card ${conveyorChosen.includes(x.id)?'chosen':''} ${['H','D'].includes(x.suit)||x.rank===17?'red':''}" data-action="cv-choice-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]||'○'}${q.kind==='stars'&&conveyorChosen.includes(x.id)?`<small class="choice-order" aria-hidden="true">${conveyorChosen.indexOf(x.id)+1}</small>`:''}</button>`).join('')}</div><p>${conveyorChosen.map(id=>{const x=cards.find(x=>x.id===id);return ranks[x.rank]+(suits[x.suit]||'○');}).join(q.kind==='stars'?' → ':' · ')}</p>`:'<p>需要选牌时，请在手牌中选择。</p>';
  let extra='';
- if(['pursuit','trade-extra','deal'].includes(q.kind))extra=`<label>获得张数<select name="value">${Array.from({length:(q.maximum||10)+(q.kind==='pursuit'?1:0)},(_,i)=>q.kind==='pursuit'?i:i+1).map(n=>`<option value="${n}">${n}</option>`).join('')}</select></label>`;
+ if(['pursuit','deal'].includes(q.kind))extra=`<label>获得张数<select name="value">${Array.from({length:(q.maximum||10)+(q.kind==='pursuit'?1:0)},(_,i)=>q.kind==='pursuit'?i:i+1).map(n=>`<option value="${n}">${n}</option>`).join('')}</select></label>`;
  if(q.kind==='deal'&&['redirect','request','trade'].includes(c.skill))extra+=`<label>方式<select name="effect"><option value="normal">普通发牌</option><option value="${c.skill==='trade'?'judge':c.skill}">${c.skill==='trade'?'判定':c.skill==='redirect'?'转给别人':'向其他每人窃取两张'}</option></select></label>${c.skill==='redirect'?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}`;
  if(q.kind==='bond')extra=`<label>目标<select name="target">${q.required?'':'<option value="">保持现状</option>'}${conveyorTargets(c)}</select></label>`;
  if(q.kind==='suitmark')extra=`<label>烙印花色<select name="suit">${q.suits.map(s=>`<option value="${s}">${suits[s]}</option>`).join('')}</select></label>`;
@@ -108,17 +110,18 @@ function conveyorAfterRender(){
 async function conveyorPlay(){
  const g=state.room.game,c=g.conveyor;
  if(urgentSelected()){
-  if(c.actor!==c.turnActor){toast('急牌需轮到当前这手才能使用。');return;}
+  if(c.waiting||g.negotiation||c.resources?.ban){toast(c.waiting||g.negotiation?'请先完成当前选择。':'禁手期间不能使用急牌。');return;}
   const wild=wildcardPayload(),urgentIds=g.hand.filter(x=>selected.has(x.id)&&((x.effective??x.rank)===18||x.rank===14&&(x.suit==='S'||c.skill==='wild')&&(typeof wild==='object'?wildRank(wild[x.id])===18:wild===18))).map(x=>x.id);
   if(urgentIds.length!==1){toast('每次选择一张急牌。');return;}
   const uses=g.hand.find(x=>x.id===urgentIds[0]).urgentUses||0,forced=uses>=3;
-  showModal('cv-urgent',`<h2>急牌</h2><p>此牌已使用 ${uses} 次${forced?'，本次必须轮换并销毁':'；不废弃使用最多三次'}。</p><form id="cv-urgent-form" class="form">${urgentIds.map(id=>`<input type="hidden" name="urgentIds" value="${esc(id)}">`).join('')}<label>效果<select name="effect">${[['draw','目标获得两张'],['discard','弃置零至两张，至少留一张'],['ban','目标禁手两回合'],['shield','自己三回合免发牌'],['maximum','目标弃最大牌（剩一张无效）'],['rotate','轮换手牌并销毁急牌']].map(([effect,text])=>`<option value="${effect}" ${effect==='rotate'&&forced?'selected':''} ${forced&&effect!=='rotate'||effect==='discard'&&g.hand.length===1?'disabled':''}>${text}</option>`).join('')}</select></label><div class="urgent-discard-picker" hidden><p class="urgent-discard-count">选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!urgentIds.includes(x.id)&&(x.effective??x.rank)!==18).map(x=>`<label class="urgent-discard-card ${['H','D'].includes(x.suit)?'red':''}"><span>${ranks[x.rank]}${suits[x.suit]}</span><input type="checkbox" name="discardIds" value="${esc(x.id)}" ${selected.has(x.id)?'checked':''}></label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);conveyorUrgentUpdate($('#cv-urgent-form'));return;
+  showModal('cv-urgent',`<h2>急牌</h2><p>此牌已使用 ${uses} 次${forced?'，本次必须轮换并销毁':'；不废弃使用最多三次'}。</p><form id="cv-urgent-form" class="form">${urgentIds.map(id=>`<input type="hidden" name="urgentIds" value="${esc(id)}">`).join('')}<label>效果<select name="effect">${[['draw','目标获得两张'],['discard','弃置零至两张，至少留一张'],['ban','目标禁手两回合'],['shield','自己三回合免发牌'],['maximum','目标弃最大牌（剩一张无效）'],['silence','封禁目标技能三回合'],['judge-boost','判定点数强化'],['judge-color','判定花色强化'],['rotate','轮换手牌并销毁急牌']].map(([effect,text])=>`<option value="${effect}" ${effect==='rotate'&&forced?'selected':''} ${forced&&effect!=='rotate'||effect==='discard'&&g.hand.length===1?'disabled':''}>${text}</option>`).join('')}</select></label><div class="urgent-discard-picker" hidden><p class="urgent-discard-count">选择要弃的牌（最多两张，可不选）</p><div class="choice-cards">${g.hand.filter(x=>!urgentIds.includes(x.id)&&(x.effective??x.rank)!==18).map(x=>`<label class="urgent-discard-card ${['H','D'].includes(x.suit)?'red':''}"><span>${ranks[x.rank]}${suits[x.suit]}</span><input type="checkbox" name="discardIds" value="${esc(x.id)}" ${selected.has(x.id)?'checked':''}></label>`).join('')}</div></div><label data-urgent-target>目标<select name="target">${conveyorTargets(c,false)}</select></label><label data-urgent-direction hidden>轮换方向<select name="direction"><option value="counterclockwise">逆时针</option><option value="clockwise">顺时针</option></select></label><p class="form-error"></p><button class="primary">使用急牌</button></form>`);conveyorUrgentUpdate($('#cv-urgent-form'));return;
  }
  const args={ids:[...selected],actor:c.actor};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;if(conveyorDouble&&selected.has(conveyorDouble.id))args.double=conveyorDouble;
  if(await gameAction('auto',args)){conveyorDouble=null;wildcard='';wildcardMap={};resetConveyorSelection();renderedKey='';render();}
 }
 async function conveyorUseSkill(){
  const c=state.room.game.conveyor;
+ if(c.resources?.skillBan){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p>技能封禁 · 剩余 ${c.resources.skillBan} 回合</p><p class="skill-description">${esc(s.text)}</p><button class="secondary" data-action="close">关闭</button>`);return;}
  if(['scavenge','bond'].includes(c.skill)){await gameAction('skill',{actor:c.actor});resetConveyorSelection();return;}
  const active={balance:'转换',gift:'恩赐',pressure:'施压',ascend:'重铸·至高强化',seven:'重铸·七音',judgment:'投骰',trade:'献祭',bond:'灵魂绑定'};
  if(!active[c.skill]){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p class="skill-description">${esc(s.text)}</p><p>对应时机会提供操作。</p><button class="secondary" data-action="close">关闭</button>`);return;}
@@ -148,7 +151,7 @@ document.addEventListener('click',async e=>{
 function conveyorUrgentUpdate(form){
  const effect=form.elements.effect.value;
  form.querySelector('.urgent-discard-picker').hidden=effect!=='discard';
- form.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum'].includes(effect);
+ form.querySelector('[data-urgent-target]').hidden=!['draw','ban','maximum','silence'].includes(effect);
  form.querySelector('[data-urgent-direction]').hidden=effect!=='rotate';
  const boxes=[...form.querySelectorAll('[name=discardIds]')],count=boxes.filter(x=>x.checked).length,discard=form.elements.effect.value==='discard',limit=Math.min(2,Math.max(0,state.room.game.hand.length-2));
  form.querySelector('.urgent-discard-count').textContent='已选 '+count+' / '+limit+' 张，至少留一张手牌';
@@ -179,4 +182,4 @@ document.addEventListener('submit',async e=>{
  }catch(error){const target=f.querySelector('.form-error');if(target)target.textContent=error.message;else toast(error.message);}
 });
 
-function conveyorRules(){showModal('cv-rules',`<h2>传送带</h2><p>四人各自为战，固定 110 张牌，不使用爆牌、进贡和升变，沿用 4A4A4 标准牌型。每人独立记录等级，第一名升两级、第二名升一级，其他人不变；下一局使用第一名的主牌。打到只剩一人时结算，不按对家提前结束。行动后自动发一张；前两次轮到自己时，出空仍继续发一张；第三次起走完手牌与未出展示区才可获胜。只有使用急牌轮换手牌时，才将已出牌放回牌堆底。</p><p>比较值：J=11、Q=12、K=13、A=14、2=15、主牌=16、小王=17、大王=18。主牌用于顺子时仍按原点数；判定不算真实出牌，不触发出牌技能。</p><p>急牌不占普通出牌：可加牌、弃零至两张、禁手、免发牌、弃最大牌或按指定方向轮换手牌。每张急牌独立计数：前三次不废弃使用后回牌堆底，第四次必须轮换并销毁；也可提前轮换销毁。轮换回收已出牌中的非急牌，未使用的急牌不参与交换。弃牌效果至少留一张，弃最大牌对仅剩一张的目标无效。</p>${(state.room.skills||[]).map(s=>`<details><summary>${esc(s.name)} · ${s.deal} 选 ${s.keep}</summary><p class="skill-description">${esc(s.text)}</p></details>`).join('')}`);}
+function conveyorRules(){showModal('cv-rules',`<h2>传送带</h2><p>四人各自为战，固定 110 张牌，不使用爆牌、进贡和升变，沿用 4A4A4 标准牌型。每人独立记录等级，第一名升两级、第二名升一级，其他人不变；下一局使用第一名的主牌。打到只剩一人时结算，不按对家提前结束。行动后自动发一张；前两次轮到自己时，出空仍继续发一张；第三次起走完手牌与未出展示区才可获胜。只有使用急牌轮换手牌时，才将已出牌放回牌堆底。</p><p>技能不可重复。出牌、不出或被跳过后进入抽牌阶段，默认抽一张，随后扣除已生效的回合效果。插入勾、点、叉也算一次行动。前两次出空仍抽一张，第三次起清空手牌和未出展示区后即走完。</p><p>2=15、主牌=16；仅在判定时小王=20、大王=25。主牌参与顺子时按原点数。判定牌弃置，不算真实出牌。</p><p>正式对局中，急牌可以在别人的出牌阶段插入，但不能打断选牌或判定。急牌可加牌、弃牌、禁手、免抽、弃最大牌、封禁技能三回合、强化判定，或轮换并销毁。每张急牌最多不废弃使用三次，第四次必须轮换。封禁只暂停技能效果，印记保留。</p>${(state.room.skills||[]).map(s=>`<details><summary>${esc(s.name)} · ${s.deal} 选 ${s.keep}</summary><p class="skill-description">${esc(s.text)}</p></details>`).join('')}`);}

@@ -859,38 +859,33 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(len(data['room']['game']['hand']),7)
         self.assertTrue(server.audio_waiting(room))
 
-    def test_conveyor_skills_can_repeat_but_cannot_select_disabled(self):
+    def test_conveyor_rejects_taken_or_disabled_skills(self):
         _,data=self.request(self.clients[0],'create',{'mode':'conveyor','options':{'disabledSkills':['balance']}})
         code=data['room']['code']
         self.request(self.clients[1],'join',{'code':code})
         self.assertEqual(self.request(self.clients[0],'skill',{'skill':'balance'})[0],400)
         self.assertEqual(self.request(self.clients[0],'skill',{'skill':'anchor'})[0],200)
-        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],200)
+        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],400)
         self.assertEqual(self.request(self.clients[1],'skill',{'skill':'leap'})[0],200)
         self.assertEqual(self.request(self.clients[1],'skill',{'skill':'twins'})[0],400)
 
-    def test_conveyor_can_start_with_only_one_enabled_skill(self):
+    def test_conveyor_requires_at_least_four_enabled_skills(self):
         disabled = [key for key in server.SKILLS if key != 'balance']
         status, data = self.request(self.clients[0], 'create', {'mode':'conveyor', 'options':{'disabledSkills':disabled}})
-        self.assertEqual(status, 200, data)
-        code = data['room']['code']
-        for client in self.clients[1:]: self.assertEqual(self.request(client, 'join', {'code':code})[0], 200)
-        for client in self.clients: self.assertEqual(self.request(client, 'skill', {'skill':'balance'})[0], 200)
-        status, data = self.request(self.clients[0], 'start', {})
-        self.assertEqual(status, 200, data)
-        self.assertEqual([p['skill'] for p in data['room']['players']], ['balance'] * 4)
+        self.assertEqual(status, 400, data)
 
-    def test_conveyor_ultimate_dlc_is_opt_in_and_repeated_skills_start(self):
+    def test_conveyor_ultimate_dlc_is_opt_in_and_distinct_skills_start(self):
         client=self.clients[0]
         _,data=self.request(client,'create',{'mode':'conveyor','options':{'skillDlc':[5]}})
         code=data['room']['code']
         self.assertEqual(len(data['room']['skills']),13)
         for other in self.clients[1:]:self.request(other,'join',{'code':code})
-        for other in self.clients:self.assertEqual(self.request(other,'skill',{'skill':'encourage'})[0],200)
+        keys=['encourage','shadow','equilibrium','imprison']
+        for other,key in zip(self.clients,keys):self.assertEqual(self.request(other,'skill',{'skill':key})[0],200)
         status,data=self.request(client,'start',{})
         self.assertEqual(status,200,data)
-        self.assertEqual([p['skill'] for p in data['room']['players']],['encourage']*4)
-        self.assertEqual([a['count'] for a in data['room']['game']['conveyor']['actors']],[12]*4)
+        self.assertEqual([p['skill'] for p in data['room']['players']],keys)
+        self.assertEqual([a['count'] for a in data['room']['game']['conveyor']['actors']],[12,8,12,8])
 
     def test_conveyor_new_round_resets_all_four_personal_grades(self):
         client=self.clients[0]

@@ -5,6 +5,11 @@ from collections import Counter
 
 RANKS = list(range(3, 16))
 LABELS = {**{n: str(n) for n in range(3, 11)}, 11: 'J', 12: 'Q', 13: 'K', 14: 'A', 15: '2', 16: '小王', 17: '大王', 18: '急'}
+PLAIN_RANK_OFFSET = 20
+LABELS.update({n + PLAIN_RANK_OFFSET: LABELS[n] for n in RANKS})
+
+def printed_rank(rank):
+    return rank - PLAIN_RANK_OFFSET if rank > PLAIN_RANK_OFFSET else rank
 MODES = {'landlord': 3, 'standard': 4, 'trio': 3, 'basic': 4, 'conveyor': 4}
 
 def deck(mode, dlc=False):
@@ -34,7 +39,7 @@ def deck(mode, dlc=False):
 
 def strength(rank, main=3, mode='standard'):
     if mode != 'landlord' and rank == main: return 15.5
-    return rank
+    return printed_rank(rank)
 
 def classify(ranks, mode='landlord', main=3, single_wings=False, pattern=(4, 14)):
     n = len(ranks)
@@ -49,7 +54,7 @@ def classify(ranks, mode='landlord', main=3, single_wings=False, pattern=(4, 14)
         a, four = counts[pattern[1]], counts[pattern[0]]
         if a >= (1 if mode == 'basic' else 2) and four >= (2 if mode == 'basic' else 3) and four > a:
             return result('4A4', a, 100 + (n if mode == 'basic' else 2 * a + 1))
-    if all(r >= 16 for r in keys):
+    if all(r in (16, 17) for r in keys):
         if mode == 'landlord' and n == 2 and keys == [16, 17]: return result('王炸', 0, 2)
         if mode != 'landlord' and n >= 2:
             return result('王炸', 0, {2: 4.5, 3: 6.5, 4: 8.5}.get(n, n + .5))
@@ -71,6 +76,9 @@ def classify(ranks, mode='landlord', main=3, single_wings=False, pattern=(4, 14)
             units = '两' if paired and count == 2 else numerals.get(count, str(count))
             kind = numerals.get(body, str(body)) + '带' + units + ('对' if paired else '')
             return result(kind, strength(rank, main, mode))
+    if mode != 'landlord':
+        counts = Counter(map(printed_rank, ranks))
+        keys, vals = sorted(counts), sorted(counts.values())
     sequence = keys[-1] < 15 and keys == list(range(keys[0], keys[-1] + 1))
     if sequence and len(set(vals)) == 1:
         v = vals[0]
@@ -555,19 +563,27 @@ class Game:
 
     def body_groups(self, combo):
         kind = combo.get('baseKind', combo['kind'])
+        mapped = list(map(printed_rank, combo['ranks']))
         if combo.get('bodyWidth'):
             ranks = range(combo['value'] - combo['bodyWidth'] + 1, combo['value'] + 1)
         elif kind in ('飞机带单', '飞机带对'):
             width = combo['n'] // (4 if kind == '飞机带单' else 5)
             ranks = range(combo['value'] - width + 1, combo['value'] + 1)
         elif '带' in kind:
-            ranks = [self.main if combo['value'] == 15.5 else combo['value']]
-        else: ranks = sorted(set(combo['ranks']))
-        return [[i for i, rank in enumerate(combo['ranks']) if rank == r] for r in ranks]
+            mapped = combo['ranks']
+            value = combo['value']
+            plain = value + PLAIN_RANK_OFFSET
+            ranks = [self.main if value == 15.5 else plain if value == self.main and plain in mapped else value]
+        elif kind in ('顺子', '连对', '飞机'):
+            ranks = sorted(set(mapped))
+        else:
+            mapped = combo['ranks']
+            ranks = sorted(set(mapped))
+        return [[i for i, rank in enumerate(mapped) if rank == r] for r in ranks]
 
     def hui_profile(self, combo, cards):
         groups = self.body_groups(combo)
-        if any(combo['ranks'][i] >= 15 or combo['ranks'][i] == self.main for group in groups for i in group): return None
+        if any(printed_rank(combo['ranks'][i]) >= 15 or combo['ranks'][i] == self.main for group in groups for i in group): return None
         suits = combo.get('suits', [c['suit'] for c in cards])
         return tuple(tuple(sorted(Counter(suits[i] for i in group).items())) for group in groups)
 

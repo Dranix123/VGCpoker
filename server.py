@@ -15,7 +15,7 @@ import ipaddress
 import socket
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from engine import Game, RuleError, MODES, LABELS
+from engine import Game, RuleError, MODES, LABELS, printed_rank
 from conveyor import ConveyorGame
 from conveyor_skills import SKILLS, available as conveyor_skills
 from analytics import Analytics
@@ -144,7 +144,8 @@ def perform_game_action(room, seat, move):
     g = room['game']
     pressure = g.mode == 'conveyor' and move.get('action') == 'skill' and g.core.skills[g.actor(seat, move.get('actor'))] == 'pressure'
     choice = g.mode == 'conveyor' and move.get('action') == 'choice' and g.core.pending and g.core.owners[g.core.pending[0]['seat']] == seat
-    if clock and not pressure and not choice and room['game'].priority and clock['key'][1] == room['game'].play_number and (clock['seat'] != seat or room['game'].mode == 'conveyor' and room['game'].actor(seat,move.get('actor')) != clock['actor']): raise RuleError('等待优先管牌倒计时结束。')
+    urgent = g.mode == 'conveyor' and move.get('action') == 'urgent'
+    if clock and not pressure and not choice and not urgent and room['game'].priority and clock['key'][1] == room['game'].play_number and (clock['seat'] != seat or room['game'].mode == 'conveyor' and room['game'].actor(seat,move.get('actor')) != clock['actor']): raise RuleError('等待优先管牌倒计时结束。')
     if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
     if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
     previous = g.last_voice_play; old_phase = g.phase
@@ -159,7 +160,7 @@ def perform_game_action(room, seat, move):
     if action in ('accept', 'reject'): items.append({'voice': action})
     if g.last_voice_play is not previous:
         play = g.last_voice_play; kind = play['kind']
-        key = kind + '-' + str(play['ranks'][0]) if kind in ('单张', '对子') else kind
+        key = kind + '-' + str(printed_rank(play['ranks'][0])) if kind in ('单张', '对子') else kind
         if '张飞机' in kind: key = '飞机带对' if kind.endswith('对') else '飞机带单' if '带' in kind else '飞机'
         items += [{'effect': 'play'}, {'voice': key}]
     elif g.negotiation and action not in ('accept', 'reject'):
@@ -174,6 +175,7 @@ def perform_game_action(room, seat, move):
         actor = move.get('actor', g.actor(seat))
         if not played:
             key = 'cv-urgent-' + move.get('effect', 'discard') if action == 'urgent' else 'cv-skill-' + g.core.skills[actor] if action == 'skill' else 'cv-choice' if action == 'choice' else 'cv-keep' if action == 'keep' else labels.get(action, 'cv-action')
+            if key in ('cv-urgent-silence', 'cv-urgent-judge-boost', 'cv-urgent-judge-color'): key = 'cv-action'
             items = [{'voice': key}]
         for report in reports:
             count = re.search(r'获得(\d+)张牌', report)
@@ -545,7 +547,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4, 5) for n in groups): raise RuleError('技能 DLC 选项无效。')
                 if not isinstance(disabled, list) or any(k not in SKILLS for k in disabled): raise RuleError('禁用技能选项无效。')
                 options['skillDlc'] = list(set(groups)); options['disabledSkills'] = list(set(disabled))
-                if not conveyor_skills(options): raise RuleError('至少需要开放一个技能。')
+                if len(conveyor_skills(options)) < MODES[mode]: raise RuleError('传送带至少需要开放四个技能。')
             if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if b.get('single') is True: room['single'] = True
@@ -582,6 +584,7 @@ class Handler(BaseHTTPRequestHandler):
                 if room['mode'] != 'conveyor' or room.get('game') and room['game'].phase != 'over': raise RuleError('请在开局前选择技能。')
                 key = b.get('skill')
                 if key not in {s['id'] for s in conveyor_skills(room['options'])}: raise RuleError('该技能未开放。')
+                if any(i != seat and not p.get('bot') and p.get('skill') == key for i, p in enumerate(room['players'])): raise RuleError('该技能已被其他玩家选择。')
                 room['players'][seat]['skill'] = key
                 room['revision'] += 1
                 return self.respond({'ok':True, 'room':room_view(room, uid)})
@@ -646,7 +649,8 @@ class Handler(BaseHTTPRequestHandler):
                     if None in used: raise RuleError('请等待所有玩家选择技能。')
                     for p in room['players']:
                         if p.get('bot'):
-                            p['skill'] = secrets.choice([s['id'] for s in choices])
+                            p['skill'] = secrets.choice([s['id'] for s in choices if s['id'] not in used])
+                            used.add(p['skill'])
                     room['game'] = ConveyorGame(room['mode'], room['players'], room['options'], previous, interactive=True)
                 else: room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
                 room.pop('idleWait', None)

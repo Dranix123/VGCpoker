@@ -3,6 +3,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {conveyor:'传送带',landlord:'斗地主',standard:'4A4A4',trio:'4A4A4 · 三人',basic:'4A4 · 基础'};
 const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急'};
+for(let n=3;n<=15;n++)ranks[n+20]=ranks[n];
 const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
@@ -73,7 +74,7 @@ function card(c, interactive=false, g=null) {
   const wild = g && !['landlord','basic'].includes(g.mode) && c.suit==='S' && c.rank===14;
   const urgentUses=g?.mode==='conveyor'&&((c.effective??c.rank)===18||c.urgentUses)?c.urgentUses||0:null;
   const label = `${ranks[c.rank]}${suits[c.suit]}`+(urgentUses===null?'':`，已使用 ${urgentUses} 次${urgentUses>=3?'，下次必须轮换销毁':''}`);
-  return `<${interactive?'button':'div'} class="card ${red?'red':''} ${c.rank>=16?'joker':''} ${selected.has(c.id)&&interactive?'selected':''} ${wild?'wild':''} ${g&&g.mode!=='landlord'&&c.rank===g.main?'main-card':''}" ${interactive?`data-card="${esc(c.id)}" aria-pressed="${selected.has(c.id)}" aria-label="${esc(label)}${wild?'，混子':''}"`:''}><span class="card-rank">${ranks[c.rank]}</span><span class="card-suit">${c.rank>=16?'':suits[c.suit]}</span><span class="card-center">${c.rank>=16?(c.rank===18?'↗':'✦'):suits[c.suit]}</span>${c.effective&&c.effective!==c.rank?`<span class="effective-rank">→ ${ranks[c.effective]}</span>`:''}${urgentUses===null?'':`<span class="urgent-count" title="${esc(label)}">${urgentUses}/3</span>`}<span class="card-bottom">${ranks[c.rank]}${suits[c.suit]}</span></${interactive?'button':'div'}>`;
+  return `<${interactive?'button':'div'} class="card ${red?'red':''} ${c.rank>=16?'joker':''} ${selected.has(c.id)&&interactive?'selected':''} ${wild?'wild':''} ${g&&g.mode!=='landlord'&&c.rank===g.main?'main-card':''}" ${interactive?`data-card="${esc(c.id)}" aria-pressed="${selected.has(c.id)}" aria-label="${esc(label)}${wild?'，混子':''}"`:''}><span class="card-rank">${ranks[c.rank]}</span><span class="card-suit">${c.rank>=16?'':suits[c.suit]}</span><span class="card-center">${c.rank>=16?(c.rank===18?'↗':'✦'):suits[c.suit]}</span>${c.effective&&c.effective!==c.rank?`<span class="effective-rank">→ ${g?.mode==='conveyor'&&c.effective===g.main?'主':''}${ranks[c.effective]}</span>`:''}${urgentUses===null?'':`<span class="urgent-count" title="${esc(label)}">${urgentUses}/3</span>`}<span class="card-bottom">${ranks[c.rank]}${suits[c.suit]}</span></${interactive?'button':'div'}>`;
 }
 function render() {
   const u=state.user,r=state.room,g=r?.game;
@@ -103,7 +104,7 @@ function render() {
   const hand=$('.hand-area');if(hand&&g?.phase!=='over'){const message=r.audioWaiting?'正在播报，结束后可继续选好的操作':r.players[r.seat]?.autoplay?'规则 AI 托管中，可随时取消':'';if(message)hand.insertAdjacentHTML('afterbegin',`<p class="action-status" role="status">${message}</p>`);}
   if(r?.mode==='conveyor')conveyorAfterRender();
   if(g?.phase==='setup'&&g.confirmTurn!==r.seat)$$('[data-action]').filter(b=>['confirm','reveal','promote','cv-confirm'].includes(b.dataset.action)).forEach(b=>b.disabled=true);
-  if(g?.priorityClock&&g.priorityClock.seat!==r.seat)$$('[data-action]').filter(b=>['play','pass'].includes(b.dataset.action)).forEach(b=>b.disabled=true);
+  if(g?.priorityClock&&g.priorityClock.seat!==r.seat)$$('[data-action]').filter(b=>b.dataset.action==='pass'||b.dataset.action==='play'&&!g.conveyor).forEach(b=>b.disabled=true);
   if(r?.audioWaiting){
     const actions=new Set(['start','play','pass','bid','reveal','confirm','promote','rps','tribute-pick','tribute-return','accept','reject','gift-player']);
     $$('[data-action]').filter(b=>actions.has(b.dataset.action)).forEach(b=>b.disabled=true);
@@ -252,7 +253,8 @@ function selectionUpdate(){
  const returned=$('[data-action="tribute-return"]');if(returned)returned.disabled=selected.size!==1||state.room.audioWaiting;
  const g=state.room.game,r=state.room,canAct=(!g.priorityClock||g.priorityClock.seat===r.seat&&(!g.conveyor||g.priorityClock.actor===g.conveyor.actor))&&(!!g.response||g.turn===r.seat&&(!g.conveyor||g.conveyor.turnActor===g.conveyor.actor));
  const pass=$('[data-action="pass"]');if(pass)pass.disabled=!!r.audioWaiting||r.players[r.seat].autoplay||!canAct||!g.response&&(!g.last||g.lastSeat===(g.conveyor?g.conveyor.actor:r.seat));
- const btn=$('[data-action="play"]');if(btn)btn.disabled=!canAct||state.room.audioWaiting||state.room.players[state.room.seat].autoplay||!selected.size||!!state.room?.game?.negotiation||!!state.room?.game?.priority&&state.room.players.filter(p=>!p.bot).length===1&&!state.room.game.priority.pending.includes(state.room.seat);
+ const canUrgent=g.conveyor&&!g.conveyor.waiting&&!g.negotiation&&!g.conveyor.resources?.ban&&urgentSelected();
+ const btn=$('[data-action="play"]');if(btn)btn.disabled=(!canUrgent&&(!canAct||!!g.negotiation||!!g.priority&&r.players.filter(p=>!p.bot).length===1&&!g.priority.pending.includes(r.seat)))||r.audioWaiting||r.players[r.seat].autoplay||!selected.size;
  const note=$('#selection-note');if(note){const text=note.firstChild;if(text?.nodeType===Node.TEXT_NODE)text.textContent=(selected.size?'已选择 '+selected.size+' 张牌':'选择手牌')+(state.room.game.mode==='landlord'?'':' ');}
 }
 let cardSweep=null, suppressCardClick=false;

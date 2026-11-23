@@ -153,10 +153,10 @@ test('public player resources include marks and counters for other players',()=>
 });
 
 test('the fourth use of an urgent card offers only rotation and destruction',async()=>{
- let html='';const ctx=context({state:{room:{game:{hand:[{id:'urgent',rank:18,suit:'U',urgentUses:3},{id:'kept',rank:7,suit:'S'}],conveyor:{actor:0,turnActor:0,actors:[]}}}},selected:new Set(['urgent']),urgentSelected:()=>true,wildcardPayload:()=>undefined,showModal:(kind,body)=>{html=body;},$:()=>null});
+ let html='';const ctx=context({state:{room:{game:{hand:[{id:'urgent',rank:18,suit:'U',urgentUses:3},{id:'kept',rank:7,suit:'S'}],conveyor:{actor:0,turnActor:1,actors:[],resources:{}}}}},selected:new Set(['urgent']),urgentSelected:()=>true,wildcardPayload:()=>undefined,showModal:(kind,body)=>{html=body;},$:()=>null});
  vm.runInContext('conveyorUrgentUpdate=()=>{}',ctx);await vm.runInContext('conveyorPlay()',ctx);
  assert.match(html,/value="rotate" selected/);
- for(const effect of ['draw','discard','ban','shield','maximum'])assert.match(html,new RegExp('value="'+effect+'"[^>]*disabled'));
+ for(const effect of ['draw','discard','ban','shield','maximum','silence','judge-boost','judge-color'])assert.match(html,new RegExp('value="'+effect+'"[^>]*disabled'));
  assert.ok(html.includes('本次必须轮换并销毁'));
 });
 
@@ -167,20 +167,18 @@ test('suitmark offers only the suits present in the winning play',()=>{
  assert.ok(!html.includes('value="H"'));assert.ok(!html.includes('value="C"'));
 });
 
-test('skill selection remains available when another player chose the same skill',()=>{
+test('skill selection marks skills taken by another player',()=>{
  const ctx=context({r:{host:1,seat:0,players:[{id:1,name:'自己',skill:null},{id:2,name:'别人',skill:'balance'}],skills:[{id:'balance',name:'转换',group:0,deal:7,keep:7,text:'转换'}]}});
  const html=vm.runInContext('conveyorWaiting(r)',ctx);
  assert.ok(html.includes('data-skill="balance"'));
- assert.ok(!html.includes('taken'));
- assert.ok(!html.includes('别人 已选'));
+ assert.match(html,/data-skill="balance"[^>]*disabled/);
+ assert.ok(html.includes('已被选择'));
 });
 
-test('trade extra draw offers one through thirteen, excluding zero',()=>{
- const ctx=context({q:{kind:'trade-extra',seat:0,title:'献祭',maximum:13},c:{actor:0,actors:[],skill:'trade'}});
+test('trade offers a judgment during the draw phase',()=>{
+ const ctx=context({q:{kind:'deal',seat:0,title:'献祭',maximum:1},c:{actor:0,actors:[],skill:'trade'}});
  const html=vm.runInContext('conveyorChoice(q,c)',ctx);
- assert.ok(!html.includes('<option value="0">'));
- assert.ok(html.includes('<option value="1">'));
- assert.ok(html.includes('<option value="13">'));
+ assert.match(html,/value="judge">判定/);
 });
 
 test('new public marks and optional skill discards are visible and validated',()=>{
