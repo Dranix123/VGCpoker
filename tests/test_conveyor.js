@@ -27,6 +27,20 @@ test('four visible seats render five independent actor play areas',()=>{
  assert.ok(html.includes('手牌 A'));assert.ok(html.includes('手牌 B'));
  assert.ok(html.includes('出牌中...'));
 });
+test('opponents’ skills open a read-only description from the table',async()=>{
+ assert.match(table(),/data-action="cv-skill-info" data-skill="balance" aria-label="查看 玩家1 的技能：转换"/);
+ let click,modal;
+ const ctx=context({document:{addEventListener:(event,fn)=>{if(event==='click')click=fn;}},showModal:(_,html)=>{modal=html;}});
+ ctx.state.room={game:{conveyor:{}}};
+ const button={dataset:{action:'cv-skill-info',skill:'balance'}};
+ await click({target:{closest:()=>button}});
+ assert.match(modal,/弃置再发牌/);
+ assert.match(modal,/关闭/);
+ assert.doesNotMatch(modal,/cv-skill-select/);
+ ctx.state.room.game=null;
+ await click({target:{closest:()=>button}});
+ assert.match(modal,/cv-skill-select/);
+});
 test('opening hand selection is marked as selection rather than confirmation',()=>{
  const html=table(false,false,{phase:'draft',reveals:[],ready:[]});
  assert.ok(html.includes('选牌中...'));

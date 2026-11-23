@@ -140,6 +140,29 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(len(c.hands[1]),2)
         self.assertEqual(c.resources[3]['skillBan'],1)
 
+    def test_shadow_stacks_each_disable_but_deduplicates_targets_per_trigger(self):
+        g=self.game('shadow','balance','shadow','pursuit');c=self.table(g,[[4,5],[7],[8],[9]])
+        c.resources[0]['covered']=3;c.free_lead()
+        self.assertEqual((c.resources[3]['skillBan'],c.resources[3]['ban']),(1,1))
+        c.turn=2;c.resources[2]['covered']=3;c.free_lead()
+        self.assertEqual((c.resources[3]['skillBan'],c.resources[3]['ban']),(2,2))
+        for remaining in (1,0):
+            c.turn=3
+            with self.assertRaises(RuleError): g.action(3,'auto',[c.hands[3][0]['id']])
+            before=len(c.hands[3]);g.action(3,'pass')
+            self.assertEqual((c.resources[3]['skillBan'],c.resources[3]['ban']),(remaining,remaining))
+            self.assertEqual(len(c.hands[3]),before+1)
+        self.assertTrue(c.skill(3,'pursuit'))
+
+    def test_shadow_skip_from_cross_consumes_both_bans(self):
+        g=self.game('shadow','balance','money','pursuit');c=self.table(g,[[7,8],[9,10],[7,7,11],[12,13]])
+        g.action(0,'auto',[c.hands[0][0]['id']]);self.assertEqual(c.turn,3)
+        c.disable_skill(3)
+        before=len(c.hands[3]);g.action(2,'auto',[x['id'] for x in c.hands[2][:2]])
+        self.assertEqual((c.resources[3]['skillBan'],c.resources[3]['ban']),(0,0))
+        self.assertEqual(len(c.hands[3]),before+1)
+        self.assertEqual(c.seat_plays[3]['kind'],'禁手')
+
     def test_redemption_clears_physical_zones_and_counts_unique_mark_types(self):
         g=self.game('redemption','seven','stash','money');c=self.table(g,[[4,5,6],[7,8],[9,10],[11,12]])
         c.resources[1]['marks']=1;c.resources[1]['markCards']=[c.hands[1].pop()]

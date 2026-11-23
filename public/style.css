@@ -507,6 +507,7 @@ footer{gap:24px}
 .conveyor-marks{display:flex;flex-wrap:wrap;gap:3px;align-items:center;max-width:110px;font-size:11px;line-height:1.2;margin-top:3px}
 .conveyor-marks b{font-size:14px}.conveyor-marks .red{color:var(--red)}
 
+.seat-skill{padding:3px 0;text-align:left;text-underline-offset:2px}
 .conveyor-resources{display:flex;flex-wrap:wrap;gap:2px 6px;max-width:110px;font-size:11px;line-height:1.4;margin-top:3px}
 .conveyor-resources>span{white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis}.conveyor-resources .conveyor-marks{margin:0}
 

@@ -437,9 +437,7 @@ class ConveyorRound(Game):
         if self.skill(seat, 'shadow'):
             targets = {self.next_seat(seat), self.resources[seat].get('covered')} - {None, seat}
             for target in targets & set(self.active()):
-                self.resources[target]['skillBan'] = max(1, self.resources[target]['skillBan'])
-                self.resources[target]['ban'] += 1
-                self.announce(self.name(target) + '技能封禁并禁手一回合。')
+                self.disable_skill(target)
         if self.skill(seat, 'duel'):
             self.offer(seat, 'duel-start', '是否发起死斗？')
         if self.skill(seat, 'debt'):
@@ -470,6 +468,11 @@ class ConveyorRound(Game):
             if self.phase == 'over': break
             self.finish(other)
 
+    def disable_skill(self, seat):
+        self.resources[seat]['skillBan'] += 1
+        self.resources[seat]['ban'] += 1
+        self.announce(self.name(seat) + '技能封禁并禁手一回合。')
+
     def enter_turn(self):
         if self.phase != 'play' or self.start_turn == (self.turn, self.resources[self.turn]['turns']): return
         self.start_turn = (self.turn, self.resources[self.turn]['turns'])
@@ -479,7 +482,7 @@ class ConveyorRound(Game):
         if not self.hands[seat] and not self.zones[seat]:
             self.finish(seat)
             if self.phase == 'over': return
-            if seat in self.finished or not self.hands[seat]:
+            if seat in self.finished or not self.resources[seat]['ban']:
                 if seat not in self.finished: self.resources[seat]['turns'] += 1
                 self.turn = self.next_seat(seat); self.enter_turn()
                 return
@@ -514,10 +517,14 @@ class ConveyorRound(Game):
         self.finish(seat)
         if seat not in self.finished: self.discard_max(seat, count - 1)
 
-    def end_deal(self, seat, played=True, immediate=False, own_turn=True):
+    def end_deal(self, seat, played=True, immediate=False, own_turn=True, skill_banned=False):
         if self.pending and not immediate:
-            self.pending.append(dict(seat=seat, kind='_end-deal', played=played, own_turn=own_turn))
+            self.pending.append(dict(seat=seat, kind='_end-deal', played=played, own_turn=own_turn, skill_banned=skill_banned))
             return
+        self.deal_after_action(seat, own_turn)
+        if skill_banned: self.resources[seat]['skillBan'] -= 1
+
+    def deal_after_action(self, seat, own_turn):
         if seat in self.finished or self.phase == 'over': return
         state, key = self.resources[seat], self.active_skill(seat)
         if state.pop('earlyRefill', False):
@@ -587,7 +594,6 @@ class ConveyorRound(Game):
         if getattr(self, '_in_action', False): return Game.action(self, seat, action, ids, **args)
         self._in_action = True
         self._acting = seat
-        shadow_before = [(r['turns'], r.get('skillBan', 0)) for r in self.resources]
         try:
             result = self.execute_action(seat, action, ids, **args)
             self.settle()
@@ -597,8 +603,6 @@ class ConveyorRound(Game):
             self._acting = None
             self._playing_seat = None
             for target, resource in enumerate(self.resources):
-                turns, disabled = shadow_before[target]
-                if disabled and resource['turns'] > turns: resource['skillBan'] = max(0, resource['skillBan'] - 1)
                 if not any(q['kind'] == '_end-deal' and q['seat'] == target for q in self.pending): resource.pop('earlyRefill', None)
 
     def settle(self):
@@ -610,7 +614,7 @@ class ConveyorRound(Game):
         if self.phase == 'play' and self.turn in self.finished: self.turn = self.next_seat(self.turn)
         while self.pending and self.pending[0]['kind'] in ('_end-deal', '_reflux-draw'):
             q = self.pending.pop(0)
-            if q['kind'] == '_end-deal': self.end_deal(q['seat'], q['played'], immediate=True, own_turn=q.get('own_turn', True))
+            if q['kind'] == '_end-deal': self.end_deal(q['seat'], q['played'], immediate=True, own_turn=q.get('own_turn', True), skill_banned=q.get('skill_banned', False))
             else:
                 for other in self.active():
                     if other != q['seat']: self.gain(other, q['count'])
@@ -691,12 +695,8 @@ class ConveyorRound(Game):
             return
         if self.resources[seat]['ban']:
             if seat != self.turn or action != 'pass': raise RuleError('禁手期间只能结束行动。')
-            self.resources[seat]['ban'] -= 1
-            self.announce(self.name(seat) + '禁手，跳过出牌。')
-            self.display_action(seat, dict(kind='禁手', cards=[], ranks=[], passed=True, order=self.play_number))
             self.passes.add(seat)
-            self.resources[seat]['turns'] += 1
-            self.end_deal(seat, False)
+            self.end_skipped_turn(seat)
             self.advance_pass(seat)
             return
         if seat == self.turn and self.skill(seat, 'scavenge') and (self.resources[seat]['turns'] < 2 or action == 'pass'):
@@ -733,11 +733,20 @@ class ConveyorRound(Game):
             while cursor != seat and cursor not in visited:
                 visited.add(cursor)
                 if cursor not in self.finished:
-                    self.resources[cursor]['turns'] += 1
-                    self.end_deal(cursor, False)
+                    self.end_skipped_turn(cursor)
                 cursor = self.next_seat(cursor)
         self.after_action(seat, old_last, old_play, ordinary)
         if self.play_number != old_play: self.open_priority()
+
+    def end_skipped_turn(self, seat):
+        state = self.resources[seat]
+        skill_banned = bool(state['skillBan'])
+        if state['ban']:
+            state['ban'] -= 1
+            self.announce(self.name(seat) + '禁手，跳过出牌。')
+            self.display_action(seat, dict(kind='禁手', cards=[], ranks=[], passed=True, order=self.play_number))
+        state['turns'] += 1
+        self.end_deal(seat, False, skill_banned=skill_banned)
 
     def advance_pass(self, seat):
         active = set(self.active()) - {self.last_seat}
