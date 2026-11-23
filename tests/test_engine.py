@@ -182,16 +182,18 @@ class Rules(unittest.TestCase):
     def test_auto_priority_before_any_followup_plays_immediately(self):
         g=table();g.interactive=True;g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
         g.action(0,'auto',['a0']);g.action(1,'auto',['b0','b1'])
-        self.assertIsNone(g.negotiation);self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1)
+        self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1)
 
-    def test_existing_priority_selection_requests_undo_even_if_normal_bomb_is_legal(self):
+    def test_previous_priority_selection_can_follow_as_a_normal_bomb(self):
         g=table(options={'advancedDead':True});g.interactive=True;g.turn=3
         g.hands[3]=cards([7,7,8],prefix='d');g.hands[0]=cards([7]*3+[6]*4+[9],prefix='a');g.hands[1]=cards([7]*4+[9],prefix='b')
         g.action(3,'auto',['d0','d1']);g.action(0,'auto',['a0','a1','a2'])
         self.assertEqual(g.last['special'],'dead')
-        g.action(0,'auto',['a3','a4','a5','a6']);g.action(1,'auto',['b0','b1','b2','b3'])
-        self.assertEqual(g.negotiation['target'],0);self.assertEqual(g.negotiation['action'],'dead4')
-        g.action(0,'accept');self.assertEqual(g.last['special'],'dead4');self.assertEqual(len(g.hands[0]),5)
+        g.action(0,'auto',['a3','a4','a5','a6'])
+        g.action(3,'pass');g.action(2,'pass')
+        g.action(1,'auto',['b0','b1','b2','b3'])
+        self.assertEqual(g.last['special'],'play')
+        self.assertEqual(len(g.hands[0]),1)
 
     def test_solo_can_choose_normal_single_instead_of_cross(self):
         for mode in ('basic','standard'):
@@ -226,7 +228,7 @@ class Rules(unittest.TestCase):
         g.action(0,'pass');self.assertIsNone(g.priority);self.assertEqual(g.turn,2)
         self.assertEqual(len(g.hands[0]),2)
 
-    def test_multiplayer_priority_expires_after_two_players_play(self):
+    def test_multiplayer_priority_expires_after_one_new_play(self):
         for mode in ('basic','standard'):
             def start():
                 g=table(mode);g.interactive=True
@@ -234,14 +236,10 @@ class Rules(unittest.TestCase):
                 g.hands[3]=cards([6]*4+[9],prefix='d');g.hands[2]=cards([7]*4+[10],prefix='c')
                 g.action(0,'auto',['a0']);return g
             g=start();g.action(3,'auto',['d0','d1','d2','d3'])
-            self.assertIn(1,g.claims);self.assertEqual(g.claims[1]['actors'],[3])
-            response=g.view(1)['response'];self.assertEqual(response['key'],1);self.assertEqual(response['moves'][0]['ids'],['b0','b1'])
-            self.assertIsNone(g.view(2)['response'])
-            g.action(1,'auto',['b0','b1']);self.assertEqual(g.negotiation['target'],3)
-            g.action(3,'accept');self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[3]),5)
-            g=start();g.action(3,'auto',['d0','d1','d2','d3']);g.action(2,'auto',['c0','c1','c2','c3'])
-            self.assertNotIn(1,g.claims)
+            self.assertIsNone(g.view(1)['response'])
             with self.assertRaises(RuleError):g.action(1,'auto',['b0','b1'])
+            self.assertEqual(g.last_seat,3)
+            self.assertEqual(len(g.hands[3]),1)
 
     def test_multiplayer_decline_does_not_stop_normal_turn(self):
         g=table('basic');g.interactive=True;g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b')
@@ -256,16 +254,19 @@ class Rules(unittest.TestCase):
         g.hands[2]=cards([3],'S','s')
         self.assertEqual(g.bot_action(2),{'action':'reveal'})
         g.action(2,'reveal')
-        for seat in range(4):g.action(seat,'confirm')
+        g.finish_setup()
+        for seat in g.confirmation_seats():g.action(seat,'confirm')
         self.assertEqual(g.turn,2);self.assertEqual(g.phase,'play')
         for chosen in range(4):
             g=Game('basic',players)
             with patch('engine.random.randrange',return_value=chosen) as choose:
-                for seat in range(4):g.action(seat,'confirm')
+                g.finish_setup()
+                for seat in g.confirmation_seats():g.action(seat,'confirm')
                 choose.assert_called_once_with(4)
             self.assertEqual(g.turn,chosen)
         g=Game('basic',players,previous={'first':3})
-        for seat in range(4):g.action(seat,'confirm')
+        g.finish_setup()
+        for seat in g.confirmation_seats():g.action(seat,'confirm')
         self.assertEqual(g.turn,3)
         g=Game('basic',players);g.hands[0]=cards([7]*6,prefix='a')
         with self.assertRaises(RuleError):g.action(0,'promote',rank=7)
@@ -361,7 +362,6 @@ class Rules(unittest.TestCase):
             self.assertEqual(g.turn,0)
             self.assertIsNone(g.last)
             self.assertIsNone(g.priority)
-            self.assertEqual(g.claims,{})
             g.action(0,'auto',['a1','a2'])
             self.assertEqual(g.last['kind'],'对子')
 
@@ -449,20 +449,6 @@ class Rules(unittest.TestCase):
             g.action(1,'hook',['b0'])
             self.assertEqual(g.last['special'],'hook');self.assertEqual(g.last_seat,1)
 
-    def test_priority_after_one_followup_accept_or_reject(self):
-        for mode in ('basic', 'standard'):
-            for accept in (False, True):
-                g=table(mode);g.interactive=True
-                g.hands[0]=cards([5,8],prefix='a');g.hands[1]=cards([5,5,9],prefix='b');g.hands[3]=cards([6,10],prefix='d')
-                g.action(0,'auto',['a0'])
-                self.assertEqual(g.view(3)['priority']['moves'],[])
-                g.action(3,'auto',['d0']);g.action(1,'auto',['b0','b1'])
-                self.assertEqual(g.negotiation['target'],3);self.assertEqual(len(g.hands[1]),3)
-                g.action(3,'accept' if accept else 'reject')
-                if accept:
-                    self.assertEqual(g.last['special'],'cross');self.assertEqual(len(g.hands[1]),1);self.assertEqual(len(g.hands[3]),2)
-                else:
-                    self.assertEqual(g.last_seat,3);self.assertEqual(len(g.hands[1]),3);self.assertNotIn(1,g.claims)
 
     def test_display_pass_replaces_cards_and_next_round_hides_finished(self):
         g=table();g.hands[0]=cards([6],prefix='a')
@@ -496,6 +482,33 @@ class Rules(unittest.TestCase):
         self.assertEqual(Counter(c['rank'] for c in dlc if c['suit']=='T'),Counter({r:2 for r in range(3,16)}))
         self.assertEqual(sum(c['suit']=='S' and c['rank']==14 for c in dlc),7)
         self.assertEqual(sum(c['rank']==18 for c in dlc),9)
+
+    def test_three_group_airplanes_can_be_led_or_used_to_follow(self):
+        for mode in ('landlord', 'standard', 'trio'):
+            plane=[5]*3+[6]*3+[7]*3
+            self.assertEqual(classify(plane,mode)['kind'],'飞机')
+            self.assertEqual(classify(plane+[9,10,11],mode)['kind'],'飞机带单')
+            self.assertEqual(classify(plane+[9]*2+[10]*2+[11]*2,mode)['kind'],'飞机带对')
+            g=table(mode)
+            g.hands[0]=cards([3]*3+[4]*3+[5]*3+[10,11,12,13],prefix='a')
+            g.action(0,'play',[c['id'] for c in g.hands[0][:-1]])
+            reply=cards(plane+[8]*3,prefix='b')
+            g.hands[g.turn]=reply+cards([13],prefix='spare')
+            self.assertEqual(g.validate_play(g.turn,reply)[0]['kind'],'飞机带单')
+            self.assertEqual(g.validate_play(g.turn,reply)[0]['value'],7)
+        plane=[5]*4+[6]*4+[7]*4
+        self.assertEqual(classify(plane,'standard')['kind'],'四张飞机')
+
+    def test_four_and_higher_airplanes_with_or_without_wings(self):
+        for width in (4, 5, 7):
+            body = [rank for rank in range(3, 3 + width) for _ in range(3)]
+            singles = [10] * width
+            pairs = [rank for rank in range(10, 10 + width) for _ in range(2)]
+            self.assertEqual(classify(body, 'standard')['kind'], '飞机')
+            self.assertEqual(classify(body + singles, 'standard')['kind'], '飞机带单')
+            self.assertEqual(classify(body + pairs, 'standard')['kind'], '飞机带对')
+            wide = [rank for rank in range(3, 3 + width) for _ in range(4)]
+            self.assertEqual(classify(wide, 'standard')['bodyWidth'], width)
 
     def test_classic_combinations(self):
         cases = [([4], '单张'), ([4,4], '对子'), ([4,4,4], '三张'), ([4,4,4,7], '三带一'),
@@ -557,7 +570,8 @@ class Rules(unittest.TestCase):
     def test_next_round_allows_promotion(self):
         g=Game('standard',[{'name':str(i)} for i in range(4)],previous={'first':2,'main':5,'scores':[2,0]})
         self.assertEqual(g.phase,'setup')
-        for s in range(4):g.action(s,'confirm')
+        g.finish_setup()
+        for s in g.confirmation_seats():g.action(s,'confirm')
         self.assertEqual(g.turn,2);self.assertEqual(g.main,5)
 
     def test_advanced_dead_interception(self):
@@ -625,14 +639,12 @@ class Rules(unittest.TestCase):
         g.action(0,'play',['a0']);g.action(3,'hui',['b0']);g.action(2,'play',['c0'])
         with self.assertRaises(RuleError):g.action(1,'hui',['d0'])
 
-    def test_finished_player_intercept_and_negotiation(self):
+    def test_finished_player_intercept_cannot_replace_a_newer_play(self):
         g=table();g.hands[0]=cards([7],prefix='a');g.hands[3]=cards([8,9],prefix='b');g.hands[2]=cards([7,7,10],prefix='c')
         g.action(0,'play',['a0']);g.action(3,'play',['b0'])
-        g.action(2,'negotiate',['c0','c1'],special='cross')
-        g.action(3,'accept')
-        self.assertEqual(len(g.hands[3]),2);self.assertEqual(g.last_seat,2);self.assertEqual(g.last['special'],'cross')
-        self.assertIsNone(g.seat_plays[3]);self.assertEqual(g.play_number,2)
-        self.assertEqual(g.seat_plays[2]['order'],2)
+        with self.assertRaises(RuleError):g.action(2,'auto',['c0','c1'])
+        self.assertEqual(g.last_seat,3)
+        self.assertEqual(len(g.hands[3]),1)
         g=table();g.hands[0]=cards([7],prefix='a');g.hands[2]=cards([7,7,10],prefix='c')
         g.action(0,'play',['a0']);g.action(2,'cross',['c0','c1']);self.assertEqual(g.last_seat,2)
 
@@ -672,13 +684,13 @@ class Rules(unittest.TestCase):
         with self.assertRaises(RuleError):g.validate_play(3,reply,'hui',{'w0':{'rank':12,'suit':'D'}})
         self.assertTrue(any(m['action']=='hui' and set(m['ids'])=={c['id'] for c in reply} and m['wildcard']==declaration for m in g.candidates(3)))
 
-    def test_advanced_hui_and_urgent_negotiation_boundary(self):
+    def test_advanced_hui_and_urgent_usage_boundary(self):
         g=table(options={'advancedHui':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([5,5,9],prefix='b');g.hands[2]=cards([6,6,9],prefix='c')
         g.action(0,'play',['a0','a1']);g.action(3,'hui',['b0','b1']);g.action(2,'play',['c0','c1'])
         self.assertEqual(g.last['kind'],'对子')
         g=table();g.hands[0]=cards([7],prefix='a');g.hands[3]=cards([8,9],prefix='b');g.hands[2]=cards([18,6,7],prefix='c');g.hands[1]=cards([7,7,9],prefix='d')
         g.action(0,'play',['a0']);g.action(3,'play',['b0']);g.action(2,'urgent',['c0','c1'],target=3)
-        with self.assertRaises(RuleError):g.action(1,'negotiate',['d0','d1'],special='cross')
+        with self.assertRaises(RuleError):g.action(1,'auto',['d0','d1'])
         with self.assertRaises(RuleError):g.action(2,'urgent',['c2'],target=3)
 
     def test_autoplay_handles_human_priority_and_can_return_to_manual(self):
@@ -725,7 +737,7 @@ class Rules(unittest.TestCase):
         g.hands[2]=cards([14],'S','w')+cards([9],prefix='x')
         self.assertFalse(g.forced_pass())
 
-    def test_declining_hook_does_not_ask_again_on_the_same_cross(self):
+    def test_declining_priority_hook_still_allows_hook_on_own_turn(self):
         for mode in ('basic', 'standard'):
             g=table(mode);g.interactive=True;g.turn=3
             for seat in (1,2,3):g.players[seat]['bot']=True
@@ -734,14 +746,13 @@ class Rules(unittest.TestCase):
             g.action(3,'play',['d0']);g.action(2,'cross',['c0','c1'])
             self.assertEqual(g.priority['pending'],[0])
             g.action(0,'pass')
+            with self.assertRaises(RuleError):g.action(0,'auto',['a0'])
             self.assertTrue(g.forced_pass());g.action(1,'pass')
             self.assertEqual(g.turn,0)
-            self.assertTrue(g.forced_pass(), 'a declined hook must not be requested a second time')
-            with self.assertRaises(RuleError):g.action(0,'auto',['a0'])
-            g.action(0,'pass');g.action(3,'pass')
-            self.assertIsNone(g.last);self.assertEqual(g.turn,2)
-            g.action(2,'play',['c2'])
-            self.assertEqual(g.last['ranks'],[9])
+            self.assertFalse(g.forced_pass())
+            self.assertEqual(g.priority_moves(0),[])
+            g.action(0,'auto',['a0'])
+            self.assertEqual(g.last['special'],'hook')
 
     def test_declining_cross_keeps_normal_play_and_new_hand_opportunities(self):
         for next_play in (False, True):
@@ -756,8 +767,9 @@ class Rules(unittest.TestCase):
             else:
                 g.action(1,'pass')
                 self.assertTrue(any(m['action']=='play' and m['ids']==['a4'] for m in g.candidates(0)))
-                self.assertFalse(any(m['action']=='cross' for m in g.candidates(0)))
-            self.assertEqual(g.snapshot()['priority_declined'],{0:1})
+                self.assertTrue(any(m['action']=='cross' for m in g.candidates(0)))
+                self.assertEqual(g.priority_moves(0),[])
+            self.assertEqual(g.priority_declined,{0:1})
 
     def test_declining_hook_keeps_urgent_gift_available(self):
         g=table();g.interactive=True;g.turn=3
@@ -767,7 +779,9 @@ class Rules(unittest.TestCase):
         g.action(3,'play',['d0']);g.action(2,'cross',['c0','c1']);g.action(0,'pass');g.action(1,'pass')
         self.assertFalse(g.forced_pass())
         g.action(0,'urgent',['a1','a2'],target=1)
-        self.assertTrue(g.forced_pass())
+        self.assertFalse(g.forced_pass())
+        g.action(0,'auto',['a0'])
+        self.assertEqual(g.last['special'],'hook')
 
     def test_unanswered_cross_auto_passes_back_to_owner_or_partner(self):
         for finished in (False, True):
@@ -800,7 +814,6 @@ class Rules(unittest.TestCase):
         g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0'])
         self.assertTrue(g.forced_pass())
         g.hands[2]=cards([15,7],prefix='c');self.assertFalse(g.forced_pass())
-        g.negotiation={'target':2};self.assertFalse(g.forced_pass())
 
     def test_four_card_airplanes_with_two_units_per_group(self):
         for mode in ('standard', 'trio'):
@@ -861,12 +874,6 @@ class Rules(unittest.TestCase):
             fresh=table(mode);fresh.report(0);self.assertEqual(fresh.reported,{0})
         g=table('landlord');g.report(0);self.assertFalse(g.reported)
 
-    def test_report_flag_is_restored_with_negotiation_snapshot(self):
-        g=table();snapshot=g.snapshot();g.report(0)
-        self.assertIn(0,g.reported)
-        for key,value in snapshot.items():setattr(g,key,value)
-        self.assertNotIn(0,g.reported)
-        g.report(0);self.assertEqual(g.report_counts[0],len(g.hands[0]))
 
     def test_urgent_and_announcements(self):
         g=table();g.hands[0]=cards([18,6,9],prefix='a')
@@ -961,7 +968,8 @@ class Rules(unittest.TestCase):
         g.hands[1]=cards([8]*6+[3],prefix='b');g.hands[1][-1]['suit']='S'
         g.action(0,'promote',rank=7);g.action(1,'promote',rank=8)
         g.action(0,'reveal');g.action(1,'reveal')
-        for s in range(4):g.action(s,'confirm')
+        g.finish_setup()
+        for s in g.confirmation_seats():g.action(s,'confirm')
         self.assertEqual(g.phase,'rps');self.assertEqual(g.main,8)
         g.action(0,'rps',value='paper');g.action(1,'rps',value='rock')
         self.assertEqual(g.phase,'play');self.assertEqual(g.turn,0)
@@ -969,7 +977,8 @@ class Rules(unittest.TestCase):
     def test_promotion_is_optional_for_humans_and_bots(self):
         g=table();g.phase='setup';g.hands[0]=cards([15]*6+[3,3],prefix='a')
         self.assertEqual(g.bot_action(0),{'action':'confirm'})
-        for seat in range(4):g.action(seat,'confirm')
+        g.finish_setup()
+        for seat in g.confirmation_seats():g.action(seat,'confirm')
         self.assertEqual(g.main,3)
         g=table();g.phase='setup';g.hands[0]=cards([4]*6+[3],prefix='a')
         self.assertEqual(g.bot_action(0),{'action':'promote','rank':4})
@@ -978,7 +987,8 @@ class Rules(unittest.TestCase):
         # A human remains free to choose a legal promotion even if the bot would decline.
         g=table();g.phase='setup';g.hands[0]=cards([15]*6+[3,3],prefix='a')
         g.action(0,'promote',rank=15)
-        for seat in range(4):g.action(seat,'confirm')
+        g.finish_setup()
+        for seat in g.confirmation_seats():g.action(seat,'confirm')
         self.assertEqual(g.main,15)
 
     def test_hint_candidates_include_wild_sequences_and_suit_responses(self):
@@ -1012,6 +1022,7 @@ class Rules(unittest.TestCase):
                 with self.subTest(mode=mode,options=options):
                     g=Game(mode,[{'name':str(i),'bot':True} for i in range(MODES[mode])],options,interactive=True)
                     initial=len(g.cards)
+                    g.finish_setup()
                     for step in range(1000):
                         if g.phase=='over':break
                         for seat in range(len(g.players)):

@@ -91,7 +91,8 @@ class ServerIntegration(unittest.TestCase):
                 g.phase='over';g.finished=[0,2,1,3];g.captured=[1,3]
                 status,data=self.request(client,'start',{})
                 self.assertEqual(status,200)
-                self.assertEqual(data['room']['game']['phase'],'tribute' if enabled else 'setup')
+                if enabled: self.assertEqual(data['room']['game']['phase'],'tribute')
+                else: self.assertIn(data['room']['game']['phase'],('setup','play'))
 
     def test_reserved_room_never_enables_tribute(self):
         client=self.clients[0]
@@ -105,7 +106,7 @@ class ServerIntegration(unittest.TestCase):
                 self.request(client,'start',{})
             g=room['game'];g.phase='over';g.finished=[0,2,1,3];g.captured=[1,3]
             self.assertEqual(self.request(client,'start',{})[0],200)
-            self.assertEqual(room['game'].phase,'setup');self.assertIsNone(room['game'].tribute)
+            self.assertIn(room['game'].phase,('setup','play'));self.assertIsNone(room['game'].tribute)
 
     def test_reserved_room_handoff_and_recreation(self):
         first,second,third=self.clients[:3]
@@ -193,14 +194,16 @@ class ServerIntegration(unittest.TestCase):
         self.request(self.clients[0],'audio-ack',{'event':event['id'],'code':code,'matchId':'current'})
         self.assertEqual(event['acknowledged'],[self.users[0]['id']])
 
-    def test_confirmation_moves_counterclockwise(self):
-        code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
-        room=server.ROOMS[code]
-        for seat in [0,3,2,1]:
+    def test_confirmation_skips_ineligible_players_and_moves_counterclockwise(self):
+        code=self.new_room('standard',4);self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];g=room['game'];g.phase='setup'
+        g.hands=[[{'rank':rank,'suit':suit} for rank,suit in hand] for hand in (
+            [(3,'S')],[(7,'H')]*6,[(5,'H')],[(3,'S')])]
+        for seat in [0,3,1]:
             self.assertEqual(server.confirmation_seat(room),seat)
-            if seat==0:self.assertEqual(self.request(self.clients[1],'action',{'action':'confirm','revision':room['revision']})[0],400)
+            self.assertEqual(self.request(self.clients[2],'action',{'action':'confirm','revision':room['revision']})[0],400)
             self.assertEqual(self.request(self.clients[seat],'action',{'action':'confirm','revision':room['revision']})[0],200)
-        self.assertNotEqual(room['game'].phase,'setup')
+        self.assertEqual(g.phase,'play')
 
     def test_priority_clock_is_public_and_expires_without_solo_takeover(self):
         code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
@@ -235,6 +238,23 @@ class ServerIntegration(unittest.TestCase):
         with patch.object(server.time,'time',return_value=107):server.update_priority_clock(room)
         self.assertEqual(room['priorityClock']['expires'],110)
         self.assertEqual(g.priority['pending'],[1])
+
+    def test_priority_clock_shows_full_time_while_the_opening_voice_plays(self):
+        code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
+        room=server.ROOMS[code];g=room['game'];g.phase='play';g.priority={'pending':[1],'bots':[]}
+        room['players'][0].update(audioEnabled=True,seen=100)
+        with patch.object(server.time,'time',return_value=100):
+            server.queue_audio(room,[{'voice':'单张-5'}])
+            clock=server.room_view(room,self.users[1]['id'])['game']['priorityClock']
+            self.assertTrue(clock['paused'])
+            self.assertEqual(clock['remaining'],5)
+        with patch.object(server.time,'time',return_value=108):
+            server.update_priority_clock(room)
+            self.assertEqual(g.priority['pending'],[1])
+            room['audioEvent']['acknowledged']=[self.users[0]['id']]
+            clock=server.room_view(room,self.users[1]['id'])['game']['priorityClock']
+            self.assertFalse(clock['paused'])
+            self.assertEqual(clock['remaining'],5)
 
     def test_autoplay_response_precedes_automatic_pass_for_other_seat(self):
         code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
@@ -329,7 +349,8 @@ class ServerIntegration(unittest.TestCase):
         self.assertTrue(data['room']['players'][1]['autoplay']);self.assertFalse(data['room']['players'][0]['autoplay'])
         self.assertFalse(data['room']['players'][1]['bot'])
         room=server.ROOMS[data['room']['code']]
-        self.assertIsNotNone(room['game'].bot_action(1))
+        g=room['game'];g.phase='play';g.turn=1
+        self.assertIsNotNone(g.bot_action(1))
 
     def test_wildcard_bomb_passes_back_to_airplane_or_pair_run(self):
         client=self.clients[0]
@@ -574,11 +595,12 @@ class ServerIntegration(unittest.TestCase):
         self.request(first,'start',{});room=server.ROOMS[code];g=room['game']
         self.assertEqual(self.request(first,'show-hand',{})[0],200)
         g.phase='play';g.turn=1
+        g.hands[0]=list(reversed(g.visible_hand(0)))
         status,data=self.request(first,'show-hand',{})
         self.assertEqual(status,200)
         public=self.request(second,'state')[1]['room']['game']['publicHands']
         self.assertEqual([h['owner'] for h in public],[0])
-        self.assertEqual(public[0]['cards'],g.hands[0])
+        self.assertEqual(public[0]['cards'],g.view(0)['hand'])
         g.hands[0].pop()
         self.assertEqual(len(server.room_view(room,None)['game']['publicHands'][0]['cards']),len(g.hands[0]))
         room['matchId']='next-match'
@@ -612,6 +634,11 @@ class ServerIntegration(unittest.TestCase):
         for _ in range(3):self.request(client,'bot',{})
         status,data=self.request(client,'start',{},headers);self.assertEqual(status,200)
         room=data['room'];self.assertTrue(room['audioWaiting'])
+        g=server.ROOMS[room['code']]['game']
+        for hand in g.hands:
+            for card in hand:
+                if card['rank']==3 and card['suit']=='S': card['suit']='H'
+        g.hands[0][0].update(rank=3,suit='S')
         self.assertEqual(self.request(client,'action',{'action':'confirm','revision':room['revision']},headers)[0],400)
         self.request(client,'audio-ack',{'event':-1},headers)
         self.assertTrue(server.audio_waiting(server.ROOMS[room['code']]))
@@ -744,6 +771,7 @@ class ServerIntegration(unittest.TestCase):
             if g.phase=='over':break
             for seat in range(4):
                 if g.phase=='setup' and server.confirmation_seat(room)!=seat: continue
+                if room.get('priorityClock') and room['priorityClock']['seat'] != seat: continue
                 move={'action':'priority-decline'} if g.priority and seat in g.priority['pending'] else g.bot_action(seat)
                 if move:
                     move={k:v for k,v in move.items() if k in ('action','ids','target','rank','value','wildcard')}
@@ -859,20 +887,26 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(len(data['room']['game']['hand']),7)
         self.assertTrue(server.audio_waiting(room))
 
-    def test_conveyor_rejects_taken_or_disabled_skills(self):
+    def test_conveyor_allows_taken_skills_but_rejects_disabled_skills(self):
         _,data=self.request(self.clients[0],'create',{'mode':'conveyor','options':{'disabledSkills':['balance']}})
         code=data['room']['code']
         self.request(self.clients[1],'join',{'code':code})
         self.assertEqual(self.request(self.clients[0],'skill',{'skill':'balance'})[0],400)
         self.assertEqual(self.request(self.clients[0],'skill',{'skill':'anchor'})[0],200)
-        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],400)
+        self.assertEqual(self.request(self.clients[1],'skill',{'skill':'anchor'})[0],200)
         self.assertEqual(self.request(self.clients[1],'skill',{'skill':'leap'})[0],200)
         self.assertEqual(self.request(self.clients[1],'skill',{'skill':'twins'})[0],400)
 
-    def test_conveyor_requires_at_least_four_enabled_skills(self):
+    def test_conveyor_can_start_with_players_and_bots_using_one_enabled_skill(self):
+        client=self.clients[0]
         disabled = [key for key in server.SKILLS if key != 'balance']
-        status, data = self.request(self.clients[0], 'create', {'mode':'conveyor', 'options':{'disabledSkills':disabled}})
-        self.assertEqual(status, 400, data)
+        status, data = self.request(client, 'create', {'mode':'conveyor', 'single':True, 'options':{'disabledSkills':disabled}})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.request(client,'skill',{'skill':'balance'})[0],200)
+        for _ in range(3): self.assertEqual(self.request(client,'bot',{})[0],200)
+        status,data=self.request(client,'start',{})
+        self.assertEqual(status,200,data)
+        self.assertEqual([p['skill'] for p in data['room']['players']],['balance']*4)
 
     def test_conveyor_ultimate_dlc_is_opt_in_and_distinct_skills_start(self):
         client=self.clients[0]
@@ -886,6 +920,30 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(status,200,data)
         self.assertEqual([p['skill'] for p in data['room']['players']],keys)
         self.assertEqual([a['count'] for a in data['room']['game']['conveyor']['actors']],[12,8,12,8])
+
+    def test_host_can_assign_or_reset_conveyor_bot_skills_before_start(self):
+        host,other=self.clients[:2]
+        for single in (False,True):
+            server.ROOMS.clear()
+            _,data=self.request(host,'create',{'mode':'conveyor','single':single})
+            if not single:
+                self.request(other,'join',{'code':data['room']['code']})
+                self.request(other,'skill',{'skill':'balance'})
+            target=1 if single else 2
+            self.request(host,'skill',{'skill':'balance'})
+            for _ in range(4-target): self.request(host,'bot',{})
+            if not single: self.assertEqual(self.request(other,'skill',{'skill':'money','botSeat':target})[0],400)
+            self.assertEqual(self.request(host,'skill',{'skill':'twins','botSeat':target})[0],400)
+            self.assertEqual(self.request(host,'skill',{'skill':'money','botSeat':target})[0],200)
+            self.assertEqual(self.request(host,'skill',{'skill':'money','botSeat':target+1})[0],200)
+            self.assertEqual(self.request(host,'skill',{'skill':None,'botSeat':target+1})[0],200)
+            with patch('server.secrets.choice',return_value='anchor') as random_skill:
+                status,data=self.request(host,'start',{})
+            self.assertEqual(status,200,data)
+            players=data['room']['players']
+            self.assertEqual([p['skill'] for p in players[target:]],['money']+['anchor']*(3-target))
+            self.assertEqual(random_skill.call_count,3-target)
+            self.assertEqual(self.request(host,'skill',{'skill':None,'botSeat':target})[0],400)
 
     def test_conveyor_new_round_resets_all_four_personal_grades(self):
         client=self.clients[0]

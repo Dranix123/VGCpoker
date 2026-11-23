@@ -98,10 +98,6 @@ test('spectator table renders public seats without private hand or action contro
   assert.ok(!html.includes(' · 你'));
   if(phase==='over'){assert.ok(html.includes('本局结束'));assert.ok(!html.includes('失败'));}
  }
- g.phase='play';g.negotiation={target:0,seat:1};
- const html=vm.runInContext('table(r,g)',context);
- assert.ok(!html.includes('data-action="accept"'));
- assert.ok(!html.includes('data-action="reject"'));
 });
 
 test('room setup keeps rule switches available in expandable options and a separate submit area',()=>{

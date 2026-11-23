@@ -15,6 +15,9 @@ test('declarations include only selected spade aces and preserve valid rank/suit
  const map=payload([5,5,5,14],'',{'3':{rank:5,suit:'D'},'0':9,'stale':8});
  assert.equal(JSON.stringify(map),JSON.stringify({'3':{rank:5,suit:'D'}}));
  assert.equal(payload([14],'14'),undefined);
+ assert.equal(payload([14],'',{'0':{rank:14,suit:'D'}}),undefined);
+ assert.equal(payload([14],'5'),undefined);
+ assert.equal(payload([14],'',{'0':{rank:18,suit:'D'}}),18);
  assert.equal(payload([14,8],'18'),18);
  assert.equal(payload([6,7],'',{'0':5}),undefined);
 });

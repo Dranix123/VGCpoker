@@ -167,12 +167,12 @@ test('suitmark offers only the suits present in the winning play',()=>{
  assert.ok(!html.includes('value="H"'));assert.ok(!html.includes('value="C"'));
 });
 
-test('skill selection marks skills taken by another player',()=>{
+test('a skill selected by another player still opens its description',()=>{
  const ctx=context({r:{host:1,seat:0,players:[{id:1,name:'自己',skill:null},{id:2,name:'别人',skill:'balance'}],skills:[{id:'balance',name:'转换',group:0,deal:7,keep:7,text:'转换'}]}});
  const html=vm.runInContext('conveyorWaiting(r)',ctx);
  assert.ok(html.includes('data-skill="balance"'));
- assert.match(html,/data-skill="balance"[^>]*disabled/);
- assert.ok(html.includes('已被选择'));
+ assert.doesNotMatch(html,/data-skill="balance"[^>]*disabled/);
+ assert.ok(html.includes('查看说明'));
 });
 
 test('trade offers a judgment during the draw phase',()=>{

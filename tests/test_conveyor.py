@@ -1,5 +1,6 @@
 import copy
 import itertools
+import json
 import random
 import unittest
 from unittest.mock import patch
@@ -31,7 +32,7 @@ class ConveyorRules(unittest.TestCase):
         c.discard=[];c.zones=[[] for _ in c.hands];c.all_cards={x['id']:x for x in cards+c.pile}
         c.seat_plays=[None for _ in c.hands];c.initial_counts=list(map(len,c.hands))
         for resource in c.resources: resource.update(turns=2,turnStart=2)
-        c.priority=None;c.claims={};c.start_turn=None;c.lead_key=None
+        c.priority=None;c.start_turn=None;c.lead_key=None
         return c
 
     def conservation(self,g):
@@ -56,7 +57,7 @@ class ConveyorRules(unittest.TestCase):
             c=g.core;s=g.actor(owner);keep=SKILLS[c.skills[s]]['keep']
             self.assertEqual(len(c.hands[s]),SKILLS[c.skills[s]]['deal'])
             g.action(owner,'keep',[x['id'] for x in c.hands[s][:keep]])
-        self.assertEqual(g.phase,'setup');self.conservation(g)
+        self.assertIn(g.phase,('setup','play'));self.conservation(g)
         with self.assertRaises(RuleError):g.action(0,'promote',rank=7)
 
     def test_repeated_skills_and_multiple_twins_keep_independent_actors(self):
@@ -67,7 +68,7 @@ class ConveyorRules(unittest.TestCase):
                 seat = g.actor(owner)
                 keep = SKILLS[key]['keep'] // (2 if key == 'twins' else 1)
                 g.action(owner, 'keep', [c['id'] for c in g.core.hands[seat][:keep]])
-            self.assertEqual(g.phase, 'setup')
+            self.assertIn(g.phase, ('setup','play'))
             if key == 'twins': self.assertEqual(list(map(len, g.core.hands)), [7] * 8)
             self.conservation(g)
 
@@ -84,6 +85,9 @@ class ConveyorRules(unittest.TestCase):
 
     def test_chase_force_uses_total_ordinary_hand_count_and_all_ranks(self):
         g=self.game('chase_force');c=self.table(g,[[7,18],[8],[9],[10]])
+        c.resources[0]['turns']=0
+        self.assertEqual(c.effective_rank(0,7),6)
+        c.resources[0]['turns']=1
         self.assertEqual(c.effective_rank(0,7),11)  # -1 +5, because five cards > four people
         self.assertEqual(c.effective_rank(0,18),18)
         c.hands[0].pop();self.assertEqual(c.effective_rank(0,18),17)
@@ -93,16 +97,16 @@ class ConveyorRules(unittest.TestCase):
         c.zones[0]=[dict(id='ignored',rank=7,suit='S')]*20
         self.assertEqual(c.effective_rank(0,7),10)
 
-    def test_chase_urgent_demotes_to_playable_joker_and_promoted_cards_use_urgent(self):
+    def test_chase_urgent_can_demote_but_other_cards_cannot_become_urgent(self):
         g=self.game('chase_force');c=self.table(g,[[18],[7],[8],[9]])
         card=c.hands[0][0]
         g.action(0,'auto',[card['id']])
         self.assertEqual(c.seat_plays[0]['ranks'],[17])
         g=self.game('chase_force');c=self.table(g,[[17,7],[8],[9],[10]])
-        card=c.hands[0][0];self.assertEqual(c.effective_rank(0,17),18)
-        g.action(0,'urgent',[card['id']],effect='ban',target=1)
-        self.assertEqual(c.resources[1]['ban'],2)
-        self.assertEqual(c.urgent_uses[card['id']],1)
+        card=c.hands[0][0];self.assertEqual(c.effective_rank(0,17),17)
+        with self.assertRaises(RuleError):g.action(0,'urgent',[card['id']],effect='ban',target=1)
+        g.action(0,'auto',[card['id']])
+        self.assertEqual(c.seat_plays[0]['ranks'],[17])
         self.conservation(g)
 
     def test_request_empty_stash_hand_finishes_and_discards_zone(self):
@@ -339,7 +343,7 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(c.bot_action(0)['target'],2)
 
     def test_special_chain_keeps_urgent_options_instead_of_auto_skipping(self):
-        for skill,hand in [('balance',[18,7,8]),('balance',[(14,'S'),7,8]),('chase_force',[17,7,8])]:
+        for skill,hand in [('balance',[18,7,8]),('balance',[(14,'S'),7,8]),('chase_force',[18,7,8])]:
             g=self.game(skill,'gift','anchor','formless');c=self.table(g,[hand,[6,9],[5,5,9],[5,8]])
             c.turn=3
             g.action(3,'play',[c.hands[3][0]['id']]);g.action(2,'cross',[x['id'] for x in c.hands[2][:2]]);g.action(1,'pass')
@@ -427,8 +431,10 @@ class ConveyorRules(unittest.TestCase):
     def test_numeric_values_and_growth_through_original_main_position(self):
         g=self.game('leap','ascend');c=g.core;c.main=5
         self.assertEqual(c.effective_rank(0,3),25);self.assertEqual(c.effective_rank(1,4),25)
-        for rank,value in [(11,11),(12,12),(13,13),(14,14),(15,15),(5,16),(16,17),(17,18)]:
-            self.assertEqual(c.card_value(2,dict(rank=rank)),value)
+        for rank,value in [(11,11),(12,12),(13,13),(14,14),(15,15),(5,16),(16,20),(17,25),(18,0)]:
+            card=dict(rank=rank,suit='S')
+            self.assertEqual(c.card_value(2,card),value)
+            self.assertEqual(c.judge(2,card)[0],value)
 
     def test_judgment_can_raise_a_normal_bomb_but_not_royals(self):
         g=self.game('judgment');c=self.table(g,[[4],[7,7,7,7,9],[8],[10]])
@@ -534,8 +540,9 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(c.resources[0]['marks'],7)
 
     def test_scavenge_cannot_be_random_first_player(self):
-        g=self.game('scavenge');c=g.core;c.phase='setup';c.first=None;c.reveals=[];c.rps={s:'ready' for s in (1,2,3)}
-        with patch('engine.random.randrange',return_value=0):g.action(0,'confirm')
+        g=self.game('scavenge');c=g.core;c.first=None;c.pending=[];c.drafted=set(range(4))
+        for hand in c.hands: hand[:] = [card for card in hand if not (card['rank']==3 and card['suit']=='S')]
+        with patch('engine.random.randrange',return_value=0):c.draft_ready()
         self.assertEqual(c.phase,'play');self.assertNotEqual(c.turn,0)
 
     def test_scavenge_remains_optional_later_without_end_draw(self):
@@ -611,7 +618,7 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(c.scores,[0,0,0,0])
         self.assertEqual(len(c.hands[0]),1)
         self.assertEqual(len(c.pile),before-1)
-        c.turn=0;c.start_turn=None;c.last=None;c.priority=None;c.claims={}
+        c.turn=0;c.start_turn=None;c.last=None;c.priority=None
         c.enter_turn()
         g.action(0,'auto',[c.hands[0][0]['id']])
         self.assertIn(0,c.finished)
@@ -717,6 +724,24 @@ class ConveyorRules(unittest.TestCase):
         g=self.game('formation');c=self.table(g,[[5,5,5]+[7]*10,[7],[8],[9]])
         g.action(0,'auto',[x['id'] for x in c.hands[0][:3]]);self.assertEqual(c.last['kind'],'炸弹')
 
+    def test_suitmark_triggers_on_single_suit_normal_play_and_special_reply(self):
+        for prior,reply,kind in (([6],[(8,'S')],'play'),([8],[(8,'S'),(8,'S')],'cross')):
+            g=self.game('suitmark');c=self.table(g,[reply+[9],prior+[10],[10],[11]])
+            c.turn=1
+            g.action(1,'play',[c.hands[1][0]['id']])
+            g.action(0,'auto',[card['id'] for card in c.hands[0][:len(reply)]])
+            self.assertEqual(c.last['special'],kind)
+            self.assertEqual(c.resources[1]['suits'],['S'])
+            self.assertFalse(c.pending)
+
+    def test_suitmark_joker_without_suit_still_offers_a_mark(self):
+        g=self.game('suitmark');c=self.table(g,[[(17,'J'),9],[7,10],[10],[11]])
+        c.turn=1;g.action(1,'play',[c.hands[1][0]['id']])
+        g.action(0,'auto',[c.hands[0][0]['id']])
+        self.assertEqual(c.pending[0]['suits'],list('SHCD'))
+        g.action(0,'choice',suit='C')
+        self.assertEqual(c.resources[1]['suits'],['C'])
+
     def test_suitmark_choice_is_from_played_suits_and_resolves_immediately(self):
         g=self.game('suitmark');c=self.table(g,[[(8,'S'),(8,'H'),9],[7,7,10],[10],[11]])
         c.turn=1
@@ -738,6 +763,15 @@ class ConveyorRules(unittest.TestCase):
             self.assertEqual(view['actors'][0]['boundTo'],['玩家1'])
             self.assertEqual(view['actors'][1]['boundTo'],['玩家0'])
             self.assertEqual(view['boundHands'],[])
+
+    def test_bound_hand_matches_the_owners_order_and_effective_ranks(self):
+        g=self.game('bond','leap','anchor','money')
+        c=self.table(g,[[5,8],[(13,'S'),(7,'H'),(7,'C'),(3,'S')],[9],[10]])
+        c.bonds=[dict(owner=0,seats=[0,1])]
+        other=g.view(1)['hand']
+        self.assertEqual(g.view(0)['conveyor']['boundHands'][0]['cards'],other)
+        self.assertEqual([card['rank'] for card in other],[7,7,13,3])
+        self.assertEqual([card['effective'] for card in other],[9,9,15,3])
 
     def test_spectators_never_receive_hands_choices_or_zone_cards(self):
         g=self.game('twins');c=g.core
@@ -818,8 +852,8 @@ class ConveyorRules(unittest.TestCase):
         for owner in range(4):
             actor=g.actor(owner)
             g.action(owner,'keep',[card['id'] for card in g.core.hands[actor][:g.core.keep_counts[actor]]])
-        self.assertEqual(g.phase,'setup')
-        self.assertEqual(g.log[-1],'选牌完成，请确认开始。')
+        self.assertEqual(g.phase,'play')
+        self.assertIn('选牌完成。',g.log)
 
     def test_all_ten_suit_pairs_resolve_and_clear(self):
         for pair in itertools.combinations_with_replacement('SHCD',2):
@@ -901,6 +935,44 @@ class ConveyorRules(unittest.TestCase):
         g.action(2,'auto',[x['id'] for x in c.hands[2] if x['rank']==7])
         self.assertEqual(len(c.hands[3]),before+1)
         self.assertEqual(c.resources[2]['turns'],turns+1)
+
+    def test_priority_cannot_rewind_a_newer_play(self):
+        g=self.game('balance','anchor','money','stars')
+        c=self.table(g,[[5,8],[5,5,9],[7],[6,10]])
+        for player in g.players: player['bot']=False
+        c.interactive=True
+        g.action(0,'play',[c.hands[0][0]['id']])
+        g.action(3,'play',[c.hands[3][0]['id']])
+        with self.assertRaises(RuleError):
+            g.action(1,'auto',[card['id'] for card in c.hands[1][:2]])
+        view=json.loads(json.dumps(g.view(1)))
+        self.assertIsNone(view['response'])
+        self.assertNotIn('negotiation',view)
+        self.assertEqual(view['lastSeat'],3)
+
+    def test_three_group_airplane_hint_with_effective_ranks(self):
+        g=self.game('leap','balance','anchor','money')
+        c=self.table(g,[[6]*3+[7]*3+[8]*3+[10,11,15,12],[9],[10],[5]*3+[6]*3+[7]*3+[10,11,12,13]])
+        c.turn=3;g.action(3,'play',[card['id'] for card in c.hands[3][:-1]])
+        for seat in (2,1): g.action(seat,'pass')
+        self.assertEqual(c.turn,0)
+        move=next(m for m in g.candidates(0) if m['label']=='飞机带单' and m['n']==12)
+        g.action(0,'auto',move['ids'])
+        self.assertEqual(c.last['value'],10)
+
+    def test_newly_drawn_card_can_dot_on_own_turn_after_priority_window(self):
+        g=self.game('balance','anchor','money','stars');c=self.table(g,[[3,3,8],[9],[10],[11]])
+        g.action(0,'play',[card['id'] for card in c.hands[0][:2]])
+        self.assertFalse(any(move['action']=='dot' for move in g.candidates(1)))
+        c.pile[0]['rank']=3
+        drawn=c.gain(1,1)[0]
+        g.action(3,'pass');g.action(2,'pass')
+        self.assertEqual(c.turn,1)
+        self.assertIsNone(c.priority)
+        self.assertTrue(any(move['action']=='dot' for move in g.candidates(1)))
+        g.action(1,'auto',[drawn['id']])
+        self.assertEqual(c.last['special'],'dot')
+        self.assertEqual(c.turn,1)
 
     def test_empty_pile_early_empty_turn_advances_without_stalling(self):
         g=self.game();c=self.table(g,[[],[7,8],[9,10],[11,12]])

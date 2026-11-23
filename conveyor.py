@@ -137,13 +137,16 @@ class ConveyorRound(Game):
             rank = self.main if value == 16 else value + PLAIN_RANK_OFFSET if value == self.main else value
         amount = -self.rank_penalty(seat)
         if key == 'chase_force':
-            hands = sum(len(self.hands[other]) for other in self.active())
-            players = len(set(self.owners))
-            amount += -1 + max(0, players - hands) * 2 + (5 if hands > players else 0)
+            amount -= 1
+            if self.resources[seat]['turns']:
+                hands = sum(len(self.hands[other]) for other in self.active())
+                players = len(set(self.owners))
+                amount += max(0, players - hands) * 2 + (5 if hands > players else 0)
         if amount:
             ladder = [r + PLAIN_RANK_OFFSET if r == self.main else r for r in RANKS] + [self.main, 16, 17, 18]
             index = len(RANKS) if rank == self.main else ladder.index(rank)
-            rank = ladder[max(0, min(index + amount, len(ladder) - 1))]
+            ceiling = len(ladder) - (1 if rank == 18 else 2)
+            rank = ladder[max(0, min(index + amount, ceiling))]
         return rank
 
     def gained(self, seat, number, end=False, mirror=True):
@@ -167,17 +170,22 @@ class ConveyorRound(Game):
         self.report(seat)
 
     def maximum(self, seat):
-        cards = [c for c in self.hands[seat] if self.effective_rank(seat, c['rank']) != 18]
+        cards = self.hands[seat]
         value = max((self.card_value(seat, c) for c in cards), default=None)
         return [c for c in cards if self.card_value(seat, c) == value]
 
+    def rank_value(self, rank):
+        return 16 if rank == self.main else {16: 20, 17: 25, 18: 0}.get(rank, printed_rank(rank))
+
+    def visible_hand(self, seat):
+        return [{**card, 'effective':self.effective_rank(seat, card['rank']), 'urgentUses':self.urgent_uses.get(card['id'], 0)} for card in super().visible_hand(seat)]
+
     def card_value(self, seat, card):
-        rank = self.effective_rank(seat, card['rank'])
-        return 16 if rank == self.main else rank + 1 if rank in (16, 17) else printed_rank(rank)
+        return self.rank_value(self.effective_rank(seat, card['rank']))
 
     def judge(self, seat, card, rank_only=False):
         rank, suit = self.effective_rank(seat, card['rank']) if rank_only else card['rank'], card['suit']
-        value = 16 if rank == self.main else {16: 20, 17: 25}.get(rank, printed_rank(rank))
+        value = self.rank_value(rank)
         state = self.resources[seat]
         if state.get('judgeBoost'):
             value += state['judgeBoost'] * 5
@@ -271,7 +279,6 @@ class ConveyorRound(Game):
         if self.priority:
             for group in ('pending', 'bots'): self.priority[group] = [s for s in self.priority[group] if s not in self.finished]
             if not self.priority['pending'] and not self.priority['bots']: self.priority = None
-        self.claims = {s: claim for s, claim in self.claims.items() if s not in self.finished}
         self.announce(self.name(seat) + '完成出牌，第%d名。' % len(self.complete_owners))
         active_owners = [o for o in range(4) if o not in self.complete_owners]
         if len(active_owners) <= 1:
@@ -380,14 +387,26 @@ class ConveyorRound(Game):
                 for fours in range(2, len(groups.get(4, [])) + 1):
                     for aces in range(1, min(fours - 1, len(groups.get(14, []))) + 1):
                         sets.append(groups[4][:fours] + groups[14][:aces])
-            for multiple, minimum in ((1, 5), (2, 3), (3, 2)):
+            max_group = max(map(len, groups.values()), default=0)
+            shifted = any(a['rank'] != b['rank'] for a, b in zip(hand, transformed))
+            for multiple, minimum in [(1, 5), (2, 3), (3, 2)] + ([(size, 2) for size in range(4, max_group + 1)] if shifted else []):
                 for start in range(3, 15):
                     ids = []
                     for end in range(start, 15):
                         group = groups.get(end, []) + (groups.get(end + PLAIN_RANK_OFFSET, []) if end == self.main else [])
                         if len(group) < multiple: break
                         ids += group[:multiple]
-                        if end - start + 1 >= minimum: sets.append(ids[:])
+                        width = end - start + 1
+                        if width < minimum: continue
+                        sets.append(ids[:])
+                        if shifted and multiple >= 3:
+                            others = [cards for rank, cards in groups.items() if not start <= printed_rank(rank) <= end]
+                            singles = [card for cards in others for card in cards]
+                            pairs = [cards[:2] for cards in others if len(cards) >= 2]
+                            for units in range(1, multiple - 1):
+                                count = width * units
+                                if len(singles) >= count: sets.append(ids + singles[:count])
+                                if len(pairs) >= count: sets.append(ids + [card for pair in pairs[:count] for card in pair])
             if len(hand) <= 8:
                 for n in range(1, len(hand) + 1):
                     sets.extend([c['id'] for c in part] for part in itertools.combinations(hand, n))
@@ -500,7 +519,6 @@ class ConveyorRound(Game):
         self.resources[seat]['skillBan'] += turns
         if shadow: self.resources[seat]['ban'] += 1
         self.announce(self.name(seat) + '技能封禁%d回合' % turns + ('，并禁手一回合。' if shadow else '。'))
-        self.claims.pop(seat, None)
         if shadow and self.priority:
             for group in ('pending', 'bots'):
                 self.priority[group] = [s for s in self.priority[group] if s != seat]
@@ -524,6 +542,15 @@ class ConveyorRound(Game):
             if self.last and not (self.last.get('direct') and self.last_seat == seat) and not self.candidates(seat):
                 for _ in range(10):
                     if not self.gain(seat, 1) or self.candidates(seat): break
+
+    def add_suit_mark(self, seat, suit):
+        if seat not in self.active(): return
+        marks = self.resources[seat]['suits']
+        marks.append(suit)
+        self.announce(self.name(seat) + '获得' + SUITS[suit] + '烙印。')
+        while len(marks) >= 2:
+            pair = sorted(marks[:2]); del marks[:2]
+            self.suit_effect(seat, pair)
 
     def suit_effect(self, seat, pair):
         code = ''.join(pair)
@@ -612,11 +639,13 @@ class ConveyorRound(Game):
             if self.skill(seat, 'money'): self.resources[seat]['money'] += play['n']
             self.resources[seat]['covered'] = old_last['seat'] if old_last else None
             if old_last and self.skill(seat, 'debt'): self.resources[old_last['seat']]['debt'] += 1
-            if old_last and self.skill(seat, 'suitmark'):
-                suits = [s for s in play.get('suits', []) if s in 'SHCD']
-                counts = Counter(suits)
-                if len(counts) > 1:
-                    self.offer(seat, 'suitmark', '烙印：选择赋予对方的花色', target=old_last['seat'], suits=list(counts))
+            if (self.phase == 'play' and old_last and not (ordinary and old_last.get('direct') and play['special'] == 'play')
+                    and old_last['seat'] != seat and old_last['seat'] in self.active() and self.skill(seat, 'suitmark')):
+                suits = list(dict.fromkeys(s for s in play.get('suits', []) if s in ('S', 'H', 'C', 'D'))) or list('SHCD')
+                if len(suits) == 1 or seat in self.finished:
+                    self.add_suit_mark(old_last['seat'], suits[0])
+                else:
+                    self.offer(seat, 'suitmark', '烙印：选择赋予对方的花色', target=old_last['seat'], suits=suits)
             if self.skill(seat, 'reflux'):
                 cards = [c for c in self.discard if c['id'] in {x['id'].split(':')[0] for x in play['cards']}]
                 if cards: self.offer(seat, 'reflux', '回收：选择置于牌堆底的已出牌', cards=copy.deepcopy(cards))
@@ -648,7 +677,7 @@ class ConveyorRound(Game):
     def settle(self):
         if self.phase == 'play' and self.last and set(self.active()) - {self.last_seat} <= self.passes:
             self.turn = self.last_seat if self.last_seat not in self.finished else self.inherit_lead(self.last_seat)
-            self.last = None; self.passes.clear(); self.priority = None; self.claims = {}; self.hui_used = False
+            self.last = None; self.passes.clear(); self.priority = None; self.hui_used = False
             self.display_seen.clear()
             for finished in self.finished: self.seat_plays[finished] = None
         if self.phase == 'play' and self.turn in self.finished: self.turn = self.next_seat(self.turn)
@@ -721,7 +750,7 @@ class ConveyorRound(Game):
             if action == 'reveal' and self.skill(seat, 'scavenge'): raise RuleError('顺手牵羊不能作为首位出牌者。')
             super().action(seat, action, ids, **args)
             if self.phase == 'play':
-                if self.skill(self.turn, 'scavenge'): self.turn = self.next_seat(self.turn)
+                while self.skill(self.turn, 'scavenge'): self.turn = self.next_seat(self.turn)
                 self.free_lead(); self.enter_turn()
             return
         if action == 'skill':
@@ -736,7 +765,6 @@ class ConveyorRound(Game):
                 return self.effective_rank(seat, card['rank']) == 18 or card['rank'] == 14 and (card['suit'] == 'S' or self.skill(seat, 'wild')) and assigned == 18
             if any(urgent_card(c) for c in self.select(seat, ids)): action = 'urgent'
         if action == 'urgent':
-            if self.negotiation: raise RuleError('请先处理截牌协商。')
             if self.resources[seat]['ban']: raise RuleError('禁手期间不能使用急牌。')
             self.urgent(seat, ids, **args)
             return
@@ -753,21 +781,11 @@ class ConveyorRound(Game):
         old_play = self.play_number
         prior_turn = self.turn
         effects = self.turn_effects(seat)
-        played_seat = seat
-        negotiation = self.negotiation if action == 'accept' else None
-        if negotiation:
-            played_seat = negotiation['seat']
-            snapshot = negotiation['snapshot']
-            if snapshot:
-                last, previous = snapshot['last'], snapshot['last_seat']
-                old_last = {**last, 'seat': previous} if last else None
-                old_play, prior_turn = snapshot['play_number'], snapshot['turn']
-                effects = {key for key in ('ban', 'shield', 'skillBan') if snapshot['resources'][played_seat][key]}
         if seat == prior_turn:
             effects = (effects - {'shield'}) | (self.start_effects.get(seat, effects) & {'shield'} & effects)
         else:
             self.resources[seat]['turnStart'] = self.resources[seat]['turns']
-        ordinary = seat == self.turn and action not in ('priority-decline', 'priority-play', 'accept', 'reject', 'negotiate')
+        ordinary = seat == self.turn and action not in ('priority-decline', 'priority-play')
         self.extra_args = args
         self._defer_priority = True
         self._validating_seat = seat
@@ -775,20 +793,15 @@ class ConveyorRound(Game):
             # The shared auto dispatcher treats an untransformed urgent card as urgent.
             # A lowered urgent card must instead follow its current ordinary pattern.
             if action == 'auto' and any(c['rank'] == 18 for c in self.select(seat, ids)):
-                claim = self.claims.get(seat)
-                if claim and claim['actors']:
-                    action = 'negotiate'
-                else:
-                    action = self.infer_action(seat, self.select(seat, ids), args.get('wildcard'))
-                    if self.priority and action in SPECIALS and seat in self.priority['pending'] + self.priority['bots']:
-                        args['special'] = action; action = 'priority-play'
-                    elif self.priority and self.solo() and seat in self.priority['pending']:
-                        self.priority = None
+                action = self.infer_action(seat, self.select(seat, ids), args.get('wildcard'))
+                if self.priority and action in SPECIALS and seat in self.priority['pending'] + self.priority['bots']:
+                    args['special'] = action; action = 'priority-play'
+                elif self.priority and self.solo() and seat in self.priority['pending']:
+                    self.priority = None
             super().action(seat, action, ids, **{k: v for k, v in args.items() if k != 'double'})
         finally:
             self.extra_args = {}
             self._defer_priority = False
-        seat = played_seat
         if self.play_number != old_play and self.last and self.last.get('special') in ('cross','hook','dot','press','dead','dead4'):
             cursor = prior_turn if prior_turn != seat else (self.next_seat(seat) if self.turn == seat else seat)
             visited = set()
@@ -813,7 +826,7 @@ class ConveyorRound(Game):
         active = set(self.active()) - {self.last_seat}
         if self.last and active <= self.passes:
             self.turn = self.last_seat if self.last_seat not in self.finished else self.inherit_lead(self.last_seat)
-            self.last = None; self.passes.clear(); self.priority = None; self.claims = {}; self.hui_used = False
+            self.last = None; self.passes.clear(); self.priority = None; self.hui_used = False
         else: self.turn = self.next_seat(seat)
 
     def draft_ready(self):
@@ -821,7 +834,17 @@ class ConveyorRound(Game):
         if primary <= self.drafted and not self.pending:
             self.phase = 'setup'
             self.initial_counts = [len(h) for h in self.hands]
-            self.announce('选牌完成，可亮黑桃3并确认开始。' if self.first is None else '选牌完成，请确认开始。')
+            self.announce('选牌完成。')
+            self.finish_setup()
+            if self.phase == 'play':
+                while self.skill(self.turn, 'scavenge'): self.turn = self.next_seat(self.turn)
+                self.free_lead(); self.enter_turn()
+
+    def can_reveal(self, seat):
+        return not self.skill(seat, 'scavenge') and super().can_reveal(seat)
+
+    def confirmation_seats(self):
+        return [s for s in self.active() if self.can_reveal(s)] if self.phase == 'setup' else []
 
     def urgent(self, seat, ids, **args):
         chosen = self.select(seat, ids)
@@ -842,8 +865,6 @@ class ConveyorRound(Game):
         if effect == 'discard' and len(chosen) == len(self.hands[seat]): raise RuleError('急牌弃牌后必须保留至少一张手牌。')
         direction = args.get('direction', 'counterclockwise')
         if effect == 'rotate' and direction not in ('clockwise', 'counterclockwise'): raise RuleError('轮换方向无效。')
-        self.claims = {}
-        self.history = None
         self.take(seat, urgent, None if effect == 'rotate' else 'bottom')
         if effect == 'rotate': self.destroyed.extend(urgent)
         else: self.urgent_uses[urgent[0]['id']] = self.urgent_uses.get(urgent[0]['id'], 0) + 1
@@ -1065,15 +1086,8 @@ class ConveyorRound(Game):
             self.finish(seat)
         elif kind == 'suitmark':
             suit = args.get('suit')
-            if suit not in q['suits']: raise RuleError('请选择这手牌包含的花色。')
-            target = q['target']
-            if target in self.active():
-                marks = self.resources[target]['suits']
-                marks.append(suit)
-                self.announce(self.name(target) + '获得' + SUITS[suit] + '烙印。')
-                while len(marks) >= 2:
-                    pair = sorted(marks[:2]); del marks[:2]
-                    self.suit_effect(target, pair)
+            if suit not in q['suits']: raise RuleError('请选择可用的烙印花色。')
+            self.add_suit_mark(q['target'], suit)
         elif kind in ('maximum', 'urgent-max'):
             if len(chosen) != 1 or chosen[0] not in self.maximum(seat): raise RuleError('请选择一张最大牌。')
             self.take(seat, chosen, 'bottom' if kind == 'urgent-max' else 'discard')
@@ -1123,7 +1137,7 @@ class ConveyorRound(Game):
                     if self.hands[s]: self.offer(s, 'duel', '死斗：选择一张牌，全部选择后公开')
         elif kind == 'duel':
             cards = self.select(seat, ids)
-            if len(cards) != 1 or cards[0]['rank'] == 18: raise RuleError('请选择一张非急牌。')
+            if len(cards) != 1: raise RuleError('请选择一张判定牌。')
             self.duel['choices'][seat] = cards[0]
             if not any(p['kind'] == 'duel' for p in self.pending):
                 owner = self.duel['owner']; choices = self.duel['choices']
@@ -1175,10 +1189,10 @@ class ConveyorRound(Game):
             q = self.pending[0]
             if q['seat'] != seat: return None
             kind = q['kind']; ids = []; args = {}
-            hand = sorted(self.hands[seat], key=lambda c: strength(self.effective_rank(seat, c['rank']), self.main))
+            hand = sorted(self.hands[seat], key=lambda c: self.card_value(seat, c))
             if kind in ('split', 'discard', 'give', 'duel', 'stash'):
                 count = len(hand) // 2 if kind == 'split' else 0 if kind == 'stash' else 1 if kind == 'duel' else min(q['count'], len(hand))
-                ids = [c['id'] for c in hand if kind != 'duel' or c['rank'] != 18][:count]
+                ids = [c['id'] for c in hand[:count]]
             elif kind in ('maximum', 'urgent-max'): ids = [q['cards'][0]['id']]
             elif kind == 'stars': ids = [c['id'] for c in sorted(q['cards'], key=lambda c: -strength(c['rank'], self.main))]
             elif kind == 'scavenge': ids = [q['cards'][0]['id']]
@@ -1199,8 +1213,8 @@ class ConveyorRound(Game):
             chosen = sorted(self.hands[seat], key=lambda c: (counts[self.effective_rank(seat, c['rank'])], strength(self.effective_rank(seat, c['rank']), self.main)), reverse=True)[:keep]
             return dict(action='keep', ids=[c['id'] for c in chosen])
         if self.phase == 'setup':
-            if seat in self.rps: return None
-            if self.first is None and not self.skill(seat, 'scavenge') and seat not in self.reveals and any(c['rank'] == 3 and c['suit'] == 'S' for c in self.hands[seat]): return {'action':'reveal'}
+            if seat in self.rps or not self.can_reveal(seat): return None
+            if seat not in self.reveals: return {'action':'reveal'}
             return {'action':'confirm'}
         if self.phase == 'rps': return super().bot_action(seat)
         if self.phase != 'play' or seat in self.finished: return None
@@ -1265,13 +1279,6 @@ class ConveyorRound(Game):
             return (bool(left or self.zones[seat]), len(remaining) * 6 + split + move['power'] * .6 + move['value'] * .08 - move['n'])
         return min(moves, key=cost)
 
-    def snapshot(self):
-        state = super().snapshot()
-        for key in ('pile', 'discard', 'destroyed', 'urgent_uses', 'zones', 'resources', 'pending', 'bonds', 'complete_owners', 'lead_key', 'start_turn', 'start_effects'):
-            state[key] = copy.deepcopy(getattr(self, key))
-        return state
-
-
 class ConveyorGame:
     """Translate four account seats to independent internal actors (twins = two)."""
     def __init__(self, mode, players, options=None, previous=None, interactive=True):
@@ -1304,8 +1311,6 @@ class ConveyorGame:
         if key == 'priority':
             if not core.priority: return None
             return {k:sorted({core.owners[s] for s in v}) for k, v in core.priority.items()}
-        if key == 'negotiation':
-            return {**core.negotiation, 'target':core.owners[core.negotiation['target']], 'seat':core.owners[core.negotiation['seat']]} if core.negotiation else None
         return getattr(core, key)
 
     @property
@@ -1328,6 +1333,9 @@ class ConveyorGame:
             if requested not in candidates: raise RuleError('不能操作其他玩家的手牌。')
             return requested
         if self.core.pending and self.core.pending[0]['seat'] in candidates: return self.core.pending[0]['seat']
+        if self.core.phase == 'setup':
+            eligible = self.core.confirmation_seats()
+            return next((s for s in candidates if s in eligible), self.focus[seat])
         if self.core.turn in candidates: return self.core.turn
         return self.focus[seat]
 
@@ -1340,8 +1348,8 @@ class ConveyorGame:
             self.core.action_reports = []; self.core.action_gains = []
             old_turn = self.core.turn
             if action == 'confirm' and self.core.phase == 'setup':
-                for target, owner in enumerate(self.core.owners):
-                    if owner == seat and target not in self.core.rps: self.core.action(target, action, ids, **args)
+                for target in self.core.confirmation_seats():
+                    if self.core.owners[target] == seat and target not in self.core.rps: self.core.action(target, action, ids, **args)
             else: self.core.action(selected, action, ids, **args)
             self.focus[seat] = selected
             if old_turn != self.core.turn: self.focus[self.core.owners[self.core.turn]] = self.core.turn
@@ -1375,7 +1383,7 @@ class ConveyorGame:
 
     def view(self, seat):
         self.sync_players()
-        actor = self.actor(seat, self.focus[seat]) if seat is not None else None
+        actor = self.actor(seat, None if self.core.phase == 'setup' else self.focus[seat]) if seat is not None else None
         if seat is not None and self.core.pending and self.core.owners[self.core.pending[0]['seat']] == seat: actor = self.core.pending[0]['seat']
         if seat is not None and self.core.priority and actor not in self.core.priority['pending']:
             actor = next((s for s in self.core.priority['pending'] if self.core.owners[s] == seat), actor)
@@ -1387,12 +1395,11 @@ class ConveyorGame:
                     remainingHands=[sum((h for s, h in enumerate(c.hands) if c.owners[s] == o), []) for o in range(4)] if c.phase == 'over' else None,
                     seatPlays=[next((c.seat_plays[s] for s in reversed(range(len(c.players))) if c.owners[s] == o and c.seat_plays[s]), None) for o in range(4)],
                     reveals=list(dict.fromkeys(c.owners[s] for s in c.reveals)), ready=list(dict.fromkeys(c.owners[s] for s in c.rps)),
-                    openingFirst=c.owners[c.first] if c.first is not None else None, priority=self.priority, negotiation=self.negotiation)
+                    openingFirst=c.owners[c.first] if c.first is not None else None, priority=self.priority)
         if view['response']: view['response']['key'] = str(actor) + '/' + str(view['response']['key'])
-        view['hand'] = [{**card, 'effective':c.effective_rank(actor, card['rank']), 'urgentUses':c.urgent_uses.get(card['id'], 0)} for card in view['hand']] if actor is not None else []
         q = c.pending[0] if c.pending else None
         own_q = q if q and seat is not None and c.owners[q['seat']] == seat else None
-        view['conveyor'] = dict(gradeChanges=[c.scores[owner] - c.initial_scores[owner] for owner in range(4)], actor=actor, turnActor=c.turn, skill=c.skills[actor] if actor is not None else None,
+        view['conveyor'] = dict(gradeChanges=[c.scores[owner] - c.initial_scores[owner] for owner in range(4)], actor=actor, turnActor=c.turn, confirmationActors=c.confirmation_seats(), skill=c.skills[actor] if actor is not None else None,
             pile=len(c.pile), discard=len(c.discard), drafted=actor in c.drafted if actor is not None else False,
             keep=min(c.keep_counts[actor] // 2 if c.skill(actor, 'twins') else c.keep_counts[actor], len(c.hands[actor])) if actor is not None else 0,
             zone=copy.deepcopy(c.zones[actor]) if actor is not None else [],
@@ -1401,7 +1408,7 @@ class ConveyorGame:
                          finished=s in c.finished, skill=c.skills[s], boundTo=[c.name(target) for bond in c.active_bonds() if s in bond['seats'] for target in bond['seats'] if target != s], resources={k:v for k,v in c.resources[s].items() if k not in ('markCards',)}, play=c.seat_plays[s]) for s, o in enumerate(c.owners)],
             choice=copy.deepcopy(own_q), waiting=c.name(q['seat']) if q else None, waitingActor=q['seat'] if q else None,
             remainingActorHands=[copy.deepcopy(h) for h in c.hands] if c.phase == 'over' else None,
-            boundHands=[dict(name=c.name(s), cards=copy.deepcopy(c.hands[s]), zone=copy.deepcopy(c.zones[s])) for b in c.active_bonds() if actor in b['seats'] for s in b['seats'] if s != actor] if actor is not None else [])
+            boundHands=[dict(name=c.name(s), cards=c.visible_hand(s), zone=copy.deepcopy(c.zones[s])) for b in c.active_bonds() if actor in b['seats'] for s in b['seats'] if s != actor] if actor is not None else [])
         if own_q is None and q:
             view['response'] = None
         if actor is not None and c.players[actor].get('second'): view['conveyor']['drafted'] = True

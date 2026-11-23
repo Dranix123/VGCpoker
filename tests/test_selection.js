@@ -41,15 +41,17 @@ test('secondary touches do not replace a swipe and cancellation ends it',()=>{
 test('play and pass respect turn, priority window and free lead while preserving selected cards',()=>{
  const source=fs.readFileSync('public/app.js','utf8');
  const fn=source.slice(source.indexOf('function selectionUpdate(){'),source.indexOf('let cardSweep='));
- for(const scenario of ['other-turn','own-turn','free-lead','priority-response','other-clock']){
+ for(const scenario of ['other-turn','own-turn','free-lead','priority-response','other-clock','narrating']){
   const play={},pass={},g={mode:'basic',phase:'play',turn:scenario==='other-turn'?1:0,last:{},lastSeat:1,response:scenario==='priority-response'?{}:null};
   if(scenario==='priority-response')g.turn=1;
   if(scenario==='free-lead')g.last=null;
   if(scenario==='other-clock')g.priorityClock={seat:1};
-  const ctx={state:{room:{mode:'basic',seat:0,game:g,players:[{}]}},selected:new Set(['card']),$:s=>s==='[data-action="play"]'?play:s==='[data-action="pass"]'?pass:null,$$:()=>[],Node:{TEXT_NODE:3}};
+  const selectedCard={dataset:{card:'card'},classList:{toggle(_,on){selectedCard.selected=on;}},setAttribute(){}};
+  const ctx={state:{room:{mode:'basic',seat:0,game:g,players:[{}],audioWaiting:scenario==='narrating'}},selected:new Set(['card']),$:s=>s==='[data-action="play"]'?play:s==='[data-action="pass"]'?pass:null,$$:()=>[selectedCard],Node:{TEXT_NODE:3}};
   vm.createContext(ctx);vm.runInContext(fn+'selectionUpdate();',ctx);
-  assert.equal(!!play.disabled,['other-turn','other-clock'].includes(scenario),scenario);
-  assert.equal(!!pass.disabled,['other-turn','other-clock','free-lead'].includes(scenario),scenario);
+  assert.equal(!!play.disabled,['other-turn','other-clock','narrating'].includes(scenario),scenario);
+  assert.equal(!!pass.disabled,['other-turn','other-clock','free-lead','narrating'].includes(scenario),scenario);
+  assert.equal(selectedCard.selected,true);
   assert.equal(ctx.selected.size,1);
  }
 });
