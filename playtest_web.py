@@ -4,7 +4,7 @@ import re
 import threading
 
 from playtest import BOOLEAN_OPTIONS, DEEPSEEK_MODELS, DeepSeek, PlaytestService, run_config, send_log
-from playtest_replay import read, replay_path, restore_legacy
+from playtest_replay import load_replay
 from engine import MODES
 
 
@@ -65,13 +65,10 @@ class WebPlaytest:
         if result is None:
             return handler.respond({'error': '这局暂时没有回放。'}, 404)
         directory = service.output / run
-        path = replay_path(directory, number)
         config = summary['config']
         try:
             with service.lock:
-                if not path.exists():
-                    restore_legacy(directory, path, number, config, result)
-                record = read(path, 0 if frame is None else frame)
+                record = load_replay(directory, number, config, result, 0 if frame is None else frame)
         except FileNotFoundError:
             record = None
         if record is None:

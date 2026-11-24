@@ -84,11 +84,12 @@ test('multiplayer creation exposes opt-in matching and spectator settings',()=>{
   assert.ok(!/<input[^>]*name="allowSpectators"[^>]*checked/.test(html));
  }
 });
-test('spectator table renders public seats without private hand or action controls',()=>{
+test('spectator table opens all-hand panel without action controls',()=>{
  const players=Array.from({length:4},(_,i)=>({id:i+1,name:String(i),connected:true}));
  const r={seat:null,spectator:true,capacity:4,players,rated:true};
- const g={mode:'basic',phase:'play',turn:0,finished:[],urgentLast:[],counts:[2,2,2,2],hand:[],scores:[0,0],log:[]};
- const context={state:{user:{id:9}},esc:String,ranks:{},suits:{},selected:new Set(),roomHeading:()=>'',card:()=>'',r,g};vm.createContext(context);
+ const g={mode:'basic',phase:'play',turn:0,finished:[],urgentLast:[],counts:[1,1,1,1],hand:[],scores:[0,0],log:[],
+  publicHands:players.map((_,owner)=>({owner,actor:owner,cards:[{rank:owner+4,suit:'S'}]}))};
+ const context={state:{user:{id:9}},esc:String,ranks:{4:4,5:5,6:6,7:7},suits:{S:'♠'},selected:new Set(),roomHeading:()=>'',card:()=>'',r,g};vm.createContext(context);
  vm.runInContext(source.slice(source.indexOf('function table('),source.indexOf('function showAuth(')),context);
  for(const phase of ['play','over']){
   g.phase=phase;g.winner=[0];const html=vm.runInContext('table(r,g)',context);
@@ -96,6 +97,10 @@ test('spectator table renders public seats without private hand or action contro
   assert.ok(!html.includes('data-action="play"'));
   assert.ok(!html.includes('data-action="autoplay"'));
   assert.ok(!html.includes(' · 你'));
+  if(phase==='play'){
+   assert.match(html,/data-table-panel="public" open><summary>全员手牌/);
+   for(const rank of [4,5,6,7])assert.ok(html.includes(rank+'♠'));
+  }
   if(phase==='over'){assert.ok(html.includes('本局结束'));assert.ok(!html.includes('失败'));}
  }
 });

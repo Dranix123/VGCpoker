@@ -92,12 +92,12 @@ function render() {
   if(key===renderedKey){gameAudio.observe(r);return;}
   renderedKey=key;
   const handScroll=$('.hand')?.scrollLeft||0;
-  const previousTable=$('.board')?.dataset.table;
+  const previousTable=$('#view .board')?.dataset.table;
   const currentTable=g?tableKey(r):null;
   const openPanels=previousTable===currentTable
-    ? new Map($$('[data-table-panel]').map(panel=>[panel.dataset.tablePanel,panel.open])) : new Map();
+    ? new Map($$('#view [data-table-panel]').map(panel=>[panel.dataset.tablePanel,panel.open])) : new Map();
   const tableFocus=previousTable===currentTable
-    ? document.activeElement?.closest('.hand [data-card], .action-dock [data-action], [data-table-panel] > summary') : null;
+    ? document.activeElement?.closest('#view :is(.hand [data-card], .action-dock [data-action], [data-table-panel] > summary)') : null;
   const choiceForm=$('#cv-choice-form');
   const choiceDraft=choiceForm?{key:choiceForm.dataset.choiceKey,values:[...new FormData(choiceForm)]}:null;
   const joinInput=$('#join-code'); const joinValue=joinInput?.value; const joinFocus=document.activeElement===joinInput;
@@ -116,7 +116,7 @@ function render() {
     }
   }
   if($('.hand'))$('.hand').scrollLeft=handScroll;
-  for(const panel of $$('[data-table-panel]'))if(openPanels.has(panel.dataset.tablePanel))panel.open=openPanels.get(panel.dataset.tablePanel);
+  for(const panel of $$('#view [data-table-panel]'))if(openPanels.has(panel.dataset.tablePanel))panel.open=openPanels.get(panel.dataset.tablePanel);
   if($('.log-entries'))$('.log-entries').scrollTop=$('.log-entries').scrollHeight;
   const hand=$('.hand-area');
   if(hand&&g?.phase!=='over'&&!$('.action-feedback')){
@@ -139,7 +139,7 @@ function render() {
     const data=tableFocus.dataset;
     const target=data.card?$$('.hand [data-card]').find(b=>b.dataset.card===data.card)
       : data.action?$(`.action-dock [data-action="${data.action}"]`)
-      : $$('[data-table-panel]').find(p=>p.dataset.tablePanel===tableFocus.parentElement.dataset.tablePanel)?.querySelector('summary');
+      : $$('#view [data-table-panel]').find(p=>p.dataset.tablePanel===tableFocus.parentElement.dataset.tablePanel)?.querySelector('summary');
     target?.focus({preventScroll:true});
   }
   if(g && lastPhase!==g.phase){if(!lastPhase||lastPhase==='over'||['play','over'].includes(g.phase))window.scrollTo({top:0,behavior:'instant'});if(g.phase==='over'){clearTimeout(toastTimer);$('#toast').classList.remove('show');}if(lastPhase==='rps'&&g.phase==='play')toast('猜拳获胜：'+r.players[g.turn].name+'，先出牌。');hintMoves=[];hintIndex=0;lastPhase=g.phase;}
@@ -275,7 +275,7 @@ function tableHistory(g,summary){
 function publicHandsPanel(r,g){
   const hands=g.publicHands||[];
   if(g.phase==='over'||!hands.length)return '';
-  return `<details class="public-hands" data-table-panel="public"><summary>明牌 · ${new Set(hands.map(h=>h.owner)).size} 人</summary><div class="public-hand-grid">${hands.map(h=>`<section><strong>${esc(r.players[h.owner].name)}${hands.filter(other=>other.owner===h.owner).length>1?' · '+(hands.find(other=>other.owner===h.owner)===h?'A':'B'):''} <small>${h.cards.length} 张</small></strong><div class="public-hand-cards">${h.cards.map(c=>`<span class="${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]||''}${c.effective!==undefined&&c.effective!==c.rank?'→'+ranks[c.effective]:''}</span>`).join('')}</div></section>`).join('')}</div></details>`;
+  return `<details class="public-hands${r.spectator?' spectator-hands':''}" data-table-panel="public" ${r.spectator?'open':''}><summary>${r.spectator?'全员手牌':'明牌 · '+new Set(hands.map(h=>h.owner)).size+' 人'}</summary><div class="public-hand-grid">${hands.map(h=>`<section><strong>${esc(r.players[h.owner].name)}${hands.filter(other=>other.owner===h.owner).length>1?' · '+(hands.find(other=>other.owner===h.owner)===h?'A':'B'):''} <small>${h.cards.length} 张</small></strong><div class="public-hand-cards">${h.cards.map(c=>`<span class="${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]||''}${c.effective!==undefined&&c.effective!==c.rank?'→'+ranks[c.effective]:''}</span>`).join('')}</div></section>`).join('')}</div></details>`;
 }
 function showAuth(tab='login') {
   authTab=tab;
@@ -286,7 +286,7 @@ function showCreate(mode='landlord') {
   const single=screen==='single',capacity=mode==='landlord'||mode==='trio'?3:4,pref=state.preferences||{};
   const advanced=['standard','trio','conveyor'].includes(mode);
   const options=`${advanced?'<label class="checkbox"><input type="checkbox" name="disableAdvancedHui">不启用回进阶版</label><label class="checkbox"><input type="checkbox" name="disableAdvancedDead">不启用死压进阶版</label>':''}${['basic','standard'].includes(mode)?'<label class="checkbox"><input type="checkbox" name="tribute">启用进贡</label>':''}${mode==='conveyor'?conveyorCreateOptions():''}${mode==='standard'?'<label class="checkbox"><input type="checkbox" name="dlc">Fieldlark 三周年 DLC（额外 40 张）</label>':''}`;
-  showModal('create',`<h2 class="modal-title">${esc(names[mode])}</h2><form class="form" id="create-form"><fieldset class="ai-invitation"><legend>${single?'AI 对手':'邀请 AI'}</legend>${single?`<p class="form-note">${capacity-1} 位 AI</p>`:`<label>邀请人数<select name="botCount">${Array.from({length:capacity},(_,n)=>`<option value="${n}">${n===0?'不邀请':n+' 位 AI'}</option>`).join('')}</select></label>`}<label data-ai-type ${single?'':'hidden'}>AI 类型<select name="aiType"><option value="rules">规则 AI</option><option value="model" ${pref.configured?'':'disabled'}>模型 AI ${pref.configured?'· '+esc(pref.model):'· 需配置 API'}</option></select></label></fieldset>${!single?'<fieldset class="room-access"><legend>房间权限</legend><label>加入方式<select name="joinPolicy"><option value="code">仅房间号加入</option><option value="match">允许匹配加入</option></select></label><label class="checkbox"><input type="checkbox" name="allowSpectators">允许观战</label></fieldset>':''}${options?`<details class="room-options"><summary>规则选项${advanced?' · 默认开启进阶规则':''}</summary><div>${options}</div></details>`:''}<div class="create-submit"><p class="form-note">${single?'单人模式不计积分。':'全真人对局计分，含 AI 对局不计分。'}</p><p class="form-error" role="alert"></p><button class="primary full" type="submit">${single?'开始单人游戏':'创建房间'} →</button></div></form>`);
+  showModal('create',`<h2 class="modal-title">${esc(names[mode])}</h2><form class="form" id="create-form"><fieldset class="ai-invitation"><legend>${single?'AI 对手':'邀请 AI'}</legend>${single?`<p class="form-note">${capacity-1} 位 AI</p>`:`<label>邀请人数<select name="botCount">${Array.from({length:capacity},(_,n)=>`<option value="${n}">${n===0?'不邀请':n+' 位 AI'}</option>`).join('')}</select></label>`}<label data-ai-type ${single?'':'hidden'}>AI 类型<select name="aiType"><option value="rules">规则 AI</option><option value="model" ${pref.configured?'':'disabled'}>模型 AI ${pref.configured?'· '+esc(pref.model):'· 需配置 API'}</option></select></label></fieldset>${!single?'<fieldset class="room-access"><legend>房间权限</legend><label>加入方式<select name="joinPolicy"><option value="code">仅房间号加入</option><option value="match">允许匹配加入</option></select></label><label class="checkbox"><input type="checkbox" name="allowSpectators">允许观战（可查看手牌）</label></fieldset>':''}${options?`<details class="room-options"><summary>规则选项${advanced?' · 默认开启进阶规则':''}</summary><div>${options}</div></details>`:''}<div class="create-submit"><p class="form-note">${single?'单人模式不计积分。':'全真人对局计分，含 AI 对局不计分。'}</p><p class="form-error" role="alert"></p><button class="primary full" type="submit">${single?'开始单人游戏':'创建房间'} →</button></div></form>`);
 }
 
 async function showLeaderboard(){requireUser(async()=>{showModal('leaderboard','<h2 class="modal-title">积分榜</h2><div class="empty">加载中…</div>','THE LEADERBOARD');try{const d=await api('leaderboard');if(modalKind!=='leaderboard')return;$('#modal-content').innerHTML='<h2 class="modal-title">积分榜</h2>'+d.players.map((p,i)=>`<div class="leader-row"><span class="place">${String(i+1).padStart(2,'0')}</span><div>${esc(p.name)}${p.id===state.user.id?' · 你':''}<small>${p.rank} / ${p.wins} 胜 ${p.games} 场</small></div><span class="points">${p.points}</span></div>`).join('');}catch(e){toast(e.message);}});}

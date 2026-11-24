@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from playtest import DeepSeek, PlaytestService, play_batch, run_config, serve
-from playtest_replay import read, replay_path, restore_legacy
+from playtest_replay import load_replay, read, record, replay_path, restore_legacy
 
 
 class Playtest(unittest.TestCase):
@@ -30,16 +30,29 @@ class Playtest(unittest.TestCase):
                 self.assertEqual((frames, first['step'], first['game']['phase']), (steps + 1, 0, 'bid'))
                 self.assertEqual(first['game']['hand'], [])
                 self.assertIsNone(first['game']['remainingHands'])
+                self.assertEqual([(h['owner'], len(h['cards'])) for h in first['game']['publicHands']],
+                                 [(0, 17), (1, 17), (2, 17)])
                 self.assertIsNone(read(path, frames))
                 self.assertEqual(read(path, frames - 1)[1]['game']['winner'], match['winner'])
                 play = next(e for e in actions if e['match'] == number and e['move']['action'] == 'play')
                 _, frame = read(path, play['step'])
                 self.assertEqual(frame['game']['seatPlays'][play['seat']]['cards'], play['after']['last']['cards'])
+                self.assertEqual({c['id'] for c in frame['game']['publicHands'][play['seat']]['cards']},
+                                 {c['id'] for c in play['after']['hands'][play['seat']]})
+                cached = [read(path, step)[1] for step in range(frames)]
+                with record(path) as append:
+                    for state in cached:
+                        state['game'].pop('publicHands')
+                        append(**state)
+                _, upgraded = load_replay(output, number, config, match, play['step'])
+                self.assertEqual(upgraded['game']['seatPlays'], frame['game']['seatPlays'])
+                self.assertEqual(upgraded['game']['publicHands'], frame['game']['publicHands'])
                 path.unlink()
                 path.with_suffix('.idx').unlink()
                 self.assertTrue(restore_legacy(output, path, number, config, match))
                 self.assertTrue(read(path, 0)[1]['legacy'])
                 self.assertEqual(read(path, frames - 1)[1]['game']['winner'], match['winner'])
+                self.assertEqual(read(path, play['step'])[1]['game']['publicHands'], frame['game']['publicHands'])
 
     def test_conveyor_replay_records_public_state_for_both_identities(self):
         config = run_config({'driver': 'rules', 'mode': 'conveyor', 'maxSteps': 4,
@@ -53,6 +66,10 @@ class Playtest(unittest.TestCase):
             view = frame['game']['conveyor']
             twins = [a for a in view['actors'] if a['owner'] == 0]
             self.assertEqual([a['count'] for a in twins], [7, 7])
+            hands = frame['game']['publicHands']
+            self.assertEqual([(h['owner'], h['actor'], len(h['cards'])) for h in hands],
+                             [(0, 0, 7), (0, 1, 7), (1, 2, 6), (2, 3, 6), (3, 4, 6)])
+            self.assertTrue(all('effective' in c for h in hands for c in h['cards']))
             self.assertIsNone(view['choice'])
             self.assertEqual(view['boundHands'], [])
             self.assertFalse(any('hand' in a for a in view['actors']))

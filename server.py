@@ -216,17 +216,13 @@ def room_view(room, uid):
     if room.get('game'): update_priority_clock(room, expire=False)
     game = room['game'].view(seat) if room.get('game') else None
     if game:
-        game['publicHands'] = []
-        if room.get('shownMatch') == room.get('matchId'):
-            g = room['game']; c = g.core if g.mode == 'conveyor' else g
-            for actor in range(len(c.hands)):
-                owner = c.owners[actor] if g.mode == 'conveyor' else actor
-                if owner in room.get('shownSeats', []):
-                    game['publicHands'].append(dict(owner=owner, actor=actor, cards=c.visible_hand(actor)))
+        g = room['game']
+        core = g.core if g.mode == 'conveyor' else g
+        shown = room.get('shownSeats', ()) if room.get('shownMatch') == room.get('matchId') else ()
+        watching = spectator and room['options'].get('allowSpectators') and not room.get('single')
+        game['publicHands'] = core.public_hands(None if watching else shown)
         game['confirmTurn'] = confirmation_seat(room)
         if game['phase'] == 'setup':
-            g = room['game']
-            core = g.core if g.mode == 'conveyor' else g
             game['confirmationSeats'] = sorted({core.owners[s] if g.mode == 'conveyor' else s for s in core.confirmation_seats()})
         clock = room.get('priorityClock')
         game['priorityClock'] = {'seat':clock['seat'], 'actor':clock['actor'], 'paused':'pausedAt' in clock, 'remaining':max(0, __import__('math').ceil(clock['expires']-clock.get('pausedAt', time.time())))} if clock else None

@@ -996,6 +996,11 @@ class Game:
     def visible_hand(self, seat):
         return sorted(self.hands[seat], key=lambda c: (strength(c['rank'], self.main, self.mode), c['suit']))
 
+    def public_hands(self, shown=None):
+        owners = getattr(self, 'owners', range(len(self.hands)))
+        return [dict(owner=owner, actor=actor, cards=self.visible_hand(actor))
+                for actor, owner in enumerate(owners) if shown is None or owner in shown]
+
     def view(self, seat):
         response = None
         if self.phase == 'play' and seat is not None and seat not in self.finished:

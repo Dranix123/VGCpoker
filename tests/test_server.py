@@ -111,12 +111,14 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(self.request(bob,route+'/log')[0],404)
             replay=route+'/matches/1'
             self.assertEqual(self.request(bob,replay)[0],404)
+            self.assertEqual(self.request(bob,replay+'/frames/1')[0],404)
             self.assertEqual(self.request(ungranted,replay+'/frames/1')[0],403)
             status,view=self.request(alice,replay)
             self.assertEqual(status,200)
             self.assertEqual(view['frames'],3)
             self.assertTrue(view['room']['spectator'])
             self.assertEqual(view['first']['game']['hand'],[])
+            self.assertEqual([len(h['cards']) for h in view['first']['game']['publicHands']],[17,17,17])
             self.assertEqual(self.request(alice,replay+'/frames/2')[1]['step'],2)
             self.assertEqual(self.request(alice,replay+'/frames/3')[0],404)
             self.assertEqual(self.request(alice,route+'/matches/2')[0],404)
@@ -575,11 +577,18 @@ class ServerIntegration(unittest.TestCase):
         self.request(host,'start',{}, {'X-Poker-Audio':'1'})
         status,data=self.request(viewer,'state',headers={'X-Poker-Audio':'1'})
         watch=data['room'];self.assertTrue(watch['spectator']);self.assertEqual(watch['game']['hand'],[])
+        g=room['game']
+        self.assertEqual(watch['game']['publicHands'],
+                         [dict(owner=s,actor=s,cards=g.visible_hand(s)) for s in range(3)])
+        self.assertEqual(self.request(host,'state')[1]['room']['game']['publicHands'],[])
+        g.hands[1].pop()
+        self.assertEqual(self.request(viewer,'state')[1]['room']['game']['publicHands'][1]['cards'],g.visible_hand(1))
         self.assertIsNone(watch['game']['response']);self.assertIsNone(watch['game']['priority'])
         self.assertIsNone(watch['audioEvent']);self.assertFalse(watch['audioWaiting'])
         self.assertNotIn(self.users[1]['id'],room['audioEvent']['listeners'])
         for path,body in (('action',{'action':'pass','revision':room['revision']}),('autoplay',{'enabled':True}),('resign',{}),('start',{}),('bot',{}),('chat',{'text':'悲'})):
             self.assertEqual(self.request(viewer,path,body)[0],400)
+        self.assertEqual(self.request(viewer,'join',{'code':code})[0],400)
         before=room['revision'];self.assertEqual(self.request(viewer,'leave',{})[0],200)
         self.assertEqual(room['revision'],before);self.assertIsNotNone(room['game'])
         self.assertIsNone(self.request(viewer,'state')[1]['room'])

@@ -2,9 +2,11 @@
 
 import json
 import struct
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from engine import MODES
+from engine import MODES, strength
 
 
 OFFSET = struct.Struct('>Q')
@@ -42,7 +44,7 @@ def read(path, frame):
 
 def spectator_view(game, core):
     view = game.view(None)
-    view.update(publicHands=[], response=None, priority=None, confirmTurn=None)
+    view.update(publicHands=core.public_hands(), response=None, priority=None, confirmTurn=None)
     owners = getattr(core, 'owners', range(len(game.players)))
     if view['phase'] == 'setup':
         eligible = core.confirmation_seats()
@@ -56,7 +58,27 @@ def spectator_view(game, core):
     return view
 
 
-def restore_legacy(directory, path, match, config, result):
+def load_replay(directory, match, config, result, frame):
+    path = replay_path(directory, match)
+    if not path.exists():
+        restore_legacy(directory, path, match, config, result)
+    else:
+        opening = read(path, 0)
+        if opening and opening[1]['game'].get('publicHands'):
+            return opening if frame == 0 else read(path, frame)
+        # Keep recorded plays and state intact while adding the hands from the original log.
+        with TemporaryDirectory(dir=path.parent) as temp:
+            replacement = Path(temp) / path.name
+            try:
+                if restore_legacy(directory, replacement, match, config, result, previous=path):
+                    replacement.replace(path)
+                    replacement.with_suffix('.idx').replace(path.with_suffix('.idx'))
+            except FileNotFoundError:
+                pass
+    return read(path, frame)
+
+
+def restore_legacy(directory, path, match, config, result, previous=None):
     """Index an older log using the state and actions it actually recorded."""
     mode = config['mode']
     capacity = MODES[mode]
@@ -64,7 +86,8 @@ def restore_legacy(directory, path, match, config, result):
     plays = None
     promotions = {}
     play_number, landlord, bid = 0, None, 0
-    with (directory / 'events.jsonl').open(encoding='utf-8') as source:
+    with (directory / 'events.jsonl').open(encoding='utf-8') as source, ExitStack() as files:
+        recorded = files.enter_context(previous.open(encoding='utf-8')) if previous else iter(())
         for line in source:
             event = json.loads(line)
             if event.get('match') != match:
@@ -110,7 +133,16 @@ def restore_legacy(directory, path, match, config, result):
             return game
 
         with record(path) as append:
-            append(0, view(event['state']), legacy=True)
+            def restore_frame(step, state, **details):
+                old_frame = next(recorded, None)
+                game = json.loads(old_frame)['game'] if old_frame else view(state)
+                game['publicHands'] = [
+                    dict(owner=owner, actor=actor, cards=sorted(state['hands'][actor],
+                         key=lambda card: (strength(card['rank'], state['main'], mode), card['suit'])))
+                    for actor, owner in enumerate(owners)]
+                append(step, game, **details, legacy=True)
+
+            restore_frame(0, event['state'])
             for line in source:
                 event = json.loads(line)
                 if event.get('match') != match:
@@ -138,6 +170,6 @@ def restore_legacy(directory, path, match, config, result):
                 play_number = state['playNumber']
                 announcements = event.get('announcements', [])
                 log.extend(announcements)
-                append(event['step'], view(state), seat=seat, actor=actor, action=action,
-                       message=announcements[-1] if announcements else None, legacy=True)
+                restore_frame(event['step'], state, seat=seat, actor=actor, action=action,
+                              message=announcements[-1] if announcements else None)
     return True

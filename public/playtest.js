@@ -204,12 +204,16 @@ function openPlaytestReplay(run, match){
   function paint(frame, index){
     current=index;
     const room={...info.room,game:frame.game};
-    const history=$('.table-archive',stage);
-    const historyOpen=history?.open;
+    const panels=new Map([...stage.querySelectorAll('[data-table-panel]')].map(panel=>[panel.dataset.tablePanel,panel.open]));
+    const focusedPanel=stage.contains(document.activeElement)&&document.activeElement.matches('summary')
+      ? document.activeElement.parentElement.dataset.tablePanel : null;
     const logScroll=$('.log-entries',stage)?.scrollTop;
     stage.innerHTML=table(room,frame.game);
-    const archive=$('.table-archive',stage);
-    if(archive&&historyOpen!==undefined)archive.open=historyOpen;
+    for(const panel of stage.querySelectorAll('[data-table-panel]')){
+      const name=panel.dataset.tablePanel;
+      if(panels.has(name))panel.open=panels.get(name);
+      if(name===focusedPanel)$('summary',panel)?.focus({preventScroll:true});
+    }
     const log=$('.log-entries',stage);
     if(log)log.scrollTop=playing?log.scrollHeight:logScroll??log.scrollHeight;
     const last=index===info.frames-1;
