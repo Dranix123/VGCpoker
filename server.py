@@ -162,7 +162,7 @@ def perform_game_action(room, seat, move):
     labels = {'pass': 'pass', 'priority-decline': 'pass', 'bid': 'bid-' + str(move.get('value', 0)), 'reveal': 'reveal', 'confirm': 'confirm', 'rps': 'rps', 'promote': 'promote', 'urgent': 'urgent', 'auto': 'urgent', 'tribute-pick': 'tribute-pick', 'tribute-return': 'tribute-return'}
     if g.last_voice_play is not previous:
         play = g.last_voice_play; kind = play['kind']
-        key = kind + '-' + str(printed_rank(play['ranks'][0])) if kind in ('单张', '对子') else kind
+        key = kind + '-' + str(17 if play['ranks'][0] == 19 else printed_rank(play['ranks'][0])) if kind in ('单张', '对子') else kind
         if '张飞机' in kind: key = '飞机带对' if kind.endswith('对') else '飞机带单' if '带' in kind else '飞机'
         items += [{'effect': 'play'}, {'voice': key}]
     else:
@@ -214,12 +214,12 @@ def room_view(room, uid):
     game = room['game'].view(seat) if room.get('game') else None
     if game:
         game['publicHands'] = []
-        if room.get('shownMatch') == room.get('matchId'):
-            g = room['game']; c = g.core if g.mode == 'conveyor' else g
-            for actor in range(len(c.hands)):
-                owner = c.owners[actor] if g.mode == 'conveyor' else actor
-                if owner in room.get('shownSeats', []):
-                    game['publicHands'].append(dict(owner=owner, actor=actor, cards=c.visible_hand(actor)))
+        g = room['game']; c = g.core if g.mode == 'conveyor' else g
+        shown = room.get('shownSeats', []) if room.get('shownMatch') == room.get('matchId') else []
+        for actor in range(len(c.hands)):
+            owner = c.owners[actor] if g.mode == 'conveyor' else actor
+            if owner in shown or g.mode == 'conveyor' and c.resources[actor].get('revealTurns'):
+                game['publicHands'].append(dict(owner=owner, actor=actor, cards=c.visible_hand(actor), forced=owner not in shown))
         game['confirmTurn'] = confirmation_seat(room)
         if game['phase'] == 'setup':
             g = room['game']
@@ -661,10 +661,6 @@ class Handler(BaseHTTPRequestHandler):
                     for p in room['players']:
                         if p.get('bot'):
                             p['skill'] = p.get('botSkill') or secrets.choice(choices)
-                    if all(p.get('skill') == 'scavenge' for p in room['players']):
-                        bot = next((p for p in room['players'] if p.get('bot') and not p.get('botSkill')), None)
-                        starters = [key for key in choices if key != 'scavenge']
-                        if bot and starters: bot['skill'] = secrets.choice(starters)
                     room['game'] = ConveyorGame(room['mode'], room['players'], room['options'], previous, interactive=True)
                 else:
                     room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)

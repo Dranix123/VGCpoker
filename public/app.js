@@ -2,9 +2,9 @@
 const $ = (s, root = document) => root.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {conveyor:'传送带',landlord:'斗地主',standard:'4A4A4',trio:'4A4A4 · 三人',basic:'4A4 · 基础'};
-const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急'};
+const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急',19:'跨级王'};
 for(let n=3;n<=15;n++)ranks[n+20]=ranks[n];
-const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
+const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.room?.game?.conveyor?.skill==='wild'?[16,17]:[]), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcard = '', wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
 let mutationSequence=0;
@@ -199,7 +199,7 @@ function table(r,g) {
   return roomHeading(r,true)+result+`<div class="table-layout"><section class="board">${seats}<div class="table-center">${center}</div></section><aside class="table-log"><div class="table-log-header"><span>牌桌动态</span><button class="text-button" data-action="rules">规则 ↗</button></div><div class="match-meta">${g.mode==='landlord'?`地主叫分 <b>${g.bid}</b>`:`${g.mode==='trio'?'三人个人争先':`${r.spectator?'一队':'我方'} <b>${g.scores[me%2]}</b> · ${r.spectator?'二队':'对方'} <b>${g.scores[1-me%2]}</b>`}`}<br>${r.rated?'计入积分与段位':'含 AI · 不计积分'}</div><div class="log-entries" aria-live="polite">${g.log.map(l=>`<div class="log-entry">${esc(l)}</div>`).join('')}</div></aside></div>${publicHandsPanel(r,g)}${handArea}`;
 }
 
-function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat)?'已明牌':'明牌'}</button>`:'';}
+function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat&&!h.forced)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat&&!h.forced)?'已明牌':'明牌'}</button>`:'';}
 function publicHandDisplay(g,seat){const hands=(g.publicHands||[]).filter(h=>h.owner===seat);return hands.length?`<details open class="public-hand"><summary>明牌 · ${hands.reduce((n,h)=>n+h.cards.length,0)} 张</summary>${hands.map((h,i)=>`<div>${hands.length>1?'手牌 '+(i===0?'A':'B'):''}<div class="public-hand-cards">${h.cards.map(c=>`<span class="${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]||''}${c.effective!==undefined&&c.effective!==c.rank?'→'+ranks[c.effective]:''}</span>`).join('')}</div></div>`).join('')}</details>`:'';}
 
 function publicHandsPanel(r,g){return g.phase!=='over'&&(g.publicHands||[]).length?`<section class="public-hands">${[...new Set(g.publicHands.map(h=>h.owner))].map(seat=>`<div><strong>${esc(r.players[seat].name)}</strong>${publicHandDisplay(g,seat)}</div>`).join('')}</section>`:'';}
