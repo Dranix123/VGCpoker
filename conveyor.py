@@ -282,14 +282,15 @@ class ConveyorRound(Game):
             if not self.priority['pending'] and not self.priority['bots']: self.priority = None
         self.announce(self.name(seat) + '完成出牌，第%d名。' % len(self.complete_owners))
         active_owners = [o for o in range(4) if o not in self.complete_owners]
-        if len(active_owners) <= 1:
-            order = self.complete_owners + active_owners
-            first = order[0]
+        first_out_ends_round = self.options.get('firstOutEndsRound', False)
+        if first_out_ends_round or len(active_owners) <= 1:
+            first = self.complete_owners[0]
             self.winner = [s for s, owner in enumerate(self.owners) if owner == first]
-            self.round_complete = self.main == 14
+            self.round_complete = first_out_ends_round or self.main == 14
             self.next_main = 3 if self.round_complete else RANKS[self.scores[first]]
             self.captured = []
             self.phase = 'over'
+            self.priority = None
             self.cancel_choices(lambda q: True)
             self.announce('本局结束。')
 

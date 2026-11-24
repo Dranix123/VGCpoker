@@ -457,7 +457,7 @@ footer{gap:24px}
 .skill-group{margin:0 0 26px}.skill-group>h3{font-size:18px;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:14px}.skill-card{min-height:128px;transition:background .15s,border-color .15s}.skill-card.chosen{outline:0;border:2px solid var(--ink)}.skill-ready{position:sticky;top:20px;align-self:start;display:grid;gap:12px}.skill-ready h3{margin:0}.skill-ready .ready-status{font-size:13px;line-height:1.7;padding:10px 0}.skill-ready button{min-height:44px}
 @media(max-width:720px){.conveyor-lobby{display:flex;flex-direction:column}.conveyor-lobby>.skill-ready{order:-1;position:static;width:100%;grid-template-columns:1fr 1fr;padding:16px;gap:10px}.skill-ready h3,.skill-ready>p,.skill-ready>[data-action="start"]{grid-column:1/-1}.skill-ready .ready-status{padding:0}.skill-ready button{padding:10px;font-size:12px}.skill-card{min-height:120px}.skill-group{margin-bottom:24px}}
 
-.seven-picker{padding:12px;border:1px solid var(--line)}.seven-picker label{display:grid;grid-template-columns:22px 1fr 1fr;align-items:center;gap:10px;margin:8px 0}.seven-picker[hidden],[data-urgent-target][hidden],[data-urgent-direction][hidden]{display:none}.choice-progress{font-size:13px;line-height:1.7}.choice-card{min-height:48px}
+.seven-picker{padding:12px;border:1px solid var(--line)}.choice-progress{font-size:13px;line-height:1.7}.choice-card{min-height:48px}
 @media(max-width:720px){.mode-card{min-height:126px;padding:18px 10px 12px}.mode-card h2{font-size:17px}.mode-symbol{font-size:18px;top:8px;right:10px;opacity:.5}.mode-foot{margin-top:10px;padding-top:8px}.mode-foot>span{margin-top:8px}.mode-grid{gap:10px}.flow-aside .side-panel{padding:18px}.flow-aside #join-form{display:grid;grid-template-columns:1fr 1fr;gap:8px}.flow-aside #join-code{grid-column:1/-1}.flow-aside .divider{margin:14px 0}.flow-aside .side-panel h3{margin:0 0 12px}.flow-aside .side-panel p{margin:10px 0}.flow-heading{padding-bottom:18px}}
 
 .draw-pile{display:grid;justify-items:center;gap:7px;margin:0 auto 12px;font-size:12px}.pile-back{display:grid;place-items:center;width:42px;height:58px;border:1px solid var(--ink);border-radius:4px;background:repeating-linear-gradient(45deg,#e4e1d7,#e4e1d7 3px,#f2efe6 3px,#f2efe6 6px);box-shadow:3px 3px 0 #ede9df,4px 4px 0 #777;font-size:10px}.deal-flight{position:fixed;z-index:100;pointer-events:none;transition:transform .3s ease-in,opacity .3s;transform:translate(0,0);margin:0}
@@ -651,4 +651,38 @@ footer{gap:24px}
   .in-game.live-table .hand .card-rank{font-size:14px}
   .in-game.live-table .hand .card-suit{top:18px}
   .in-game.live-table .action-feedback{min-height:30px}
+}
+
+.form .skill-options{min-inline-size:0;margin:0;padding:0;border:0}
+.conveyor-choice .form-error:empty,.conveyor-choice .choice-progress:empty{display:none}
+.skill-options legend{margin-bottom:8px;font-size:12px;font-weight:600}
+.skill-option-grid{display:flex;flex-wrap:wrap;gap:7px}
+.form .skill-option-grid label{position:relative;display:block}
+.form .skill-option-grid input{position:absolute;width:1px;height:1px;margin:0;padding:0;clip-path:inset(50%)}
+.skill-option-grid span{
+  display:grid;place-items:center;min-width:50px;min-height:44px;padding:6px 12px;
+  color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:5px;
+  font-size:13px;line-height:1.35;text-align:center;cursor:pointer;
+}
+.skill-option-grid :checked+span{border-color:var(--ink);background:#e8e5db;box-shadow:inset 0 -2px var(--ink);font-weight:600}
+.skill-option-grid :focus-visible+span{outline:2px solid var(--ink);outline-offset:2px}
+.skill-option-grid :disabled+span{opacity:.45;cursor:default}
+.skill-option-grid input:is([value="H"],[value="D"])+span{color:var(--red)}
+#cv-choice-form:has([name="effect"]:checked:not([value="normal"])) .skill-draw-count,
+#cv-choice-form:not(:has([name="effect"][value="redirect"]:checked)) .skill-draw-target{display:none}
+.urgent-effects .skill-option-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.seven-picker{display:grid;gap:12px}
+.seven-picker[hidden]{display:none}
+.seven-suits{display:grid;gap:5px}
+.seven-suit-row{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;gap:6px}
+.seven-suit-row strong{font:18px Georgia,var(--serif);text-align:center}
+.seven-suit-row legend{position:absolute;width:1px;height:1px;clip-path:inset(50%)}
+.skill-suit-options .skill-option-grid span{min-width:38px;padding:5px 9px;font-size:17px}
+.skill-card-pair{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:5px}
+.skill-card-pair h3{font-size:15px}
+@media(max-width:720px){
+  .in-game .hand-top>strong{white-space:nowrap;flex-shrink:0}
+  .in-game .hand-tools{min-width:0}
+  .in-game .hand-tools button:not(.conveyor-skill-button){flex-shrink:0}
+  .in-game .hand-tools .conveyor-skill-button{min-width:0;overflow:hidden;text-overflow:ellipsis}
 }

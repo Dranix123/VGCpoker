@@ -546,6 +546,7 @@ class Handler(BaseHTTPRequestHandler):
                 options['dlc'] = False
                 options['tribute'] = False
                 options['recycle'] = False
+                options['firstOutEndsRound'] = b.get('options', {}).get('firstOutEndsRound') is True
                 groups = b.get('options', {}).get('skillDlc', [])
                 disabled = b.get('options', {}).get('disabledSkills', [])
                 if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4, 5) for n in groups): raise RuleError('技能 DLC 选项无效。')

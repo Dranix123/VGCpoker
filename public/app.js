@@ -106,7 +106,14 @@ function render() {
   else $('#view').innerHTML=table(r,g);
   if(joinValue!==undefined && $('#join-code')){$('#join-code').value=joinValue; if(joinFocus)$('#join-code').focus();}
   const nextChoice=$('#cv-choice-form');
-  if(choiceDraft&&nextChoice?.dataset.choiceKey===choiceDraft.key)for(const [name,value] of choiceDraft.values){const field=nextChoice.elements.namedItem(name);if(field)field.value=value;}
+  if(choiceDraft&&nextChoice?.dataset.choiceKey===choiceDraft.key){
+    for(const [name,value] of choiceDraft.values){
+      const options=[...nextChoice.querySelectorAll('input[type="radio"]')].filter(input=>input.name===name);
+      const option=options.find(input=>input.value===value&&!input.disabled);
+      if(option)option.checked=true;
+      else if(!options.length){const field=nextChoice.elements.namedItem(name);if(field)field.value=value;}
+    }
+  }
   if($('.hand'))$('.hand').scrollLeft=handScroll;
   for(const panel of $$('[data-table-panel]'))if(openPanels.has(panel.dataset.tablePanel))panel.open=openPanels.get(panel.dataset.tablePanel);
   if($('.log-entries'))$('.log-entries').scrollTop=$('.log-entries').scrollHeight;
@@ -226,7 +233,7 @@ function tableKey(r){return r.code+'/'+r.matchId;}
 function handTools(r){
   const autoplay=!!r.players[r.seat]?.autoplay;
   const control=r.game?.phase==='over'?'':`<button class="secondary" data-action="autoplay" aria-pressed="${autoplay}">${autoplay?'取消托管':'托管'}</button>`;
-  return control+'<button class="secondary table-tools-button" data-action="table-tools" aria-haspopup="dialog">更多</button>';
+  return control+'<button class="secondary chat-button" data-action="chat-menu" aria-haspopup="dialog">发言</button><button class="secondary table-tools-button" data-action="table-tools" aria-haspopup="dialog">更多</button>';
 }
 function actionDock(options=''){
   return `<div class="action-dock">
@@ -363,6 +370,17 @@ function showWildcard(){
   const conveyor=state.room?.mode==='conveyor', label=state.room?.game?.conveyor?.skill==='wild'?'A':'黑桃 A';
   const single=selected.size===1;
   if(!wild.length||single&&(!conveyor||!wildRanks().includes(18))){toast('单张 A 按原点数和花色出牌；配牌请再选一张。');return;}
+  if(conveyor){
+    const options=wild.map((c,i)=>{
+      const declared=wildcardMap[c.id];
+      const points=wildRanks().filter(n=>!single||n===14||n===18).map(n=>[n,ranks[n]]);
+      const rankOptions=skillOptions('rank:'+c.id,'第 '+(i+1)+' 张 '+ranks[c.rank]+suits[c.suit]+' 的点数',points,{value:wildRank(declared)??14});
+      const suitPicker=single?'':skillOptions('suit:'+c.id,'花色',suitOptions(),{className:'skill-suit-options',value:declared?.suit??c.suit});
+      return `<section class="skill-card-pair">${rankOptions}${suitPicker}</section>`;
+    }).join('');
+    showModal('wildcard',`<h2 class="modal-title">${label} 配牌</h2><form class="form" id="wildcard-form">${options}<button class="primary full" type="submit">确认配牌</button></form>`);
+    return;
+  }
   showModal('wildcard',`<h2 class="modal-title">${label} 配牌</h2><p class="modal-desc">每张${label}可以独立代替非王牌。选择 A 表示保留原点数${state.features?.wildUrgent?(conveyor?'；选择急牌后可选择急牌效果。':'；选择急牌后出牌即可赠牌。'):'。'}</p><form class="form" id="wildcard-form">${wild.map((c,i)=>`<label>第 ${i+1} 张${label}<select name="rank:${esc(c.id)}">${wildRanks().filter(n=>!single||n===14||n===18).map(n=>`<option value="${n}" ${n===(wildRank(wildcardMap[c.id])||14)?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="suit:${esc(c.id)}" aria-label="替代花色" ${single?'disabled':''}>${Object.entries(suits).filter(([s])=>['S','H','C','D'].includes(s)||s==='T'&&state.room.options.dlc).map(([s,label])=>`<option value="${s}" ${s===(wildcardMap[c.id]?.suit||c.suit)?'selected':''}>${label}</option>`).join('')}</select></label>`).join('')}<button class="primary full" type="submit">确认配牌 →</button></form>`,'WILDCARD DECLARATION');
 }
 function selectionUpdate(){
@@ -436,7 +454,7 @@ document.addEventListener('click',async e=>{
  case 'settings':case 'settings-api':settingsTab=action==='settings-api'?'api':'account';if(state.room)showSettingsModal();else navigate('settings');break;
  case 'settings-tab':settingsTab=b.dataset.tab;if(state.room)showSettingsModal();else{renderedKey='';render();}break;
  case 'lobby':if(state.room)toast('当前仍在房间中。请离开房间后返回主菜单。');else {closeModal();navigate('home');}break;
- case 'table-tools':showModal('table-tools',`<h2 class="modal-title">牌桌操作</h2><div class="table-tool-list">${showHandButton(state.room,state.room.game)}<button class="secondary" data-action="chat-menu">发言</button><button class="secondary" data-action="rules">玩法手册</button><button class="secondary" data-action="settings">设置</button></div>`);break;
+ case 'table-tools':showModal('table-tools',`<h2 class="modal-title">牌桌操作</h2><div class="table-tool-list">${showHandButton(state.room,state.room.game)}<button class="secondary" data-action="rules">玩法手册</button><button class="secondary" data-action="settings">设置</button></div>`);break;
  case 'autoplay':if(await mutation('autoplay',{enabled:!state.room.players[state.room.seat].autoplay})){selected.clear();wildcardMap={};renderedKey='';render();}break;
  case 'match':requireUser(async()=>{await mutation('match',{mode:b.dataset.mode});});break;
  case 'watch':{const input=$('#join-code');if(input.reportValidity())requireUser(async()=>{await mutation('watch',{code:input.value});});break;}

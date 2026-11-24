@@ -992,6 +992,28 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(room['game'].scores,[0,0,0,0]);self.assertEqual(room['game'].main,3)
         self.assertIsNone(room['game'].first)
 
+    def test_conveyor_first_out_room_can_start_a_new_round_immediately(self):
+        client=self.clients[0]
+        _,data=self.request(client,'create',{'mode':'conveyor','single':True,'options':{'firstOutEndsRound':True}})
+        self.assertTrue(data['room']['options']['firstOutEndsRound'])
+        for _ in range(3):self.request(client,'bot',{})
+        self.request(client,'skill',{'skill':'balance'});self.request(client,'start',{})
+        room=server.room_of(self.users[0]['id']);core=room['game'].core
+        core.phase='play';core.pending=[];core.turn=0;core.resources[0].update(turns=2,turnStart=2)
+        core.hands[0]=[{'id':'closing-play','rank':7,'suit':'C'}]
+        status,data=self.request(client,'action',{'action':'auto','ids':['closing-play'],'revision':room['revision']})
+        self.assertEqual(status,200,data)
+        game=data['room']['game']
+        self.assertTrue(game['roundComplete'])
+        self.assertEqual(game['conveyor']['gradeChanges'],[2,0,0,0])
+        self.assertEqual(game['winner'],[0])
+        status,data=self.request(client,'start',{})
+        self.assertEqual(status,200,data)
+        self.assertTrue(data['room']['options']['firstOutEndsRound'])
+        self.assertIsNone(room['game'].first)
+        self.assertEqual(room['game'].scores,[0,0,0,0])
+        self.assertEqual(room['game'].main,3)
+
     def test_conveyor_ending_practice_keeps_all_grades_and_no_winner(self):
         client=self.clients[0]
         self.request(client,'create',{'mode':'conveyor','single':True})

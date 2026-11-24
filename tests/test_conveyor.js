@@ -96,14 +96,14 @@ test('blood ending uses mandatory hand trimming without the former draw opt-out'
  assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),false);
  ctx.selected=new Set(['a','b']);assert.equal(vm.runInContext('conveyorChoiceProgress(q,7).valid',ctx),true);
 });
-test('seven marks uses seven rank and suit selectors instead of raw codes',()=>{
+test('seven marks offers six starting ranks and a suit for each card',()=>{
  let html='';const ctx=context({showModal:(_,value)=>html=value});
  ctx.state.features.conveyorSkills.push({id:'seven',name:'七音',text:'储存七枚印记'});
  ctx.state.room={game:{hand:[],conveyor:{skill:'seven',resources:{marks:7}}}};
  vm.runInContext('conveyorUseSkill()',ctx);
- assert.equal((html.match(/name="markRank/g)||[]).length,7);
- assert.equal((html.match(/name="markSuit/g)||[]).length,7);
- assert.ok(!html.includes('placeholder="例如'));
+ assert.equal((html.match(/name="startRank"/g)||[]).length,6);
+ assert.equal((html.match(/name="markSuit\d"/g)||[]).length,7*4);
+ assert.doesNotMatch(html,/<select/);
 });
 test('waiting room post-render does not require a running game',()=>{
  const ctx=context();ctx.state.room={game:null};
@@ -155,7 +155,7 @@ test('public player resources include marks and counters for other players',()=>
 test('the fourth use of an urgent card offers only rotation and destruction',async()=>{
  let html='';const ctx=context({state:{room:{game:{hand:[{id:'urgent',rank:18,suit:'U',urgentUses:3},{id:'kept',rank:7,suit:'S'}],conveyor:{actor:0,turnActor:1,actors:[],resources:{}}}}},selected:new Set(['urgent']),urgentSelected:()=>true,wildcardPayload:()=>undefined,showModal:(kind,body)=>{html=body;},$:()=>null});
  vm.runInContext('conveyorUrgentUpdate=()=>{}',ctx);await vm.runInContext('conveyorPlay()',ctx);
- assert.match(html,/value="rotate" selected/);
+ assert.match(html,/value="rotate" checked/);
  for(const effect of ['draw','discard','ban','shield','maximum','silence','judge-boost','judge-color'])assert.match(html,new RegExp('value="'+effect+'"[^>]*disabled'));
  assert.ok(html.includes('本次必须轮换并销毁'));
 });
@@ -178,7 +178,8 @@ test('a skill selected by another player still opens its description',()=>{
 test('trade offers a judgment during the draw phase',()=>{
  const ctx=context({q:{kind:'deal',seat:0,title:'献祭',maximum:1},c:{actor:0,actors:[],skill:'trade'}});
  const html=vm.runInContext('conveyorChoice(q,c)',ctx);
- assert.match(html,/value="judge">判定/);
+ assert.match(html,/value="judge"[^>]*><span>翻牌判定/);
+ assert.doesNotMatch(html,/<select/);
 });
 
 test('new public marks and optional skill discards are visible and validated',()=>{

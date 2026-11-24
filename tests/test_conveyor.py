@@ -10,11 +10,11 @@ from engine import RuleError
 
 
 class ConveyorRules(unittest.TestCase):
-    def game(self, *skills, recycle=True):
+    def game(self, *skills, recycle=True, first_out=False):
         keys=list(skills)
         keys += [s for s in SKILLS if s not in keys][:4-len(keys)]
         players=[dict(id=i,name='玩家'+str(i),bot=True,skill=s) for i,s in enumerate(keys)]
-        return ConveyorGame('conveyor',players,{'skillDlc':[1,2,3,4,5],'recycle':recycle},interactive=False)
+        return ConveyorGame('conveyor',players,{'skillDlc':[1,2,3,4,5],'recycle':recycle,'firstOutEndsRound':first_out},interactive=False)
 
     def table(self, g, hands):
         c=g.core
@@ -297,6 +297,31 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(g.phase,'over');self.assertEqual(g.winner,[0])
         self.assertEqual(c.scores,[2,0,1,0]);self.assertEqual(c.next_main,5)
         self.assertEqual(g.view(0)['remainingHands'][3][0]['rank'],9)
+
+    def test_first_out_option_awards_only_winner_and_preserves_other_hands(self):
+        g=self.game('twins','money',first_out=True)
+        c=self.table(g,[[4],[6],[7],[8],[9]])
+        c.resources[2]['money']=4
+        before=[hand[:] for hand in c.hands[1:]]
+        g.action(0,'auto',[c.hands[0][0]['id']],actor=0)
+        self.assertEqual(g.phase,'over')
+        self.assertEqual(g.winner,[0])
+        self.assertEqual(c.scores,[2,0,0,0])
+        self.assertEqual(c.hands[1:],before)
+        self.assertEqual(c.finished,[0,1])
+        self.assertEqual(c.pending,[])
+        self.assertIsNone(c.priority)
+        self.assertTrue(c.round_complete)
+        self.assertEqual(c.next_main,3)
+        self.conservation(g)
+
+    def test_first_out_option_still_requires_the_third_action(self):
+        g=self.game(first_out=True);c=self.table(g,[[4],[7],[8],[9]])
+        c.resources[0].update(turns=0,turnStart=0)
+        g.action(0,'auto',[c.hands[0][0]['id']])
+        self.assertEqual(g.phase,'play')
+        self.assertEqual(c.scores,[0,0,0,0])
+        self.assertEqual(len(c.hands[0]),1)
 
     def test_individual_grades_follow_every_finish_order_and_persist(self):
         for order in itertools.permutations(range(4)):
