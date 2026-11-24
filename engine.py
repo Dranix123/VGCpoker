@@ -348,14 +348,21 @@ class Game:
         if any(i not in by_id for i in ids): raise RuleError('这些牌不在你的手中。')
         return [by_id[i] for i in ids]
 
-    def infer_action(self, seat, cards, wildcard=None):
+    def infer_play(self, seat, cards, wildcard=None):
         specials = ('dead4', 'dead', 'cross', 'hook', 'dot', 'press')
         for action in specials + ('play', 'hui'):
             try:
-                self.validate_play(seat, cards, action, wildcard)
-                return action
+                combo, _ = self.validate_play(seat, cards, action, wildcard)
+                return action, combo
             except RuleError: pass
         raise RuleError('所选牌无法在当前局面出牌。')
+
+    def infer_action(self, seat, cards, wildcard=None):
+        return self.infer_play(seat, cards, wildcard)[0]
+
+    def preview_play(self, seat, ids, wildcard=None):
+        cards = self.select(seat, ids)
+        return self.infer_play(seat, cards, wildcard)[1]['kind']
 
     def action(self, seat, action, ids=None, **args):
         if self.phase == 'over': raise RuleError('本局已结束。')

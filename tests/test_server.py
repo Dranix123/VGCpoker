@@ -77,6 +77,36 @@ class ServerIntegration(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+path)
             self.assertEqual(error.exception.code,404)
 
+    def test_play_preview_uses_the_submitted_rules_without_playing_the_cards(self):
+        client = self.clients[0]
+        for mode in ('standard', 'conveyor'):
+            with self.subTest(mode=mode):
+                server.ROOMS.clear()
+                self.request(client, 'create', {'mode': mode, 'single': True})
+                for _ in range(3):
+                    self.request(client, 'bot', {})
+                if mode == 'conveyor':
+                    self.request(client, 'skill', {'skill': 'balance'})
+                self.request(client, 'start', {})
+                room = server.room_of(self.users[0]['id'])
+                game = room['game']
+                core = game.core if mode == 'conveyor' else game
+                core.phase, core.turn = 'play', 0
+                card = {'id': 'test-5', 'suit': 'H', 'rank': 5}
+                core.hands[0] = [card, {'id': 'test-8', 'suit': 'D', 'rank': 8}]
+                revision = room['revision']
+                sample = {'ids': [card['id']], 'revision': revision}
+                if mode == 'conveyor':
+                    sample['actor'] = 0
+                self.assertEqual(self.request(client, 'play-preview', sample), (200, {'kind': '单张'}))
+                self.assertEqual(self.request(client, 'play-preview', {**sample, 'revision': revision - 1}), (200, {'stale': True}))
+                self.assertEqual(room['revision'], revision)
+                self.assertIsNone(core.last)
+                self.assertIn(card, core.hands[0])
+                result, data = self.request(client, 'action', {'action': 'auto', **sample})
+                self.assertEqual(result, 200, data)
+                self.assertEqual(core.seat_plays[0]['kind'], '单张')
+
     def test_tribute_option_is_saved_and_controls_next_deal(self):
         client=self.clients[0]
         for mode in ('basic','standard'):

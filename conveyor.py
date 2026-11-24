@@ -1408,6 +1408,16 @@ class ConveyorGame:
         actor = self.actor(seat, self.focus[seat])
         return [{**m, 'actor':actor} for m in self.core.candidates(actor)]
 
+    def preview_play(self, seat, ids, wildcard=None, actor=None, double=None):
+        actor = self.actor(seat, actor)
+        if self.core.pending: raise RuleError('请先完成当前选择。')
+        if self.core.resources[actor]['ban']: raise RuleError('禁手期间不能出牌。')
+        # Validation uses temporary rule flags and wildcard/split arguments.
+        preview = copy.copy(self.core)
+        preview.options = self.core.options.copy()
+        preview.extra_args = {'double': double} if double else {}
+        return preview.preview_play(actor, ids, wildcard)
+
     def priority_moves(self, seat):
         return [m for m in self.candidates(seat) if m['action'] in SPECIALS]
 

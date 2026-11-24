@@ -466,7 +466,7 @@ class Handler(BaseHTTPRequestHandler):
         user = self.session()
         if not user: return self.respond({'error': '请先登录。'}, 401)
         uid = user['id']
-        if self.headers.get('X-Poker-Audio') != '0': STATS.activity(uid)
+        if path != '/api/play-preview' and self.headers.get('X-Poker-Audio') != '0': STATS.activity(uid)
         if path == '/api/logout':
             WATCHING.pop(uid, None)
             room = room_of(uid)
@@ -583,6 +583,21 @@ class Handler(BaseHTTPRequestHandler):
             if not room: raise RuleError('你还没有加入房间。')
             host = room['host'] == uid
             seat = next(i for i, p in enumerate(room['players']) if p['id'] == uid)
+            if path == '/api/play-preview':
+                g = room['game']
+                if not g or g.phase != 'play' or seat in g.finished or room['players'][seat].get('autoplay'):
+                    return self.respond({'kind': None})
+                if b.get('revision') != room['revision']:
+                    return self.respond({'stale': True})
+                ids = b.get('ids')
+                if not isinstance(ids, list) or not ids or len(ids) > 128 or any(not isinstance(i, str) for i in ids):
+                    raise RuleError('请选择手牌。')
+                args = {k: b[k] for k in ('actor', 'double') if g.mode == 'conveyor' and k in b}
+                try:
+                    kind = g.preview_play(seat, ids, b.get('wildcard'), **args)
+                except RuleError as error:
+                    return self.respond({'kind':None, 'reason':str(error)})
+                return self.respond({'kind':kind})
             room['players'][seat]['seen'] = time.time()
             if self.headers.get('X-Poker-Audio') is not None: room['players'][seat]['audioEnabled'] = self.headers.get('X-Poker-Audio') == '1'
             if path == '/api/skill':
