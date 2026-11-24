@@ -2,9 +2,9 @@
 const $ = (s, root = document) => root.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names = {conveyor:'传送带',landlord:'斗地主',standard:'4A4A4',trio:'4A4A4 · 三人',basic:'4A4 · 基础'};
-const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急',19:'跨级王'};
+const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急'};
 for(let n=3;n<=15;n++)ranks[n+20]=ranks[n];
-const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.room?.game?.conveyor?.skill==='wild'?[16,17]:[]), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
+const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
 let mutationSequence=0;
@@ -221,7 +221,7 @@ function table(r,g) {
   return roomHeading(r,true)+result+`<div class="table-layout"><section class="board" data-table="${esc(tableKey(r))}">${seats}<div class="table-center">${center}</div></section>${tableHistory(g,`${summary}<br>${r.rated?'计入积分与段位':'练习 · 不计积分'}`)}</div>${handArea}${publicHandsPanel(r,g)}`;
 }
 
-function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat&&!h.forced)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat&&!h.forced)?'已明牌':'明牌'}</button>`:'';}
+function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat)?'已明牌':'明牌'}</button>`:'';}
 function tableKey(r){return r.code+'/'+r.matchId;}
 function handTools(r){
   const autoplay=!!r.players[r.seat]?.autoplay;
@@ -330,7 +330,7 @@ function updateActionFeedback(r,g,canAct,canUrgent){
   let turnLabel;
   if(ownsClock)turnLabel=(special?'可'+special:'优先管牌')+' · '+(clock.paused?'计时暂停':clock.remaining+' 秒');
   else if(clock)turnLabel=r.players[clock.seat].name+' · 优先管牌';
-  else if(yourTurn)turnLabel=banned?'轮到你 · 禁手':special?'轮到你 · 可'+special:g.last&&g.lastSeat!==(g.conveyor?.actor??r.seat)?'轮到你 · 跟牌':'轮到你 · 自由出牌';
+  else if(yourTurn)turnLabel=banned?'轮到你 · 禁手':g.conveyor?.mustScavenge?'轮到你 · 取牌并跳过':special?'轮到你 · 可'+special:g.last&&g.lastSeat!==(g.conveyor?.actor??r.seat)?'轮到你 · 跟牌':'轮到你 · 自由出牌';
   else if(special&&canAct)turnLabel='可'+special;
   else turnLabel=r.players[g.turn].name+' · 出牌中';
   const turn=$('[data-turn-label]',feedback);
@@ -338,7 +338,7 @@ function updateActionFeedback(r,g,canAct,canUrgent){
   if(turn.textContent!==turnText)turn.textContent=turnText;
   feedback.classList.toggle('your-action',canAct&&!banned||!!canUrgent);
 
-  const args=selected.size&&!banned&&!canUrgent&&(canAct||r.audioWaiting)&&!urgentSelected()?selectedPlay():null;
+  const args=selected.size&&!banned&&!g.conveyor?.mustScavenge&&!canUrgent&&(canAct||r.audioWaiting)&&!urgentSelected()?selectedPlay():null;
   const key=args?JSON.stringify([tableKey(r),r.revision,args]):'';
   const output=$('[data-play-preview]',feedback);
   if(key!==previewKey){
@@ -372,7 +372,8 @@ function selectionUpdate(){
  const g=state.room.game,r=state.room,canAct=(!g.priorityClock||g.priorityClock.seat===r.seat&&(!g.conveyor||g.priorityClock.actor===g.conveyor.actor))&&(!!g.response||g.turn===r.seat&&(!g.conveyor||g.conveyor.turnActor===g.conveyor.actor));
  const pass=$('[data-action="pass"]');if(pass)pass.disabled=!!r.audioWaiting||r.players[r.seat].autoplay||!canAct||!g.response&&(!g.last||g.lastSeat===(g.conveyor?g.conveyor.actor:r.seat));
  const canUrgent=g.conveyor&&!g.conveyor.waiting&&!g.conveyor.resources?.ban&&urgentSelected();
- const btn=$('[data-action="play"]');if(btn)btn.disabled=(!canUrgent&&(!canAct||!!g.conveyor?.resources?.ban||!!g.priority&&r.players.filter(p=>!p.bot).length===1&&!g.priority.pending.includes(r.seat)))||r.audioWaiting||r.players[r.seat].autoplay||!selected.size;
+ const btn=$('[data-action="play"]');if(btn)btn.disabled=(!canUrgent&&(!canAct||!!g.conveyor?.resources?.ban||g.conveyor?.mustScavenge||!!g.priority&&r.players.filter(p=>!p.bot).length===1&&!g.priority.pending.includes(r.seat)))||r.audioWaiting||r.players[r.seat].autoplay||!selected.size;
+ const hint=$('[data-action="hint"]');if(hint)hint.disabled=!!g.conveyor?.mustScavenge;
  const wildcardButton=$('[data-action="declare-wild"]');
  if(wildcardButton){
    wildcardButton.hidden=!(selected.size>1||g.conveyor&&wildRanks().includes(18))||!g.hand.some(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild'));

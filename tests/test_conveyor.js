@@ -149,7 +149,7 @@ test('public player resources include marks and counters for other players',()=>
  assert.ok(html.includes('class="red">♦'));
  assert.ok(vm.runInContext("conveyorResources({skill:'money',resources:{money:5}})",ctx).includes('金钱 5'));
  assert.ok(vm.runInContext("conveyorResources({skill:'seven',resources:{marks:3}})",ctx).includes('七音 3/7'));
- assert.ok(vm.runInContext("conveyorResources({skill:'ascend',resources:{boost:2}})",ctx).includes('强化 2 枚 · +2'));
+ assert.ok(vm.runInContext("conveyorResources({skill:'ascend',resources:{boost:2}})",ctx).includes('强化 2 枚 · +3'));
 });
 
 test('the fourth use of an urgent card offers only rotation and destruction',async()=>{

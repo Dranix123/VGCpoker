@@ -7,7 +7,6 @@ RANKS = list(range(3, 16))
 LABELS = {**{n: str(n) for n in range(3, 11)}, 11: 'J', 12: 'Q', 13: 'K', 14: 'A', 15: '2', 16: '小王', 17: '大王', 18: '急'}
 PLAIN_RANK_OFFSET = 20
 LABELS.update({n + PLAIN_RANK_OFFSET: LABELS[n] for n in RANKS})
-LABELS[19] = '跨级王'
 
 def printed_rank(rank):
     return rank - PLAIN_RANK_OFFSET if rank > PLAIN_RANK_OFFSET else rank
@@ -137,21 +136,21 @@ def classifications(ranks, mode, main, pattern=(4, 14)):
 def wildcard_rank(value):
     return value.get('rank') if isinstance(value, dict) else value
 
-def valid_wildcard(value, urgent=False, royal=False):
+def valid_wildcard(value, urgent=False):
     if isinstance(value, dict) and (set(value) - {'rank', 'suit'} or value.get('suit', 'S') not in ('S', 'H', 'C', 'D', 'T')): return False
-    return wildcard_rank(value) in RANKS + ([16, 17] if royal else []) + ([18] if urgent else [])
+    return wildcard_rank(value) in RANKS + ([18] if urgent else [])
 
-def interpretations(cards, mode, main, wildcard=None, pattern=(4, 14), royal=False):
+def interpretations(cards, mode, main, wildcard=None, pattern=(4, 14), all_aces=False):
     ranks = [c['rank'] for c in cards]
-    wild = [i for i, c in enumerate(cards) if c['suit'] == 'S' and c['rank'] == 14]
+    wild = [i for i, c in enumerate(cards) if c['rank'] == 14 and (all_aces or c['suit'] == 'S')]
     if wildcard is not None:
         if mode in ('landlord', 'basic') or len(cards) < 2 or not wild: return []
         if isinstance(wildcard, dict):
             allowed_ids = {cards[i]['id'] for i in wild}
-            if not set(wildcard) <= allowed_ids or any(not valid_wildcard(r, royal=royal) for r in wildcard.values()): return []
+            if not set(wildcard) <= allowed_ids or any(not valid_wildcard(r) for r in wildcard.values()): return []
             for i in wild: ranks[i] = wildcard_rank(wildcard.get(cards[i]['id'], 14))
         else:
-            if not valid_wildcard(wildcard, royal=royal): return []
+            if wildcard not in RANKS: return []
             for i in wild: ranks[i] = wildcard
         result = classifications(ranks, mode, main, pattern)
         if isinstance(wildcard, dict):
@@ -163,8 +162,6 @@ def interpretations(cards, mode, main, wildcard=None, pattern=(4, 14), royal=Fal
     # Match target rank multisets to natural cards, then fill only missing ranks.
     targets = []
     n = len(cards)
-    if royal:
-        targets.extend(Counter({16: n - big, 17: big}) for big in range(n + 1))
     for r in RANKS:
         targets.append(Counter({r: n}))
         for wing in RANKS + [16, 17]:
@@ -217,7 +214,7 @@ def interpretations(cards, mode, main, wildcard=None, pattern=(4, 14), royal=Fal
     for target in targets:
         if any(target[r] < v for r, v in fixed.items()): continue
         missing = list((target - fixed).elements())
-        if len(missing) != len(wild) or any(r >= (18 if royal else 16) for r in missing): continue
+        if len(missing) != len(wild) or any(r >= 16 for r in missing): continue
         rr = ranks[:]
         for i, r in zip(wild, missing): rr[i] = r
         for combo in classifications(rr, mode, main, pattern):
@@ -561,10 +558,7 @@ class Game:
         suits = combo.get('suits', [c['suit'] for c in cards])
         return tuple(tuple(sorted(Counter(suits[i] for i in group).items())) for group in groups)
 
-    def allows_royal_wildcard(self, seat):
-        return False
-
-    def validate_play(self, seat, cards, action='play', wildcard=None):
+    def validate_play(self, seat, cards, action='play', wildcard=None, *, all_aces=False):
         if not cards or any(c['rank'] == 18 for c in cards): raise RuleError('急牌请通过赠牌使用。')
         if action not in ('play', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'hui'): raise RuleError('未知出牌方式。')
         if action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and self.priority_declined.get(seat) == self.play_number:
@@ -583,7 +577,7 @@ class Game:
             priority_intercept = old and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')
             if not advanced_intercept and not priority_intercept: raise RuleError('还没轮到你出牌。')
         if old and self.last_seat == seat: raise RuleError('请等待其他玩家回应。')
-        combos = interpretations(cards, self.mode, self.main, wildcard, self.pattern, royal=self.allows_royal_wildcard(seat))
+        combos = interpretations(cards, self.mode, self.main, wildcard, self.pattern, all_aces)
         if not combos: raise RuleError('混子指定或牌型无效；单张黑桃A不能代替其他点数。')
         old_kind = old.get('baseKind', old['kind']) if old else ''
         if old_kind in ('飞机带单', '飞机带对') or '张飞机' in old_kind:

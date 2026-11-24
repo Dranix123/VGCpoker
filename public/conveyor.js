@@ -1,7 +1,7 @@
 'use strict';
 function resetConveyorSelection(){selected.clear();responseKey='';markResponse();}
 let conveyorChosen=[], conveyorChoiceKey='', conveyorDouble=null;
-const conveyorHandChoices=new Set(['split','discard','give','duel','stash','redemption','inspire','convert','gift-card']);
+const conveyorHandChoices=new Set(['split','discard','give','duel','stash','redemption','inspire']);
 const conveyorActiveSkills=new Set(['balance','gift','pressure','ascend','seven','judgment','trade','scavenge','bond']);
 const conveyorGroups={0:'标准',1:'突破',2:'重生',3:'多多益善',4:'智谋',5:'终极力量'};
 const conveyorSkill = id => (state.features?.conveyorSkills||state.room?.skills||[]).find(s=>s.id===id);
@@ -36,7 +36,7 @@ function conveyorResources(actor,label=''){
  if(actor.skill==='money')stats.push('金钱 '+r.money);
  if(actor.skill==='blood')stats.push('嗜血 '+r.blood);
  if(actor.skill==='seven')stats.push('七音 '+(r.marks||0)+'/7');
- if(actor.skill==='ascend')stats.push('强化 '+r.boost+' 枚 · +'+r.boost);
+ if(actor.skill==='ascend')stats.push('强化 '+r.boost+' 枚 · +'+(1+r.boost));
  if(r.prison)stats.push('禁锢 '+r.prison);
  if(r.inspire)stats.push('激励 '+r.inspire);
  if(r.skillBan)stats.push('技能封禁 '+r.skillBan+' 回合');
@@ -44,9 +44,6 @@ function conveyorResources(actor,label=''){
  if(r.judgeColor)stats.push('判定同色 '+r.judgeColor+' 枚');
  if(r.debt)stats.push('奉还 '+r.debt);
  if(r.shield)stats.push('免发 '+r.shield+' 回合');
- if(r.balanceMute)stats.push('平衡之力：封禁技能');
- if(r.revealTurns)stats.push('明牌 '+r.revealTurns+' 回合');
- if(r.suitPenalty)stats.push('点数 −1 · '+r.suitPenalty+' 回合');
  if(r.ban)stats.push('禁手 '+r.ban+' 回合');
  if(actor.zoneCount)stats.push('展示区 '+actor.zoneCount+' 张');
  if(actor.boundTo?.length)stats.push('绑定 '+actor.boundTo.join('、'));
@@ -56,7 +53,7 @@ function conveyorResources(actor,label=''){
 }
 function conveyorTable(r,g){
  const c=g.conveyor, me=r.seat??0, actor=c.actors.find(a=>a.id===c.actor), own=r.players[me], controlled=!r.spectator&&!own.autoplay&&!g.finished.includes(me), q=c.choice;
- const activeSkill=conveyorActiveSkills.has(c.skill)&&!c.resources?.skillBan&&!c.resources?.balanceMute;
+ const activeSkill=conveyorActiveSkills.has(c.skill)&&!c.resources?.skillBan;
  const available=controlled&&g.phase==='play'&&!c.waiting&&!g.finished.includes(me);
  const positions=['bottom','left','top','right'];
  const waitingActor=c.waitingActor??(c.waiting?c.actors.find(a=>a.name===c.waiting)?.id:null);
@@ -68,7 +65,7 @@ function conveyorTable(r,g){
  let center='',openingActions='';
  const pile=`<div class="draw-pile" aria-label="牌堆 ${c.pile} 张"><span class="pile-back">VGC</span><strong>${c.pile} 张</strong></div>`;
  if(g.phase==='draft')center=`<div class="table-prompt">开局选牌</div><p>${c.drafted?'等待其他玩家':c.skill==='twins'?'给 A '+c.keep+' 张，其余给 B':'保留 '+c.keep+' 张'}</p>`;
- if(g.phase==='setup'){center='<div class="table-prompt">开局亮牌</div>';if(g.confirmationSeats?.includes(me)??true)openingActions=`<div class="phase-actions conveyor-opening-actions">${!r.spectator&&g.openingFirst===null&&g.hand.some(x=>x.rank===3&&x.suit==='S')?'<button class="secondary" data-action="reveal">亮黑桃 3</button>':''}${!r.spectator?`<button class="primary" data-action="cv-confirm" ${g.ready.includes(me)?'disabled':''}>${g.ready.includes(me)?'已确认':'确认开始'}</button>`:''}</div>`}
+ if(g.phase==='setup'){center='<div class="table-prompt">开局亮牌</div>';if(g.confirmationSeats?.includes(me)??true)openingActions=`<div class="phase-actions conveyor-opening-actions">${!r.spectator&&c.skill!=='scavenge'&&g.openingFirst===null&&g.hand.some(x=>x.rank===3&&x.suit==='S')?'<button class="secondary" data-action="reveal">亮黑桃 3</button>':''}${!r.spectator?`<button class="primary" data-action="cv-confirm" ${g.ready.includes(me)?'disabled':''}>${g.ready.includes(me)?'已确认':'确认开始'}</button>`:''}</div>`}
  if(g.phase==='rps'){center='<div class="table-prompt">猜拳定先手</div>';openingActions=!r.spectator&&g.reveals.includes(me)&&!g.ready.includes(me)?'<div class="phase-actions conveyor-opening-actions">'+[['rock','石头'],['paper','布'],['scissors','剪刀']].map(([v,t])=>`<button class="secondary" data-action="rps" data-value="${v}">${t}</button>`).join('')+'</div>':`<p class="opening-wait">${g.ready.includes(me)?'已出拳，等待其他玩家':'亮牌玩家正在猜拳'}</p>`;const report=[...g.log].reverse().find(text=>text.startsWith('猜拳平局')||text.startsWith('猜拳胜者'));if(report&&g.reveals.includes(me)&&!g.ready.includes(me))openingActions=`<p class="rps-feedback" role="status">${esc(report)}</p>`+openingActions;}
  const order=[...g.finished,...r.players.map((_,seat)=>seat).filter(seat=>!g.finished.includes(seat))];
  const standings=g.phase==='over'&&g.winner.length?`<table class="conveyor-standings"><thead><tr><th>名次</th><th>玩家</th><th>等级</th></tr></thead><tbody>${order.map((seat,index)=>`<tr><td>${index+1}</td><td>${esc(r.players[seat].name)}</td><td>${ranks[g.scores[seat]+3]}${c.gradeChanges?.[seat]?'（+'+c.gradeChanges[seat]+'）':'（不变）'}</td></tr>`).join('')}</tbody></table>`:'';
@@ -77,7 +74,7 @@ function conveyorTable(r,g){
  const focus=c.actors.filter(a=>a.owner===me);
  const cardOptions=g.hand.some(x=>x.rank===14&&(x.suit==='S'||c.skill==='wild'))?'<button class="text-button" data-action="declare-wild" hidden>指定赖子</button>':'';
  const options=cardOptions+(c.skill==='double'?'<button class="text-button" data-action="cv-double" hidden>拆解</button>':'');
- const skillButton=`<button class="${activeSkill?'secondary':'text-button'} conveyor-skill-button" data-action="cv-skill-use" ${activeSkill&&(!controlled||g.phase!=='play'||c.skill!=='pressure'&&(c.waiting||c.turnActor!==c.actor)||actor?.resources.ban)?'disabled':''}>${(activeSkill?'发动':'查看')+esc(conveyorSkill(c.skill)?.name||'技能')}</button>`;
+ const skillButton=`<button class="${activeSkill?'secondary':'text-button'} conveyor-skill-button" data-action="cv-skill-use" ${activeSkill&&(!controlled||g.phase!=='play'||c.skill!=='pressure'&&(c.waiting||c.turnActor!==c.actor)||actor?.resources.ban)?'disabled':''}>${activeSkill&&c.skill==='scavenge'?'取牌并跳过':(activeSkill?'发动':'查看')+esc(conveyorSkill(c.skill)?.name||'技能')}</button>`;
  const focusButtons=focus.length>1&&g.phase!=='draft'?`<div class="hand-identities" aria-label="切换手牌">${focus.map((a,i)=>`<button class="${a.id===c.actor?'primary':'secondary'}" data-action="cv-focus" data-actor="${a.id}" aria-pressed="${a.id===c.actor}">手牌 ${i===0?'A':'B'} · ${a.count}${g.phase==='play'&&a.id===c.turnActor?' · 出牌':''}</button>`).join('')}</div>`:'';
  const draft=g.phase==='draft'&&!c.drafted?`<div class="draft-controls"><span>${c.waiting?'请先完成当前选择':c.skill==='twins'?'选择给手牌 A 的 '+c.keep+' 张，其余给 B':'请选择 '+c.keep+' 张保留'}</span><button class="primary" data-action="cv-keep" ${!controlled||c.waiting?'disabled':''}>确认保留 ${c.keep} 张</button></div>`:'';
  const zones=`${c.zone.length?`<details class="conveyor-zone" data-table-panel="zone"><summary>展示区 · ${c.zone.length} 张未出牌</summary><div>${c.zone.map(x=>`<button class="secondary" data-action="cv-retrieve" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</button>`).join('')}</div></details>`:''}${c.boundHands.map(h=>`<details data-table-panel="bound-${esc(h.seat??h.name)}"><summary>绑定手牌 · ${esc(h.name)}</summary>${h.cards.map(x=>`${ranks[x.rank]}${suits[x.suit]}${x.effective!==undefined&&x.effective!==x.rank?'→'+(x.effective===g.main?'主':'')+ranks[x.effective]:''}`).join(' ')}${h.zone?.length?`<p>未出展示区：${h.zone.map(x=>`${ranks[x.rank]}${suits[x.suit]}`).join(' ')}</p>`:''}</details>`).join('')}`;
@@ -93,7 +90,6 @@ function conveyorChoice(q,c){
  let extra='';
  if(['pursuit','deal'].includes(q.kind))extra=`<label>获得张数<select name="value">${Array.from({length:(q.maximum||10)+(q.kind==='pursuit'?1:0)},(_,i)=>q.kind==='pursuit'?i:i+1).map(n=>`<option value="${n}">${n}</option>`).join('')}</select></label>`;
  if(q.kind==='deal'&&['redirect','request','trade'].includes(c.skill))extra+=`<label>方式<select name="effect"><option value="normal">普通发牌</option><option value="${c.skill==='trade'?'judge':c.skill}">${c.skill==='trade'?'判定':c.skill==='redirect'?'转给别人':'向其他每人窃取两张'}</option></select></label>${c.skill==='redirect'?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}`;
- if(q.kind==='gift-card')extra=`<label>赠送目标<select name="target">${conveyorTargets(c)}</select></label>`;
  if(q.kind==='bond')extra=`<label>目标<select name="target">${q.required?'':'<option value="">保持现状</option>'}${conveyorTargets(c)}</select></label>`;
  if(q.kind==='suitmark')extra=`<label>烙印花色<select name="suit">${q.suits.map(s=>`<option value="${s}">${suits[s]}</option>`).join('')}</select></label>`;
  if(q.kind==='duel-start')extra='<label>选择<select name="value"><option value="0">不发动</option><option value="1">发起死斗</option></select></label>';
@@ -101,10 +97,10 @@ function conveyorChoice(q,c){
 }
 function conveyorChoiceProgress(q,handCount){
  const count=q.cards?conveyorChosen.length:selected.size;
- const exact=['maximum','urgent-max','duel','gift-card'].includes(q.kind)?1:['discard','give'].includes(q.kind)?Math.min(q.count,handCount):q.kind==='stars'?q.cards.length:null;
- const maximum=['retain','buy'].includes(q.kind)?1:q.kind==='split'?handCount-1:['redemption','inspire'].includes(q.kind)?q.maximum??null:null;
- const minimum=q.kind==='split'?1:0;
- const labels={convert:'选牌继续转换；不选牌可结束行动', 'gift-card':'选一张赠送的牌',redemption:q.title,inspire:q.title,discard:q.title,give:q.title,duel:q.title,stars:'按点击顺序排列，左侧先发',retain:'选中的牌会保留',buy:'选中的牌会买入',stash:'选中的手牌存入展示区',split:'选中的牌分给手牌 B'};
+ const exact=['maximum','urgent-max','duel'].includes(q.kind)?1:['discard','give'].includes(q.kind)?Math.min(q.count,handCount):q.kind==='stars'?q.cards.length:null;
+ const maximum=['retain','buy'].includes(q.kind)?1:q.kind==='split'?handCount-1:['redemption','inspire','scavenge'].includes(q.kind)?q.maximum??null:null;
+ const minimum=['split','scavenge'].includes(q.kind)?1:0;
+ const labels={redemption:q.title,inspire:q.title,discard:q.title,give:q.title,duel:q.title,stars:'按点击顺序排列，左侧先发',retain:'选中的牌会保留',buy:'选中的牌会买入',reflux:'选中的已出牌放回牌堆底',stash:'选中的手牌存入展示区',split:'选中的牌分给手牌 B'};
  const hasCards=!!q.cards||conveyorHandChoices.has(q.kind);
  return {valid:exact!==null?count===exact:count>=minimum&&(maximum===null||count<=maximum),text:hasCards?`${labels[q.kind]||'选择手牌'} · 已选 ${count}${exact!==null?' / '+exact:maximum!==null?' / 最多 '+maximum:minimum?' / 至少 '+minimum:''} 张`:''};
 }
@@ -130,14 +126,11 @@ async function conveyorPlay(){
 }
 async function conveyorUseSkill(){
  const c=state.room.game.conveyor;
- if(c.resources?.skillBan||c.resources?.balanceMute){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p>技能封禁 · ${c.resources.balanceMute?'平衡之力':'剩余 '+c.resources.skillBan+' 回合'}</p><p class="skill-description">${esc(s.text)}</p><button class="secondary" data-action="close">关闭</button>`);return;}
- if(c.skill==='scavenge'){
-  showModal('cv-skill',`<h2>顺手牵羊·新世代</h2><form class="form" id="cv-skill-form"><label>目标<select name="target">${conveyorTargets(c)}</select></label><label>随机取牌张数<select name="value">${[1,2,3,4].map(n=>`<option>${n}</option>`).join('')}</select></label><p>选两张或更多时，本回合不再出牌。发动后跳过抽牌阶段。</p><p class="form-error"></p><button class="primary">确认使用</button></form>`);return;
- }
- if(['gift','bond'].includes(c.skill)){await gameAction('skill',{actor:c.actor});resetConveyorSelection();return;}
+ if(c.resources?.skillBan){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p>技能封禁 · 剩余 ${c.resources.skillBan} 回合</p><p class="skill-description">${esc(s.text)}</p><button class="secondary" data-action="close">关闭</button>`);return;}
+ if(['scavenge','bond'].includes(c.skill)){await gameAction('skill',{actor:c.actor});resetConveyorSelection();return;}
  const active={balance:'转换',gift:'恩赐',pressure:'施压',ascend:'重铸·至高强化',seven:'重铸·七音',judgment:'投骰',trade:'献祭',bond:'灵魂绑定'};
  if(!active[c.skill]){const s=conveyorSkill(c.skill);showModal('cv-description',`<h2>${esc(s.name)}</h2><p class="skill-description">${esc(s.text)}</p><p>对应时机会提供操作。</p><button class="secondary" data-action="close">关闭</button>`);return;}
- showModal('cv-skill',`<h2>${active[c.skill]}</h2><p class="skill-description">${esc(conveyorSkill(c.skill).text)}</p>${c.skill==='judgment'?'':`<p class="skill-picked-count">当前选中 ${selected.size} 张牌。</p><div class="skill-hand-picker" aria-label="技能选牌">${state.room.game.hand.map(x=>`<button type="button" class="choice-card ${selected.has(x.id)?'chosen':''} ${['H','D'].includes(x.suit)?'red':''}" aria-pressed="${selected.has(x.id)}" data-action="cv-skill-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</button>`).join('')}</div>`}<form class="form" id="cv-skill-form">${c.skill==='pressure'?`<label>目标<select name="target">${conveyorTargets(c)}</select></label><label>效果<select name="effect"><option value="draw">抽四张</option><option value="silence">封禁技能三回合</option></select></label>`:''}${c.skill==='seven'?`<label>操作<select name="effect"><option value="store">储存所选手牌</option><option value="release" ${c.resources.marks!==7?'disabled':''}>使用重铸·七音（${c.resources.marks||0} / 7）</option></select></label><fieldset class="seven-picker" hidden><legend>指定加入手牌的七张牌</legend>${Array.from({length:7},(_,i)=>`<label><span>${i+1}</span><select name="markRank${i}" aria-label="第 ${i+1} 张点数">${Array.from({length:16},(_,n)=>n+3).map(n=>`<option value="${n}" ${n===i+3?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="markSuit${i}" aria-label="第 ${i+1} 张花色">${['S','H','C','D'].map(v=>`<option value="${v}">${suits[v]}</option>`).join('')}</select></label>`).join('')}</fieldset>`:''}<p class="form-error"></p><button class="primary">${c.skill==='balance'?'换 '+selected.size+' 张':c.skill==='judgment'?'翻牌判定':'确认使用'}</button></form>`);
+ showModal('cv-skill',`<h2>${active[c.skill]}</h2><p class="skill-description">${esc(conveyorSkill(c.skill).text)}</p>${c.skill==='judgment'?'':`<p class="skill-picked-count">当前选中 ${selected.size} 张牌。</p><div class="skill-hand-picker" aria-label="技能选牌">${state.room.game.hand.map(x=>`<button type="button" class="choice-card ${selected.has(x.id)?'chosen':''} ${['H','D'].includes(x.suit)?'red':''}" aria-pressed="${selected.has(x.id)}" data-action="cv-skill-card" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</button>`).join('')}</div>`}<form class="form" id="cv-skill-form">${['gift','pressure'].includes(c.skill)?`<label>目标<select name="target">${conveyorTargets(c)}</select></label>`:''}${c.skill==='seven'?`<label>操作<select name="effect"><option value="store">储存所选手牌</option><option value="release" ${c.resources.marks!==7?'disabled':''}>使用重铸·七音（${c.resources.marks||0} / 7）</option></select></label><fieldset class="seven-picker" hidden><legend>组成七连顺子</legend>${Array.from({length:7},(_,i)=>`<label><span>${i+1}</span><select name="markRank${i}" aria-label="第 ${i+1} 张点数">${Array.from({length:12},(_,n)=>n+3).map(n=>`<option value="${n}" ${n===i+3?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="markSuit${i}" aria-label="第 ${i+1} 张花色">${['S','H','C','D'].map(v=>`<option value="${v}">${suits[v]}</option>`).join('')}</select></label>`).join('')}</fieldset>`:''}<p class="form-error"></p><button class="primary">${c.skill==='balance'?'换 '+selected.size+' 张并结束行动':c.skill==='judgment'?'翻牌判定':'确认使用'}</button></form>`);
 }
 document.addEventListener('click',async e=>{
  const b=e.target.closest('[data-action^="cv-"]');if(!b||b.disabled)return;
@@ -150,13 +143,13 @@ document.addEventListener('click',async e=>{
  if(action==='cv-confirm')await gameAction('confirm',{actor:c.actor});
  if(action==='cv-choice-original'){conveyorChosen=c.choice.cards.map(x=>x.id);$('#cv-choice-form').requestSubmit();}
  if(action==='cv-choice-card'){const id=b.dataset.id;conveyorChosen=conveyorChosen.includes(id)?conveyorChosen.filter(i=>i!==id):[...conveyorChosen,id];renderedKey='';render();}
- if(action==='cv-skill-card'){const id=b.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);b.classList.toggle('chosen',selected.has(id));b.setAttribute('aria-pressed',selected.has(id));$('.skill-picked-count').textContent='当前选中 '+selected.size+' 张牌。';if(c.skill==='balance')$('#cv-skill-form button[type=submit], #cv-skill-form button.primary').textContent='换 '+selected.size+' 张';selectionUpdate();}
+ if(action==='cv-skill-card'){const id=b.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);b.classList.toggle('chosen',selected.has(id));b.setAttribute('aria-pressed',selected.has(id));$('.skill-picked-count').textContent='当前选中 '+selected.size+' 张牌。';if(c.skill==='balance')$('#cv-skill-form button[type=submit], #cv-skill-form button.primary').textContent='换 '+selected.size+' 张并结束行动';selectionUpdate();}
  if(action==='cv-skill-use')conveyorUseSkill();
  if(action==='cv-retrieve')await gameAction('skill',{effect:'retrieve',actor:c.actor,ids:[b.dataset.id]});
  if(action==='cv-double'){
   const hand=state.room.game.hand.filter(x=>selected.has(x.id)&&[13,14,15,state.room.game.main].includes(x.rank));
   if(!hand.length){toast('先选择一张 K、A、2 或主牌。');return;}
-  showModal('cv-double',`<h2>拆解</h2><form class="form" id="cv-double-form"><label>原牌<select name="id">${hand.map(x=>`<option value="${x.id}">${ranks[x.rank]}${suits[x.suit]}</option>`).join('')}</select></label>${[0,1,2].map(i=>`<label>第 ${i+1} 张<select name="rank${i}">${i===2?'<option value="">不拆第三张</option>':''}${[3,4,5].filter(n=>n!==state.room.game.main).map(n=>`<option>${n}</option>`).join('')}</select><select name="suit${i}">${['S','H','C','D'].map(s=>`<option value="${s}">${suits[s]}</option>`).join('')}</select></label>`).join('')}<button class="primary">确认指定</button></form>`);
+  showModal('cv-double',`<h2>拆解</h2><form class="form" id="cv-double-form"><label>原牌<select name="id">${hand.map(x=>`<option value="${x.id}">${ranks[x.rank]}${suits[x.suit]}</option>`).join('')}</select></label>${[0,1].map(i=>`<label>第 ${i+1} 张<select name="rank${i}">${[3,4,5].filter(n=>n!==state.room.game.main).map(n=>`<option>${n}</option>`).join('')}</select><select name="suit${i}">${['S','H','C','D'].map(s=>`<option value="${s}">${suits[s]}</option>`).join('')}</select></label>`).join('')}<button class="primary">确认指定</button></form>`);
  }
  }catch(error){toast(error.message);}
 });
@@ -183,14 +176,13 @@ document.addEventListener('submit',async e=>{
  const f=e.target;if(!f.id.startsWith('cv-'))return;e.preventDefault();
  const c=state.room.game?.conveyor;
  try{
- if(f.id==='cv-double-form'){conveyorDouble={id:f.elements.id.value,ranks:[0,1,2].map(i=>Number(f.elements['rank'+i].value)).filter(Boolean),suits:[0,1,2].filter(i=>f.elements['rank'+i].value).map(i=>f.elements['suit'+i].value)};closeModal();renderedKey='';render();return;}
+ if(f.id==='cv-double-form'){conveyorDouble={id:f.elements.id.value,ranks:[0,1].map(i=>Number(f.elements['rank'+i].value)),suits:[0,1].map(i=>f.elements['suit'+i].value)};closeModal();renderedKey='';render();return;}
  const error=f.querySelector('.form-error');if(error)error.textContent='';
  const args={actor:c.actor,ids:c.skill==='judgment'&&f.id==='cv-skill-form'?[]:[...selected]};let action='skill';
  if(f.id==='cv-choice-form'){
   action='choice';args.ids=c.choice.cards?conveyorChosen:[...selected];
   if(f.elements.value)args.value=c.choice.kind==='duel-start'?f.elements.value.value==='1':Number(f.elements.value.value);
  }
- if(f.id==='cv-skill-form'&&f.elements.value)args.value=Number(f.elements.value.value);
  if(f.id==='cv-urgent-form'){action='urgent';args.ids=[...f.querySelectorAll('[name=urgentIds]')].map(x=>x.value);if(f.elements.effect.value==='discard')args.ids.push(...[...f.querySelectorAll('[name=discardIds]:checked')].map(x=>x.value));args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=typeof wild==='object'?Object.fromEntries(Object.entries(wild).filter(([id])=>args.ids.includes(id))):wild;}
  if(f.elements.target&&f.elements.target.value!=='')args.target=Number(f.elements.target.value);
  if(f.elements.effect)args.effect=f.elements.effect.value;
@@ -200,4 +192,4 @@ document.addEventListener('submit',async e=>{
  }catch(error){const target=f.querySelector('.form-error');if(target)target.textContent=error.message;else toast(error.message);}
 });
 
-function conveyorRules(){showModal('cv-rules',`<h2>传送带</h2><p>四人各自为战，固定 110 张牌，不使用爆牌、进贡和升变，沿用 4A4A4 标准牌型。每人独立记录等级，第一名升两级、第二名升一级，其他人不变；下一局使用第一名的主牌。打到只剩一人时结算，不按对家提前结束。行动后自动发一张；前两次轮到自己时，出空仍继续发一张；第三次起走完手牌与未出展示区才可获胜。急牌轮换时，随机回收已出非急牌的一半，其余销毁。4A4 类组合按牌面上的 4 和 A 判定。</p><p>技能可以重复选择。出牌、不出或被跳过后进入抽牌阶段，默认抽一张，随后扣除已生效的回合效果。插入勾、点、叉也算一次行动。前两次出空仍抽一张，第三次起清空手牌和未出展示区后即走完。</p><p>比较和判定都按同一套牌值：2=15、主牌=16、小王=20、大王=25、急牌=0。主牌参与顺子时按原点数。判定牌弃置，不算真实出牌。</p><p>正式对局中，急牌可以在别人的出牌阶段插入，但不能打断选牌或判定。急牌可加牌、弃牌、禁手、免抽、弃最大牌、封禁技能三回合、强化判定，或轮换并销毁。每张急牌最多不废弃使用三次，第四次必须轮换。封禁只暂停技能效果，印记保留。</p>${(state.room.skills||[]).map(s=>`<details><summary>${esc(s.name)} · ${s.deal} 选 ${s.keep}</summary><p class="skill-description">${esc(s.text)}</p></details>`).join('')}`);}
+function conveyorRules(){showModal('cv-rules',`<h2>传送带 · S0 V0.10.1</h2><p>四人各自为战，固定 110 张牌，不使用爆牌、进贡和升变，沿用 4A4A4 标准牌型。每人独立记录等级，第一名升两级、第二名升一级，其他人不变；下一局使用第一名的主牌。打到只剩一人时结算，不按对家提前结束。行动后自动发一张；前两次轮到自己时，出空仍继续发一张；第三次起走完手牌与未出展示区才可获胜。只有使用急牌轮换手牌时，才将所有已打出的非急牌洗混后放回牌堆底。4A4 类组合按牌面上的 4 和 A 判定。</p><p>技能可以重复选择。出牌、不出或被跳过后进入抽牌阶段，默认抽一张，随后扣除已生效的回合效果。插入勾、点、叉也算一次行动。前两次出空仍抽一张，第三次起清空手牌和未出展示区后即走完。</p><p>2 为 15，主牌为 16。判定时小王为 20、大王为 25、急牌为 2。主牌参与顺子时按原点数。判定牌弃置，不算真实出牌。</p><p>正式对局中，急牌可以在别人的出牌阶段插入，但不能打断选牌或判定。急牌可加牌、弃牌、禁手、免抽、弃最大牌、封禁技能三回合、强化判定，或轮换并销毁。每张急牌最多不废弃使用三次，第四次必须轮换。封禁只暂停技能效果，印记保留。</p>${(state.room.skills||[]).map(s=>`<details><summary>${esc(s.name)} · ${s.deal} 选 ${s.keep}</summary><p class="skill-description">${esc(s.text)}</p></details>`).join('')}`);}
