@@ -20,6 +20,7 @@ from conveyor import ConveyorGame
 from conveyor_skills import SKILLS, available as conveyor_skills
 from analytics import Analytics
 from admin import start_admin
+from playtest_web import WebPlaytest, initialize_access, set_access
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
@@ -36,6 +37,7 @@ def db():
     return connection
 
 STATS = Analytics(db)
+WEB_PLAYTEST = WebPlaytest()
 
 def initialize():
     DB_PATH.parent.mkdir(exist_ok=True)
@@ -47,6 +49,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS results(id TEXT PRIMARY KEY, room TEXT NOT NULL, mode TEXT NOT NULL, outcome TEXT NOT NULL, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS rating_events(result_id TEXT NOT NULL REFERENCES results(id), user_id INTEGER NOT NULL REFERENCES users(id), delta INTEGER NOT NULL, PRIMARY KEY(result_id,user_id));
         ''')
+        initialize_access(c)
         c.execute('DELETE FROM sessions WHERE expires < ?', (int(time.time()),))
     STATS.initialize()
 
@@ -373,10 +376,14 @@ class Handler(BaseHTTPRequestHandler):
         token = cookie.get('poker_session')
         if not token: return None
         with db() as c:
-            return c.execute('SELECT users.* FROM users JOIN sessions ON users.id=sessions.user_id WHERE token=? AND expires>?', (token.value, int(time.time()))).fetchone()
+            return c.execute('''SELECT users.*, EXISTS(SELECT 1 FROM playtest_access WHERE user_id=users.id) AS can_playtest
+                                FROM users JOIN sessions ON users.id=sessions.user_id WHERE token=? AND expires>?''',
+                             (token.value, int(time.time()))).fetchone()
 
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path).path
+        if path == '/api/playtest' or path.startswith('/api/playtest/'):
+            return WEB_PLAYTEST.get(self, DB_PATH.parent, self.session(), path)
         if path.startswith('/api/'):
             with LOCK:
                 user = self.session()
@@ -394,7 +401,7 @@ class Handler(BaseHTTPRequestHandler):
                         room = ROOMS.get(WATCHING.get(user['id']))
                         if room and not room['options'].get('allowSpectators'): room = None
                         if not room: WATCHING.pop(user['id'], None)
-                    return self.respond({'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    return self.respond({'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES, 'playtest': bool(user['can_playtest'])}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
@@ -409,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
         if not file.is_relative_to(ROOT / 'public') or not file.is_file(): return self.respond({'error': '页面不存在。'}, 404)
         content = file.read_bytes()
         if file.name == 'index.html':
-            for asset in ('app.js', 'conveyor.js', 'audio.js', 'style.css', 'splashes.js'):
+            for asset in ('app.js', 'conveyor.js', 'audio.js', 'style.css', 'splashes.js', 'playtest.js'):
                 version = hashlib.sha256((ROOT / 'public' / asset).read_bytes()).hexdigest()[:12]
                 content = content.replace(('/' + asset + '"').encode(), ('/' + asset + '?v=' + version + '"').encode())
         self.send_response(200)
@@ -430,7 +437,10 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < size <= 16384: return self.respond({'error': '请求大小无效。'}, 400)
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict): raise ValueError()
-            with LOCK: self.post(urllib.parse.urlsplit(self.path).path, body)
+            path = urllib.parse.urlsplit(self.path).path
+            if path == '/api/playtest' or path.startswith('/api/playtest/'):
+                return WEB_PLAYTEST.post(self, DB_PATH.parent, self.session(), path, body)
+            with LOCK: self.post(path, body)
         except (RuleError, ValueError, TypeError, KeyError) as e:
             self.respond({'error': str(e) if isinstance(e, RuleError) else '请求参数无效。'}, 400)
         except Exception:
@@ -733,4 +743,23 @@ def main():
     print('本机统计后台：http://localhost:%s（管理口令：data/admin-token）' % admin.server_port, flush=True)
     server.serve_forever()
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='VGC game server')
+    parser.add_argument('command', nargs='?', choices=('grant-playtest', 'revoke-playtest'))
+    parser.add_argument('accounts', nargs='*')
+    args = parser.parse_args()
+    if args.command:
+        if not args.accounts:
+            parser.error('请指定至少一个已注册账号。')
+        try:
+            with db() as connection:
+                initialize_access(connection)
+                for account in args.accounts:
+                    set_access(connection, account, args.command == 'grant-playtest')
+        except ValueError as error:
+            parser.error(str(error))
+        print(('已开通自动对局：' if args.command == 'grant-playtest' else '已关闭自动对局：') + '、'.join(args.accounts))
+    else:
+        main()

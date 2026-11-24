@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="theme-color" content="#ece9e1">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>VGC · 扑克牌俱乐部</title><link rel="stylesheet" href="/style.css"><script src="/audio.js" defer></script><script src="/conveyor.js" defer></script><script src="/splashes.js" defer></script><script src="/app.js" defer></script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>VGC · 扑克牌俱乐部</title><link rel="stylesheet" href="/style.css"><script src="/audio.js" defer></script><script src="/conveyor.js" defer></script><script src="/splashes.js" defer></script><script src="/playtest.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -13,6 +13,7 @@
   </main>
 </div>
 <dialog id="modal"><div class="modal-top"><button class="icon-button" data-action="close" aria-label="关闭">×</button></div><div id="modal-content"></div></dialog>
+<dialog id="playtest-replay-dialog" aria-labelledby="replay-title"></dialog>
 <small class="app-version">S0 V0.10.1</small>
 <div id="connection-notice" role="status" hidden>连接中断，正在重连…</div>
 <div id="toast" role="status" aria-live="polite"></div>

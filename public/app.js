@@ -88,7 +88,7 @@ function render() {
   document.body.classList.toggle('tribute-phase',g?.phase==='tribute');
   document.body.classList.toggle('opening-phase',['setup','rps','draft','tribute'].includes(g?.phase));
   document.body.classList.toggle('hand-choice-phase',!!g?.conveyor?.choice&&!g.conveyor.choice.cards&&conveyorHandChoices.has(g.conveyor.choice.kind));
-  const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,screen==='create'?state.matchCounts:null]);
+  const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,state.features?.playtest,screen==='create'?state.matchCounts:null]);
   if(key===renderedKey){gameAudio.observe(r);return;}
   renderedKey=key;
   const handScroll=$('.hand')?.scrollLeft||0;
@@ -105,6 +105,7 @@ function render() {
   else if(!g) $('#view').innerHTML=waiting(r);
   else $('#view').innerHTML=table(r,g);
   if(joinValue!==undefined && $('#join-code')){$('#join-code').value=joinValue; if(joinFocus)$('#join-code').focus();}
+  if($('#view #playtest-panel'))mountPlaytest($('#view #playtest-panel'));
   const nextChoice=$('#cv-choice-form');
   if(choiceDraft&&nextChoice?.dataset.choiceKey===choiceDraft.key){
     for(const [name,value] of choiceDraft.values){
@@ -157,18 +158,20 @@ function flowScreen(){
 function settingsScreen(){
  const u=state.user, pref=state.preferences||{};
  const tabs=[['account','账号信息'],['audio','声音'],['api','模型 API'],['archive','积分与战绩']];
+ if(u&&state.features?.playtest)tabs.push(['playtest','自动对局']);
  let content='';
  if(settingsTab==='audio')content=`<h2>声音</h2><div class="audio-controls">${[['effects','音效'],['music','音乐'],['voice','语音']].map(([key,label])=>`<label><span>${label}<output id="volume-${key}">${Math.round(gameAudio.volumes[key]*100)}%</output></span><input type="range" min="0" max="100" value="${Math.round(gameAudio.volumes[key]*100)}" data-volume="${key}" aria-label="${label}音量"></label>`).join('')}</div><div class="phase-actions"><button class="secondary" data-action="preview-effect">试听音效</button><button class="secondary" data-action="preview-voice">试听语音</button></div>`;
  else if(!u)content='<h2>请先登录</h2><p class="modal-desc">登录后管理账号、保存模型 API 和查看战绩。</p><button class="primary" data-action="auth">登录 / 注册 →</button>';
  else if(settingsTab==='account')content=`<h2>账号信息</h2><p class="modal-desc">${esc(u.rank)} · ${u.points} 积分 · ${u.games} 场真人对局</p><form class="form" id="account-form"><label>玩家昵称<input name="name" value="${esc(u.name)}" required minlength="2" maxlength="18" autocomplete="username"></label><label>当前密码<input name="currentPassword" type="password" required autocomplete="current-password" placeholder="保存信息时验证身份"></label><label>新密码<input name="newPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="留空表示保留当前密码"></label><p class="form-note">修改密码后，其他设备的登录会话将退出。</p><p class="form-error"></p><button class="primary" type="submit">保存账号信息 →</button></form><div class="divider"></div><button class="text-button" data-action="logout">退出账号 ↗</button>`;
  else if(settingsTab==='api')content=`<h2>模型 API</h2><p class="modal-desc">${pref.configured?'已配置 · 密钥已保存到本次服务的内存中':'兼容 Chat Completions 的 HTTPS API。'}</p><form class="form" id="api-settings-form"><label>API 基础地址<input name="endpoint" type="url" required value="${esc(pref.endpoint||'')}" placeholder="https://api.example.com/v1"></label><label>模型名称<input name="model" required maxlength="100" value="${esc(pref.model||'')}" placeholder="模型 ID"></label><label>API 密钥<input name="key" type="password" ${pref.configured?'':'required'} autocomplete="off" placeholder="${pref.configured?'密钥已保存；留空表示不更换':'输入你的 API Key'}"></label><p class="form-note">模型只看到自己的手牌与公开局面。无效回答或请求失败时使用规则 AI。密钥不会返回浏览器或写入数据库，服务重启后需要重新配置。模型提供商可能按请求收费。</p><p class="form-error"></p><button class="primary" type="submit">保存模型配置 →</button></form>${pref.configured?'<div class="divider"></div><button class="text-button" data-action="clear-api">清除 API 配置 ↗</button>':''}`;
+ else if(settingsTab==='playtest'&&state.features?.playtest)content='<h2>自动对局</h2><div id="playtest-panel"></div>';
  else content=`<h2>积分与战绩</h2><p class="modal-desc">仅全真人对局计分。</p><div class="profile-stats"><div><strong>${u.points}</strong><small>${u.rank}</small></div><div><strong>${u.games}</strong><small>真人对局</small></div><div><strong>${u.games?Math.round(u.wins/u.games*100):0}%</strong><small>获胜比例</small></div></div><div class="phase-actions"><button class="secondary" data-action="profile">最近战绩 →</button><button class="secondary" data-action="leaderboard">查看积分榜 →</button></div>`;
  return `<div class="flow-heading"><button class="menu-back" data-action="home">← 返回主菜单</button><h1>设置</h1></div><div class="settings-layout"><nav class="settings-tabs">${tabs.map(([k,t])=>`<button class="${settingsTab===k?'active':''}" data-action="settings-tab" data-tab="${k}">${t}<span>→</span></button>`).join('')}<div class="divider"></div><button data-action="rules">玩法手册 <span>↗</span></button></nav><section class="settings-content">${content}</section></div>`;
 }
-function showSettingsModal(){showModal('settings',settingsScreen(),'SETTINGS');}
+function showSettingsModal(){showModal('settings',settingsScreen(),'SETTINGS');mountPlaytest($('#modal #playtest-panel'));}
 function navigate(next){screen=next;renderedKey='';render();window.scrollTo({top:0});}
 
-function roomHeading(r,playing=false){const g=r.game;const promoted=g&&Object.values(g.promotions).includes(g.main);const mainBadge=playing&&r.mode!=='landlord'?`<span class="main-indicator">主牌 <b>${ranks[g.main]}</b>${promoted?' · 升变':''}</span>`:'';return `<div class="room-heading"><div><h1>${esc(names[r.mode])}<span class="muted"> · ${r.spectator?'观战':playing?'对局':'准备室'}</span></h1>${mainBadge}</div><div class="room-heading-actions"><button class="room-number" data-action="copy"><small>房间号</small>${r.code} <small>⧉</small></button><button class="secondary room-exit" data-short-label="${r.spectator?'退出':playing&&g.phase!=='over'?'结束':'离开'}" data-action="${playing&&r.game.phase!=='over'&&!r.spectator?'resign':'leave'}">${r.spectator?'退出观战':playing&&r.game.phase!=='over'?(r.single?'结束本局':'返回大厅'):'离开房间'} ↗</button>${playing&&r.game.phase!=='over'&&!r.spectator&&r.canLeave?'<button class="text-button" data-action="leave">离开房间 ↗</button>':''}</div></div>${g?.phase==='over'?roundActions(r):''}`;}
+function roomHeading(r,playing=false){const g=r.game;const promoted=g&&Object.values(g.promotions).includes(g.main);const mainBadge=playing&&r.mode!=='landlord'?`<span class="main-indicator">主牌 <b>${ranks[g.main]}</b>${promoted?' · 升变':''}</span>`:'';if(r.replay)return mainBadge?`<div class="replay-main">${mainBadge}</div>`:'';return `<div class="room-heading"><div><h1>${esc(names[r.mode])}<span class="muted"> · ${r.spectator?'观战':playing?'对局':'准备室'}</span></h1>${mainBadge}</div><div class="room-heading-actions"><button class="room-number" data-action="copy"><small>房间号</small>${r.code} <small>⧉</small></button><button class="secondary room-exit" data-short-label="${r.spectator?'退出':playing&&g.phase!=='over'?'结束':'离开'}" data-action="${playing&&r.game.phase!=='over'&&!r.spectator?'resign':'leave'}">${r.spectator?'退出观战':playing&&r.game.phase!=='over'?(r.single?'结束本局':'返回大厅'):'离开房间'} ↗</button>${playing&&r.game.phase!=='over'&&!r.spectator&&r.canLeave?'<button class="text-button" data-action="leave">离开房间 ↗</button>':''}</div></div>${g?.phase==='over'?roundActions(r):''}`;}
 function roundActions(r){return `<nav class="round-actions" aria-label="本局结束操作">${!r.spectator?`<button class="primary" data-action="start" ${r.host!==state.user.id?'disabled':''}>${r.host===state.user.id?'再来一局 →':'等待房主开局'}</button>`:''}<button class="secondary" data-action="leave">回到主菜单</button></nav>`;}
 function waiting(r) {
   if(r.mode==='conveyor')return conveyorWaiting(r);
@@ -191,7 +194,7 @@ function table(r,g) {
     const role=g.mode==='landlord'?(g.landlord===s?'地主':g.landlord!==null?'农民':''):(g.mode==='trio'?'':r.spectator?(s%2?'二队':'一队'):s%2===me%2?'同队':'对手');
     const played=g.seatPlays?.[s]||(!g.seatPlays&&g.lastSeat===s?{...g.last,order:1}:null);
     const playNumber=g.playNumber??1;
-    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play opening-display" role="status">${g.ready.includes(s)?`<div class="seat-play-label">${g.phase==='rps'?'已出拳':'已确认'}</div>`:(g.phase==='setup'?g.confirmTurn:g.reveals.find(i=>!g.ready.includes(i)))===s?`<div class="playing">${g.phase==='rps'?'等待出拳...':'等待确认...'}</div>`:''}${g.reveals.includes(s)?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:g.phase==='play'&&g.priorityClock?.seat===s?`<div class="seat-play playing priority-clock" role="status">${g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`:g.phase==='play'&&!g.priorityClock&&g.turn===s?'<div class="seat-play playing" role="status">出牌中...</div>':played?`<div class="seat-play ${!played.passed&&played.order===playNumber?'latest':'older'}" aria-label="${esc(p.name)}的最近出牌">${seatPlayCards(played,g)}</div>`:'';
+    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play opening-display" role="status">${g.ready.includes(s)?`<div class="seat-play-label">${g.phase==='rps'?'已出拳':'已确认'}</div>`:(g.phase==='setup'?g.confirmTurn:g.reveals.find(i=>!g.ready.includes(i)))===s?`<div class="playing">${g.phase==='rps'?'等待出拳...':'等待确认...'}</div>`:''}${g.reveals.includes(s)?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:g.phase==='play'&&g.priorityClock?.seat===s?`<div class="seat-play playing priority-clock" role="status">${r.replay?'优先管牌':g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`:g.phase==='play'&&!g.priorityClock&&g.turn===s?'<div class="seat-play playing" role="status">出牌中...</div>':played?`<div class="seat-play ${!played.passed&&played.order===playNumber?'latest':'older'}" aria-label="${esc(p.name)}的最近出牌">${seatPlayCards(played,g)}</div>`:'';
     return `<div class="seat ${positions[relative]} ${(g.phase==='setup'?g.confirmTurn===s:['play','bid'].includes(g.phase)&&(g.priorityClock?g.priorityClock.seat===s:g.turn===s))?'turn':''} ${finish>=0?'finished':''}"><div class="avatar ${p.bot?'bot':''}">${p.bot?'✦':esc(p.name[0])}</div><div><div class="seat-name">${esc(p.name)}${s===me&&!r.spectator?' · 你':''}</div><div class="seat-meta">${g.urgentLast.includes(s)?'急牌末名':g.phase==='over'&&g.counts[s]>0?'剩 '+g.counts[s]+' 张':finish>=0?'第 '+(finish+1)+' 名':g.counts[s]+' 张牌'}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${!p.connected?' · 离线':''}</div></div>${role?`<span class="seat-role">${role}</span>`:''}${playedCards}${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
   }).join('');
   let center='',openingActions='';
@@ -214,7 +217,7 @@ function table(r,g) {
   }
   else if(g.phase==='play') center=g.mode==='landlord'&&!g.last&&g.bottom.length?`<div class="bottom-cards">${g.bottom.map(c=>`<span class="mini-card ${['H','D'].includes(c.suit)?'red':''}">${ranks[c.rank]}${suits[c.suit]}</span>`).join('')}</div>`:'';
   else center='<div class="table-prompt">本局已结束</div>';
-  if(r.spectator&&g.phase!=='over')center=['bid','setup','rps','tribute'].includes(g.phase)?'<div class="table-prompt">'+({bid:'正在叫分',setup:'等待开局',rps:'猜拳中',tribute:'进贡中'})[g.phase]+'</div>':'';
+  if(r.spectator&&g.phase!=='over'&&!(r.replay&&g.phase==='play'))center=['bid','setup','rps','tribute'].includes(g.phase)?'<div class="table-prompt">'+({bid:'正在叫分',setup:'等待开局',rps:'猜拳中',tribute:'进贡中'})[g.phase]+'</div>':'';
   const canPlay=!r.spectator&&g.phase==='play'&&!g.finished.includes(me)&&!r.players[me].autoplay;
   const canReturn=!r.spectator&&!r.players[me].autoplay&&g.phase==='tribute'&&g.tribute.stage==='return'&&g.tribute.offers.some(o=>o.recipient===me&&!o.returned);
   const remainingHands=g.remainingHands?`<div class="settlement-hands">${g.remainingHands.map((hand,s)=>`<section class="settlement-hand"><h3>${esc(r.players[s].name)} <small>剩余 ${hand.length} 张</small></h3><div class="settlement-cards">${hand.length?hand.map(c=>`<span class="settlement-card ${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]}</span>`).join(''):'<span class="muted">已出完</span>'}</div></section>`).join('')}</div>`:'';
@@ -225,7 +228,7 @@ function table(r,g) {
     : canPlay?actionDock(options):'';
   const handArea=r.spectator?'':`<section class="hand-area"><div class="hand-top"><strong>你的手牌 <span class="muted">/ ${g.hand.length} 张</span></strong><div class="hand-tools">${handTools(r)}</div></div>${openingActions}<div class="hand ${g.hand.length>23?'dense':''}">${g.hand.map(c=>card(c,canPlay||canReturn,g)).join('')}</div>${controls}</section>`;
   const summary=g.mode==='landlord'?`地主叫分 <b>${g.bid}</b>`:g.mode==='trio'?'三人个人争先':`${r.spectator?'一队':'我方'} <b>${g.scores[me%2]}</b> · ${r.spectator?'二队':'对方'} <b>${g.scores[1-me%2]}</b>`;
-  return roomHeading(r,true)+result+`<div class="table-layout"><section class="board" data-table="${esc(tableKey(r))}">${seats}<div class="table-center">${center}</div></section>${tableHistory(g,`${summary}<br>${r.rated?'计入积分与段位':'练习 · 不计积分'}`)}</div>${handArea}${publicHandsPanel(r,g)}`;
+  return roomHeading(r,true)+(r.replay?'':result)+`<div class="table-layout"><section class="board" data-table="${esc(tableKey(r))}">${seats}<div class="table-center">${center}</div></section>${tableHistory(g,`${summary}<br>${r.rated?'计入积分与段位':'练习 · 不计积分'}`)}</div>${handArea}${publicHandsPanel(r,g)}${r.replay?result:''}`;
 }
 
 function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat)?'已明牌':'明牌'}</button>`:'';}
@@ -505,7 +508,7 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('input',e=>{const key=e.target.dataset.volume;if(key){gameAudio.setVolume(key,e.target.value/100);$('#volume-'+key).textContent=e.target.value+'%';}});
 document.addEventListener('keydown',e=>{
- if(e.repeat||modal.open||e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
+ if(e.repeat||modal.open||$('#playtest-replay-dialog')?.open||e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
  const action=e.key==='Enter'?(state.room?.game?.phase==='tribute'?'tribute-return':'play'):e.key==='Escape'?'deselect':null;
  if(!action)return;const button=$(`[data-action="${action}"]`);
  if(button&&!button.disabled){e.preventDefault();button.click();}

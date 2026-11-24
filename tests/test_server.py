@@ -77,6 +77,62 @@ class ServerIntegration(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(self.url+path)
             self.assertEqual(error.exception.code,404)
 
+    def test_web_playtest_is_scoped_to_granted_accounts_and_uses_per_run_model(self):
+        from playtest_web import set_access
+
+        alice, bob, ungranted = self.clients[:3]
+        names = [user['name'] for user in self.users[:2]]
+        for path in ('playtest', 'playtest/runs/0123456789abcdef/log'):
+            self.assertEqual(self.request(ungranted,path)[0],403)
+        self.assertEqual(self.request(ungranted,'playtest/runs',{'driver':'rules'})[0],403)
+        with server.db() as db:
+            for name in names:
+                set_access(db,name,True)
+        try:
+            self.assertTrue(self.request(alice,'state')[1]['features']['playtest'])
+            self.assertFalse(self.request(ungranted,'state')[1]['features']['playtest'])
+            self.assertEqual(self.request(alice,'playtest/credential',{'key':'alice-test-only'}),(200,{'configured':True}))
+            self.assertFalse(self.request(bob,'playtest')[1]['configured'])
+            self.assertNotIn('alice-test-only',json.dumps(self.request(alice,'playtest')[1]))
+            self.assertEqual(self.request(bob,'playtest/runs',{'driver':'deepseek'})[0],400)
+            with patch('playtest.DeepSeek.choose', return_value=(0, {'total_tokens':7})):
+                status,data=self.request(alice,'playtest/runs',{'mode':'landlord','model':'deepseek-v4-pro','thinking':True,'maxSteps':2})
+                self.assertEqual(status,202,data)
+                route='playtest/runs/'+data['id']
+                for _ in range(120):
+                    run=self.request(alice,route)[1]
+                    if run['status'] not in ('queued','running'): break
+                    __import__('time').sleep(.01)
+                self.assertEqual(run['status'],'step_limit')
+                self.assertEqual(run['model'],'deepseek-v4-pro')
+                self.assertTrue(run['thinking'])
+                self.assertGreater(run['calls'],0)
+            self.assertEqual(self.request(bob,route)[0],404)
+            self.assertEqual(self.request(bob,route+'/log')[0],404)
+            replay=route+'/matches/1'
+            self.assertEqual(self.request(bob,replay)[0],404)
+            self.assertEqual(self.request(ungranted,replay+'/frames/1')[0],403)
+            status,view=self.request(alice,replay)
+            self.assertEqual(status,200)
+            self.assertEqual(view['frames'],3)
+            self.assertTrue(view['room']['spectator'])
+            self.assertEqual(view['first']['game']['hand'],[])
+            self.assertEqual(self.request(alice,replay+'/frames/2')[1]['step'],2)
+            self.assertEqual(self.request(alice,replay+'/frames/3')[0],404)
+            self.assertEqual(self.request(alice,route+'/matches/2')[0],404)
+            with alice.open(self.url+'/api/'+route+'/log') as response:
+                self.assertIn('attachment;',response.headers['Content-Disposition'])
+                log=response.read().decode()
+                self.assertIn('run_finished',log)
+                self.assertNotIn('alice-test-only',log)
+            with server.db() as db:
+                set_access(db,names[0],False)
+            self.assertEqual(self.request(alice,route)[0],403)
+        finally:
+            with server.db() as db:
+                for name in names:
+                    set_access(db,name,False)
+
     def test_play_preview_uses_the_submitted_rules_without_playing_the_cards(self):
         client = self.clients[0]
         for mode in ('standard', 'conveyor'):
