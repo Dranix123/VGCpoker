@@ -21,8 +21,8 @@ from conveyor import ConveyorGame
 from conveyor_skills import SKILLS, available
 from engine import Game, MODES, RuleError
 from playtest_replay import record, replay_path, spectator_view
-from game_ai import (MODEL_INSTRUCTIONS, alternatives, bot_turn_order, decode_selection, model_context,
-                     move_args, select_model_move)
+from game_ai import (MODEL_CONFIG_ERRORS, alternatives, bot_turn_order, model_context, model_payload,
+                     move_args, read_model_reply, select_model_move)
 
 
 OUTPUT = Path(__file__).resolve().parent / 'output' / 'playtests'
@@ -94,27 +94,11 @@ class DeepSeek:
         self.key, self.model, self.thinking = key, model, thinking
 
     def choose(self, context, count):
-        body = {
-            'model': self.model,
-            'thinking': {'type': 'enabled' if self.thinking else 'disabled'},
-            'response_format': {'type': 'json_object'},
-            'max_tokens': 2048 if self.thinking else 512,
-            'messages': [
-                {'role': 'system', 'content': MODEL_INSTRUCTIONS},
-                {'role': 'user', 'content': json.dumps(context, ensure_ascii=False, separators=(',', ':'))},
-            ],
-        }
+        body = model_payload(self.model, context, self.thinking)
         request = urllib.request.Request(self.endpoint, data=json.dumps(body).encode(),
                                          headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json'})
         with urllib.request.urlopen(request, timeout=15) as response:
-            raw = response.read(65537)
-        if len(raw) > 65536:
-            raise ValueError('response_too_large')
-        result = json.loads(raw)
-        selection = decode_selection(result['choices'][0]['message']['content'], count)
-        usage = result.get('usage') or {}
-        return selection, {key: usage[key] for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')
-                       if type(usage.get(key)) is int}
+            return read_model_reply(response, count)
 
 
 def start_match(config, previous):
@@ -239,13 +223,15 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                             started = time.monotonic()
                             try:
                                 selection, usage = model.choose(model_context(game, core, actor, options), len(options))
+                                for key, count in usage.items():
+                                    summary['tokens'][key] = summary['tokens'].get(key, 0) + count
                                 move = select_model_move(game, seat, actor, options, selection)
                                 source = 'deepseek'
                                 api = dict(usage=usage)
                                 if type(selection) is int:
                                     api['index'] = selection
-                                for key, count in usage.items():
-                                    summary['tokens'][key] = summary['tokens'].get(key, 0) + count
+                                elif 'index' in selection and move != selection['move']:
+                                    api['backupIndex'] = selection['index']
                             except (OSError, RuleError, ValueError, KeyError, IndexError, TypeError) as error:
                                 summary['fallbacks'] += 1
                                 source = 'fallback'
@@ -254,9 +240,11 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                                     api['reason'] = str(error)
                                 if isinstance(error, urllib.error.HTTPError):
                                     api['status'] = error.code
-                                    if error.code in (400, 401, 402, 403, 404, 422):
+                                    if error.code in MODEL_CONFIG_ERRORS:
                                         summary['modelDisabledReason'] = f'http_{error.code}'
-                                elif type(error) is ValueError and str(error) in ('invalid_move_index', 'response_too_large'):
+                                elif type(error) is ValueError and str(error) in (
+                                        'invalid_move_index', 'invalid_move_action', 'invalid_move_cards', 'invalid_move_fields',
+                                        'invalid_move_json', 'empty_model_reply', 'truncated_model_reply', 'response_too_large'):
                                     api['reason'] = str(error)
                             api['milliseconds'] = round((time.monotonic() - started) * 1000)
                     try:

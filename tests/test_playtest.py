@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from playtest import DeepSeek, PlaytestService, play_batch, run_config, serve
 from playtest_replay import load_replay, read, record, replay_path, restore_legacy
-from game_ai import alternatives, model_context, select_model_move
+from game_ai import alternatives, model_context, model_payload, select_model_move
 from engine import RuleError
 
 
@@ -43,6 +43,52 @@ class Playtest(unittest.TestCase):
         self.assertEqual(context['otherOwnHands'][0]['hand'], core.visible_hand(1))
         self.assertEqual(len(context['otherOwnHands']), 1)
         self.assertTrue(all('hand' not in seat for seat in context['players']))
+
+    def test_model_sees_a_viable_two_play_exit_in_each_mode(self):
+        from test_conveyor import ConveyorRules
+        from test_engine import cards, table
+
+        for mode, teammates in (('landlord', [1]), ('basic', [2]), ('standard', [2]), ('trio', []), ('conveyor', [])):
+            with self.subTest(mode=mode):
+                if mode == 'conveyor':
+                    fixture = ConveyorRules()
+                    game = fixture.game(*['anchor'] * 4)
+                    core = fixture.table(game, [[4,4,5,6,7,8,9],[10],[11],[12]])
+                else:
+                    game = core = table(mode)
+                    core.hands[0] = cards([4,4,5,6,7,8,9], prefix='own')
+                    core.landlord = 2 if mode == 'landlord' else None
+                    core.turn = 0
+                fallback = game.bot_action(0)
+                moves = alternatives(game, core, 0, fallback)
+                context = model_context(game, core, 0, moves)
+                self.assertEqual(context['teammates'], teammates)
+                self.assertTrue(context['decision']['freeLead'])
+                self.assertEqual(context['turnOrder'][1], len(core.players)-1)
+                self.assertEqual(context['hand'], core.visible_hand(0))
+                self.assertTrue(context['tactics'])
+                pair = next(m for m in context['moves'] if m['label'] == '对子')
+                self.assertEqual(pair['afterPlay']['onePlayShape'], '顺子')
+                selected = select_model_move(game, 0, 0, moves, pair['index'])
+                self.assertEqual(selected['ids'], pair['ids'])
+
+    def test_candidate_limit_leaves_room_for_combos_and_the_model_backup(self):
+        from test_engine import cards, table
+
+        game = table('landlord')
+        game.turn = 0
+        game.hands[0] = cards([4,5,6,7,8,9], prefix='own')
+        fallback = dict(action='play', ids=['own0'], label='单张')
+        run = dict(action='play', ids=['own1','own2','own3','own4','own5'], label='顺子')
+        repeated = [dict(action='play', ids=[str(i)], label='单张') for i in range(50)]
+        with patch.object(game, 'candidates', return_value=[*repeated, run]):
+            moves = alternatives(game, game, 0, fallback)
+        self.assertEqual(len(moves), 40)
+        self.assertEqual(moves[0], fallback)
+        self.assertEqual(moves[1], run)
+        repair = {'move': {'action':'play','ids':['opponent']}, 'index':1}
+        self.assertEqual(select_model_move(game, 0, 0, moves, repair), run)
+        self.assertEqual(len(game.hands[0]), 6)
 
     def test_model_can_take_active_and_optional_conveyor_actions(self):
         from test_conveyor import ConveyorRules
@@ -200,6 +246,21 @@ class Playtest(unittest.TestCase):
             opener.return_value.__enter__.return_value.read.return_value = json.dumps(reply).encode()
             with self.assertRaisesRegex(ValueError, 'invalid_move_index'):
                 adapter.choose({}, 2)
+
+    def test_model_accepts_fenced_compatible_json_and_detects_incomplete_answers(self):
+        from io import BytesIO
+        from game_ai import read_model_reply
+
+        self.assertNotIn('thinking', model_payload('compatible-model', {}))
+        self.assertNotIn('response_format', model_payload('compatible-model', {}))
+        fence = chr(96) * 3
+        def response(content, reason='stop'):
+            return BytesIO(json.dumps({'choices':[{'finish_reason':reason,'message':{'content':content}}]}).encode())
+        self.assertEqual(read_model_reply(response(fence + 'json\n{"index":0}\n' + fence),1), (0,{}))
+        with self.assertRaisesRegex(ValueError, 'empty_model_reply'):
+            read_model_reply(response('    '),1)
+        with self.assertRaisesRegex(ValueError, 'truncated_model_reply'):
+            read_model_reply(response('', 'length'),1)
 
     def test_batch_records_model_decisions_and_fallback_without_leaking_other_hands(self):
         class FakeDeepSeek:

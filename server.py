@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+import urllib.error
 import urllib.request
 import urllib.parse
 import ipaddress
@@ -22,7 +23,8 @@ from conveyor_skills import SKILLS, available as conveyor_skills
 from analytics import Analytics
 from admin import start_admin
 from playtest_web import WebPlaytest, initialize_access, set_access
-from game_ai import MODEL_INSTRUCTIONS, alternatives, bot_turn_order, decode_selection, model_context, select_model_move
+from game_ai import (MODEL_CONFIG_ERRORS, alternatives, bot_turn_order, model_context, model_payload,
+                     read_model_reply, select_model_move)
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
@@ -128,6 +130,7 @@ def leave_room(room, uid):
         room['host'] = humans[0]['id']
         if room['options'].get('_alternate'):
             room.pop('modelConfig', None)
+            room.pop('modelRetryAt', None)
             if room['host'] in MODEL_CONFIG: room['modelConfig'] = MODEL_CONFIG[room['host']].copy()
 
 def audio_waiting(room):
@@ -273,39 +276,45 @@ def validate_endpoint(endpoint):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
-def model_move(config, g, seat):
-    fallback = g.bot_action(seat)
+def model_move(config, g, seat, fallback=None):
+    if fallback is None: fallback = g.bot_action(seat)
     if fallback is None:
         return None
     core = g.core if g.mode == 'conveyor' else g
-    actor = fallback.pop('actor', seat)
-    moves = alternatives(g, core, actor, fallback)
+    actor = fallback.get('actor', seat)
+    moves = alternatives(g, core, actor, {k: v for k, v in fallback.items() if k != 'actor'})
     if len(moves) == 1:
         return {**fallback, **({'actor': actor} if g.mode == 'conveyor' else {})}
     endpoint = validate_endpoint(config['endpoint'])
     if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
     prompt = model_context(g, core, actor, moves)
-    payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': MODEL_INSTRUCTIONS},
-               {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)}], 'temperature': .2, 'max_tokens': 512}
+    deepseek = urllib.parse.urlsplit(endpoint).hostname == 'api.deepseek.com'
+    payload = model_payload(config['model'], prompt, thinking=False if deepseek else None)
     req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['key']})
     with urllib.request.build_opener(NoRedirect).open(req, timeout=12) as response:
-        raw = response.read(65537)
-        if len(raw) > 65536: raise ValueError('Response too large')
-        content = json.loads(raw)['choices'][0]['message']['content'].strip()
-        if content.startswith('```'): content = content.strip('`').removeprefix('json').strip()
-        selection = decode_selection(content, len(moves))
+        selection, _ = read_model_reply(response, len(moves))
         move = select_model_move(g, seat, actor, moves, selection)
         return {**move, **({'actor': actor} if g.mode == 'conveyor' else {})}
 
-def tick_bot(code, seat, version, snapshot, config, match_id=None):
+def tick_bot(code, seat, version, snapshot, config, match_id=None, fallback=None):
     try:
-        began = time.monotonic(); failed = False
-        try: move = model_move(config, snapshot, seat)
-        except Exception: failed = True; move = snapshot.bot_action(seat)
+        began = time.monotonic()
+        failed, status = False, None
+        try:
+            move = model_move(config, snapshot, seat, fallback)
+        except Exception as error:
+            failed = True
+            move = fallback if fallback is not None else snapshot.bot_action(seat)
+            if isinstance(error, urllib.error.HTTPError): status = error.code
         seconds = time.monotonic() - began
         with LOCK:
             STATS.ai(config.get('model', 'unknown'), failed, seconds)
             room = ROOMS.get(code)
+            if room and room.get('game') and room.get('modelConfig') == config and (match_id is None or room.get('matchId') == match_id):
+                if status in MODEL_CONFIG_ERRORS:
+                    room['modelRetryAt'] = float('inf')
+                    room['game'].announce(f'模型 API 请求失败（HTTP {status}）。已切换到规则 AI，重新保存 API 设置后可恢复。')
+                elif status in (429, 503): room['modelRetryAt'] = time.monotonic() + 20
             if room and room['revision'] == version and (match_id is None or room.get('matchId') == match_id) and move and not audio_waiting(room):
                 try:
                     perform_game_action(room, seat, move)
@@ -358,6 +367,10 @@ def bot_loop():
                     perform_game_action(room, g.turn, {'action': 'pass'})
                     room['revision'] += 1
                     continue
+                config = room.get('modelConfig') if time.monotonic() >= room.get('modelRetryAt', 0) else None
+                if g.mode == 'conveyor':
+                    for actor in g.core.players:
+                        actor['model'] = bool(config and room['players'][actor['owner']].get('model'))
                 for seat in bot_turn_order(g):
                     p = room['players'][seat]
                     if clock and clock['seat'] != seat: continue
@@ -365,10 +378,9 @@ def bot_loop():
                     if g.phase == 'setup' and confirmation_seat(room) != seat: continue
                     move = g.bot_action(seat)
                     if not move: continue
-                    config = room.get('modelConfig') if p.get('bot') and p.get('model') else None
-                    if config:
+                    if config and p.get('bot') and p.get('model'):
                         BOT_BUSY.add(room['code'])
-                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId']), daemon=True).start()
+                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId'], move), daemon=True).start()
                     else:
                         try:
                             perform_game_action(room, seat, move)
@@ -529,7 +541,10 @@ class Handler(BaseHTTPRequestHandler):
             if b.get('clear') is True:
                 MODEL_CONFIG.pop(uid, None)
                 for r in ROOMS.values():
-                    if r['host'] == uid: r.pop('modelConfig', None); r['revision'] += 1
+                    if r['host'] == uid:
+                        r.pop('modelConfig', None)
+                        r.pop('modelRetryAt', None)
+                        r['revision'] += 1
                 return self.respond({'ok': True})
             endpoint = validate_endpoint(str(b.get('endpoint', '')))
             key = str(b.get('key', '')).strip() or MODEL_CONFIG.get(uid, {}).get('key', '')
@@ -537,7 +552,10 @@ class Handler(BaseHTTPRequestHandler):
             if not key or not model or len(key) > 4096 or len(model) > 100 or '\n' in key or '\r' in key: raise RuleError('请输入有效的API密钥和模型名称。')
             MODEL_CONFIG[uid] = {'endpoint': endpoint, 'key': key, 'model': model}
             for r in ROOMS.values():
-                if r['host'] == uid: r['modelConfig'] = MODEL_CONFIG[uid].copy(); r['revision'] += 1
+                if r['host'] == uid:
+                    r['modelConfig'] = MODEL_CONFIG[uid].copy()
+                    r.pop('modelRetryAt', None)
+                    r['revision'] += 1
             return self.respond({'ok': True})
         if path == '/api/account':
             current = b.get('currentPassword', '')

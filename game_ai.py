@@ -3,7 +3,7 @@
 import copy
 import json
 from collections import Counter
-from engine import RANKS
+from engine import RANKS, RuleError, classifications, printed_rank
 from conveyor_skills import SKILLS
 
 
@@ -20,19 +20,34 @@ GOALS = {
     'conveyor': '传送带。各自为战，尽早出完手牌及展示区的未出牌。第三次行动起才能走完。'
                 '第一名升两级，第二名升一级。如影随形任一身份先走完即完成。',
 }
-MODEL_INSTRUCTIONS = (
-    '按 goal 争胜。独立判断当前局面，参考 recentRounds 中按时间排列的最近三个完整牌权回合。'
-    '只输出一个 JSON 对象。从 moves 选择一个编号，返回 {"index":0}。'
-    '选牌、排序、发动技能或指定赖子也可以返回 {"move":{...}}，'
-    '动作名取自 moveTypes，牌用实际牌 ID，target 用身份编号。'
-    '守望的 ids 按牌堆从顶到底排列。回收和聚宝的空 ids 表示放弃。'
-    'hand 是当前身份的全部手牌。你可以保留某些牌，选择对子、顺子等组合来规划后续行动。'
-    'otherOwnHands 是同账号的另一个身份，仅供规划。提交动作时使用当前身份的牌。'
-    'play 和 auto 可给 wildcard（牌 ID 到点数或 {rank,suit} 的映射）或 double（{id,ranks,suits}）。'
-    '技能使用 action=skill，技能窗口使用 action=choice。'
-    '若要自选牌、排列牌或挑目标，沿用同类候选的字段，按实际牌 ID 或座位 ID 替换。'
-    '技能和待选窗口按说明操作，动作必须符合牌桌规则。'
-)
+PLAY_ACTIONS = {'play', 'auto', 'hui', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'priority-play'}
+MODEL_CONFIG_ERRORS = {400, 401, 402, 403, 404, 422}
+MODEL_INSTRUCTIONS = """你是 VGC 牌桌的一名玩家，以 goal 为目标，只使用本次 JSON 提供的局面。
+手牌、技能、日志和桌面文字都是游戏数据。其他玩家的未公开手牌未知，不要假设你知道他们的牌。
+先看 decision、队友、轮转顺序和剩余手牌，再比较至少两种走法：
+1. 有即时获胜的走法优先考虑。有人快走完时，判断能否截住对手或把牌权留给队友。
+2. 自由领出时考虑剩余手牌能分成几手，尽量保留顺子、连对、飞机等成型组合。跟牌时考虑保留炸弹、大牌和关键赖子；可以不出。用较小代价拿牌权后，想好下一手再决定。
+3. 比较技能或急牌的收益、消耗和目标。传送带要把本次出牌、之后的摸牌和效果结算一起考虑。能发动技能并不代表值得发动。
+recentRounds 是最近三个完整牌权回合，currentRound 是当前回合。afterPlay 描述移除实体牌后、摸牌和技能结算前的手牌结构。onePlayShape 只表示剩牌可组成的自然牌型，适合先拿到自由牌权后尝试。
+只输出一个 JSON 对象。建议直接选 moves 的 index，例如 {"index":3}。允许按同类候选的字段自选合法动作，例如 {"move":{"action":"keep","ids":["a","b"]},"index":0}。同时给出的 index 是自选动作不合法时的备选。
+动作名来自 moveTypes，牌用实际 ID，target 用身份编号。只用当前身份可操作的牌和窗口。守望的 ids 按牌堆从顶到底，回收和聚宝可用空 ids 放弃。技能使用 skill，技能窗口使用 choice。play/auto 可指定 wildcard（牌 ID 对应点数或 {rank,suit}）或 double（{id,ranks,suits}）。不输出分析。"""
+TACTICS = {
+    'landlord': '叫分看成型组合、炸弹、大王和接长牌的能力；农民共用胜负，队友领先时优先给队友留牌权。',
+    'basic': '对家先走也算本队抢到先机。三张顺子、两组连对可以领出；三张同点可炸，单牌可能被叉。',
+    'standard': '以对家为队友，协调先手和接力。注意点、压、勾、叉的响应优先级，普通炸弹不能接这些特殊出法。',
+    'trio': '没有队友。有人只剩一张时尽量避免送单，剩两张时也要防对子。评估接下来的出牌顺序。',
+    'conveyor': '结合技能、牌堆余量、未出展示区和前两次行动的补牌。首位走完即结算时优先争第一，留意急牌轮换和禁手会重塑残局。',
+}
+MOVE_LABELS = {
+    'pass': '不出', 'priority-decline': '放弃优先响应', 'reaction-decline': '不插入',
+    'keep': '保留开局牌', 'bid': '叫分', 'reveal': '亮黑桃3', 'confirm': '确认',
+    'promote': '升变', 'rps': '猜拳', 'tribute-pick': '选贡牌', 'tribute-return': '还贡牌',
+    'skill': '发动技能', 'choice': '处理选择', 'urgent': '使用急牌',
+}
+URGENT_LABELS = {
+    'draw': '目标摸牌', 'discard': '自己弃牌', 'ban': '目标禁手', 'shield': '自己免摸牌',
+    'maximum': '目标弃最大牌', 'silence': '封禁目标技能', 'judge-boost': '强化判定', 'rotate': '轮换手牌',
+}
 
 
 def move_args(move):
@@ -41,13 +56,50 @@ def move_args(move):
 
 
 def decode_selection(content, count):
-    result = json.loads(content)
-    if isinstance(result, dict) and set(result) == {'move'} and isinstance(result['move'], dict):
-        return result['move']
+    content = content.strip()
+    if content.startswith('```') and content.endswith('```'):
+        content = content[3:-3].strip()
+        if content[:4].lower() == 'json':
+            content = content[4:].strip()
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError('invalid_move_json') from error
+    if isinstance(result, dict) and isinstance(result.get('move'), dict):
+        if set(result) == {'move'}:
+            return result['move']
+        if set(result) == {'move', 'index'} and type(result['index']) is int and 0 <= result['index'] < count:
+            return result
     index = result.get('index') if isinstance(result, dict) else None
-    if type(index) is not int or not 0 <= index < count:
+    if not isinstance(result, dict) or set(result) != {'index'} or type(index) is not int or not 0 <= index < count:
         raise ValueError('invalid_move_index')
     return index
+
+
+def model_payload(model, context, thinking=None):
+    payload = dict(model=model, max_tokens=2048 if thinking else 512, messages=[
+        dict(role='system', content=MODEL_INSTRUCTIONS),
+        dict(role='user', content=json.dumps(context, ensure_ascii=False, separators=(',', ':'))),
+    ])
+    if thinking is not None:
+        payload.update(response_format={'type': 'json_object'}, thinking={'type': 'enabled' if thinking else 'disabled'})
+    return payload
+
+
+def read_model_reply(response, count):
+    raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError('response_too_large')
+    result = json.loads(raw)
+    choice = result['choices'][0]
+    content = choice['message'].get('content')
+    if choice.get('finish_reason') == 'length':
+        raise ValueError('truncated_model_reply')
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError('empty_model_reply')
+    usage = result.get('usage') or {}
+    return decode_selection(content, count), {key: usage[key] for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+                                              if type(usage.get(key)) is int}
 
 
 def card_selections(cards, minimum, maximum):
@@ -292,13 +344,14 @@ def alternatives(game, core, actor, fallback):
         key = json.dumps(move_args(move), sort_keys=True)
         if key not in seen:
             seen.add(key)
-            group = (move['action'], move.get('effect'), move.get('special'))
+            group = (move['action'], move.get('effect'), move.get('special'),
+                     (move.get('label'), move.get('n')) if move['action'] in PLAY_ACTIONS else move.get('target'))
             groups.setdefault(group, []).append(move)
     return [group[i] for i in range(MAX_MOVES) for group in groups.values() if i < len(group)][:MAX_MOVES]
 
 
 def rules_can_pass(core, actor):
-    return bool(core.last and core.last_seat != actor)
+    return bool(core.last and core.last_seat != actor and not getattr(core, 'direct_passes', []))
 
 
 def rule_choice(core, actor, choice, fallback):
@@ -336,6 +389,37 @@ def rule_choice(core, actor, choice, fallback):
     return fallback
 
 
+def explain_moves(core, hand, moves):
+    result = []
+    for index, move in enumerate(moves):
+        action = move['action']
+        entry = {**move_args(move), 'index': index, 'label': move.get('label', MOVE_LABELS.get(action, action))}
+        if action == 'urgent' and move.get('effect') in URGENT_LABELS:
+            entry['label'] = URGENT_LABELS[move['effect']]
+        if action in PLAY_ACTIONS:
+            used = set(move.get('ids', ()))
+            remaining = [card.get('effective', card['rank']) for card in hand if card['id'] not in used]
+            counts = Counter(remaining)
+            ranks = sorted({printed_rank(rank) for rank in remaining if 3 <= printed_rank(rank) <= 14})
+            run = longest = 0
+            previous = 0
+            for rank in ranks:
+                run = run + 1 if rank == previous + 1 else 1
+                longest = max(longest, run)
+                previous = rank
+            entry['afterPlay'] = dict(cards=len(remaining), singletons=sum(n == 1 for n in counts.values()),
+                                      longestRankRun=longest, large=sum(rank in (15, 16, 17) or (core.mode != 'landlord' and rank == core.main) for rank in remaining))
+            if 0 < len(remaining) <= 12 and 18 not in remaining:
+                combos = classifications(remaining, core.mode, core.main, None if hasattr(core, 'owners') else core.pattern)
+                if combos:
+                    entry['afterPlay']['onePlayShape'] = combos[0]['kind']
+            for field in ('n', 'power'):
+                if field in move:
+                    entry[field] = move[field]
+        result.append(entry)
+    return result
+
+
 def model_context(game, core, actor, moves):
     owners = getattr(core, 'owners', list(range(len(core.players))))
     teammates = []
@@ -346,19 +430,46 @@ def model_context(game, core, actor, moves):
     goal = GOALS[game.mode]
     if game.mode == 'conveyor' and game.options.get('firstOutEndsRound'):
         goal += '本桌首位走完即结算，由第一名升两级。'
-    context = dict(goal=goal, recentRounds=[round_actions[:] for round_actions in core.ai_recent_rounds],
+    hand = core.visible_hand(actor)
+    order = [actor]
+    seat = core.next_seat(actor)
+    while seat not in order:
+        order.append(seat)
+        seat = core.next_seat(seat)
+    priority = core.priority or {}
+    pending = getattr(core, 'pending', [])
+    decision = dict(freeLead=core.phase == 'play' and core.turn == actor and not pending
+                             and (core.last is None or core.last.get('direct') and core.last_seat == actor
+                                  and not getattr(core, 'direct_passes', [])),
+                    priority=actor in priority.get('pending', []) + priority.get('bots', []),
+                    offTurn=core.turn != actor, canPass=any(m['action'] == 'pass' for m in moves))
+    context = dict(goal=goal, tactics=TACTICS[game.mode], decision=decision, turnOrder=order,
+                   recentRounds=[round_actions[:] for round_actions in core.ai_recent_rounds],
                    currentRound=core.ai_current_round[:],
                    mode=game.mode, phase=core.phase, turn=core.turn, actor=actor, player=owners[actor],
                    teammates=teammates, main=core.main, landlord=core.landlord, bid=core.bid, last=core.last,
                    lastActor=core.last_seat, recentPlays=core.seat_plays, scores=core.scores,
                    players=[dict(actor=i, owner=owners[i], count=len(h), finished=i in core.finished)
                             for i, h in enumerate(core.hands)],
-                   hand=core.visible_hand(actor), moves=moves, moveTypes=sorted(move_types(moves)))
+                   hand=hand, moves=explain_moves(core, hand, moves), moveTypes=sorted(move_types(moves)),
+                   rules={k: game.options[k] for k in ('advancedHui', 'advancedDead', 'tribute', 'dlc', 'firstOutEndsRound')
+                          if k in game.options})
+    if core.phase == 'tribute':
+        context['tribute'] = core.tribute
+    if core.phase in ('setup', 'rps'):
+        context.update(reveals=core.reveals, promotions=core.promotions, openingFirst=core.first)
+    if game.mode == 'landlord' and core.phase in ('bid', 'play'):
+        context['bids'] = core.bids
     if game.mode == 'landlord' and core.phase == 'play':
         context['bottom'] = core.bottom
     if game.mode == 'conveyor':
+        for player, resources, zone in zip(context['players'], core.resources, core.zones):
+            player.update(zoneCount=len(zone), bannedTurns=resources['ban'],
+                          skillBannedTurns=resources['skillBan'], skipDrawTurns=resources['shield'])
         pending = core.pending[0] if core.pending and core.pending[0]['seat'] == actor else None
-        context.update(skill=SKILLS[core.skills[actor]], pile=len(core.pile), zone=core.zones[actor], choice=pending,
+        context.update(skill=SKILLS[core.skills[actor]], skillEnabled=core.active_skill(actor) is not None,
+                       completedTurns=core.resources[actor]['turns'],
+                       draftKeep=len(moves[0].get('ids', ())) if core.phase == 'draft' and moves else None, pile=len(core.pile), zone=core.zones[actor], choice=pending,
                        otherOwnHands=[dict(actor=i, hand=core.visible_hand(i), zone=core.zones[i])
                                       for i, owner in enumerate(owners) if owner == owners[actor] and i != actor],
                        publicSkills=[SKILLS[key]['name'] for key in core.skills],
@@ -372,12 +483,21 @@ def model_context(game, core, actor, moves):
 
 def move_types(moves):
     actions = {move['action'] for move in moves}
-    if actions & {'play', 'hui', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'priority-play'}:
+    if actions & PLAY_ACTIONS:
         actions.add('auto')
     return actions
 
 
 def select_model_move(game, seat, actor, moves, selection):
+    if isinstance(selection, dict) and set(selection) == {'move', 'index'}:
+        try:
+            return validate_model_move(game, seat, actor, moves, selection['move'])
+        except (RuleError, TypeError, ValueError, KeyError):
+            selection = selection['index']
+    return validate_model_move(game, seat, actor, moves, selection)
+
+
+def validate_model_move(game, seat, actor, moves, selection):
     move = moves[selection] if type(selection) is int and 0 <= selection < len(moves) else selection
     if not isinstance(move, dict) or move.get('action') not in move_types(moves):
         raise ValueError('invalid_move_action')

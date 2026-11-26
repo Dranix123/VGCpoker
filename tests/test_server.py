@@ -990,6 +990,27 @@ class ServerIntegration(unittest.TestCase):
             server.tick_bot(code,1,version-1,copy.deepcopy(g),{})
         self.assertEqual(room['revision'],version);self.assertEqual(g.hands,old_hands)
 
+    def test_live_model_auth_failure_pauses_requests_and_reuses_rule_move(self):
+        import copy
+        code = self.new_room('landlord',1)
+        for _ in range(2): self.request(self.clients[0],'bot',{})
+        self.request(self.clients[0],'start',{})
+        room = server.ROOMS[code]
+        game = room['game']
+        game.action(0,'bid',value=3)
+        config = {'endpoint':'https://api.deepseek.com','model':'deepseek-flash','key':'test-secret'}
+        room['modelConfig'] = config.copy()
+        fallback = game.bot_action(0)
+        with patch.object(server,'model_move',side_effect=urllib.error.HTTPError(config['endpoint'],401,'auth',{},None)):
+            server.tick_bot(code,0,room['revision'],copy.deepcopy(game),config,room['matchId'],fallback)
+        self.assertEqual(room['modelRetryAt'],float('inf'))
+        self.assertTrue(any('HTTP 401' in line for line in game.log))
+        self.assertEqual(game.play_number,1)
+        with patch.object(server,'validate_endpoint',return_value=config['endpoint']):
+            self.request(self.clients[0],'model-settings',config)
+        self.assertNotIn('modelRetryAt',room)
+        self.request(self.clients[0],'model-settings',{'clear':True})
+
     def test_model_output_validation(self):
         g=Game('landlord',[{'name':str(i)} for i in range(3)]);g.action(0,'bid',value=3)
         response=unittest.mock.MagicMock()
