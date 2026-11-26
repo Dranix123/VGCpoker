@@ -11,6 +11,7 @@ LABELS.update({n + PLAIN_RANK_OFFSET: LABELS[n] for n in RANKS})
 def printed_rank(rank):
     return rank - PLAIN_RANK_OFFSET if rank > PLAIN_RANK_OFFSET else rank
 MODES = {'landlord': 3, 'standard': 4, 'trio': 3, 'basic': 4, 'conveyor': 4}
+PRIORITY_ACTIONS = ('cross', 'hook', 'dot', 'dead', 'dead4')
 
 def deck(mode, dlc=False):
     copies = 1 if mode in ('landlord', 'basic') else 2
@@ -245,6 +246,7 @@ class Game:
         self.play_number = 0
         self.last_voice_play = None
         self.passes, self.finished, self.log = set(), [], []
+        self.ai_recent_rounds, self.ai_current_round = [], []
         self.hui_used = False
         self.landlord, self.bid, self.bids = None, 0, []
         self.promotions, self.reveals, self.rps = {}, [], {}
@@ -278,6 +280,8 @@ class Game:
     def announce(self, text):
         self.log.append(text)
         self.log = self.log[-45:]
+        if self.phase == 'play':
+            self.ai_current_round.append(text)
 
     def can_reveal(self, seat):
         return self.first is None and any(c['rank'] == 3 and c['suit'] == 'S' for c in self.hands[seat])
@@ -309,16 +313,29 @@ class Game:
         if self.mode in ('basic', 'standard') and partner not in self.finished: return partner
         return self.next_seat(seat)
 
+    def announce_free_lead(self, seat):
+        if self.play_number and self.ai_current_round:
+            self.ai_recent_rounds.append(self.ai_current_round)
+            self.ai_recent_rounds = self.ai_recent_rounds[-3:]
+            self.ai_current_round = []
+        self.announce(self.players[seat]['name'] + '获得自由牌权。')
+
     def display_action(self, seat, play):
         if seat in self.display_seen:
             self.display_seen.clear()
             for finished in self.finished: self.seat_plays[finished] = None
         self.display_seen.add(seat)
         self.seat_plays[seat] = play
+        if self.phase == 'play':
+            self.ai_current_round.append({
+                'actor': seat, 'kind': play['kind'],
+                'cards': [dict(card) for card in play['cards']],
+                'ranks': play['ranks'][:], 'suits': list(play.get('suits', ())),
+            })
 
     def priority_moves(self, seat):
         if self.priority_declined.get(seat) == self.play_number: return []
-        return [m for m in self.candidates(seat) if m['action'] in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')]
+        return [m for m in self.candidates(seat) if m['action'] in PRIORITY_ACTIONS]
 
     def solo(self):
         return sum(not p.get('bot') for p in self.players) <= 1
@@ -394,7 +411,7 @@ class Game:
             if any(urgent(c) for c in cards): action = 'urgent'
             else:
                 special = self.infer_action(seat, cards, wildcard)
-                if self.priority and special in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and seat in self.priority['pending'] + self.priority['bots']:
+                if self.priority and special in PRIORITY_ACTIONS and seat in self.priority['pending'] + self.priority['bots']:
                     action = 'priority-play'; args['special'] = special
                 else:
                     if self.priority and self.solo() and seat in self.priority['pending']: self.priority = None
@@ -466,7 +483,7 @@ class Game:
                 if not window['pending'] and not window['bots']: self.priority = None
                 return
             special = args.get('special')
-            if special not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('请选择优先出法。')
+            if special not in PRIORITY_ACTIONS: raise RuleError('请选择优先出法。')
             self.validate_play(seat, self.select(seat, ids or []), special, args.get('wildcard'))
             self.priority = None
             self.action(seat, special, ids, wildcard=args.get('wildcard'))
@@ -482,6 +499,7 @@ class Game:
                 self.last = None; self.passes = set(); self.hui_used = False; self.priority = None
                 self.display_seen.clear()
                 for finished in self.finished: self.seat_plays[finished] = None
+                self.announce_free_lead(self.turn)
             else: self.turn = self.next_seat(seat)
             return
         cards = self.select(seat, ids or [])
@@ -530,6 +548,7 @@ class Game:
                     self.display_seen.clear()
                     for finished in self.finished: self.seat_plays[finished] = None
                 elif seat in self.finished and action in ('dead', 'hook'): self.turn = self.inherit_lead(seat)
+                self.announce_free_lead(self.turn)
         self.open_priority()
 
     def body_groups(self, combo):
@@ -561,9 +580,9 @@ class Game:
     def validate_play(self, seat, cards, action='play', wildcard=None, *, all_aces=False):
         if not cards or any(c['rank'] == 18 for c in cards): raise RuleError('急牌请通过赠牌使用。')
         if action not in ('play', 'cross', 'hook', 'dot', 'press', 'dead', 'dead4', 'hui'): raise RuleError('未知出牌方式。')
-        if action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4') and self.priority_declined.get(seat) == self.play_number:
+        if action in PRIORITY_ACTIONS and self.priority_declined.get(seat) == self.play_number:
             if seat != self.turn or action not in ('cross', 'hook', 'dot'): raise RuleError('已放弃这次优先管牌。')
-        if self.priority and any(not self.players[s].get('autoplay') for s in self.priority['pending']) and (self.players[seat].get('bot') or self.players[seat].get('autoplay')) and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4'): raise RuleError('等待真人优先决定管牌。')
+        if self.priority and any(not self.players[s].get('autoplay') for s in self.priority['pending']) and (self.players[seat].get('bot') or self.players[seat].get('autoplay')) and action in PRIORITY_ACTIONS: raise RuleError('等待真人优先决定管牌。')
         old = self.last
         special = action != 'play'
         if old and old.get('special') == 'dot' and old.get('direct') and (seat != self.last_seat or special):
@@ -573,9 +592,8 @@ class Game:
         if old and old.get('special') == 'cross' and action != 'hook': raise RuleError('叉牌只能用同点单牌勾。')
         if old and old.get('special') == 'hook' and action != 'cross': raise RuleError('勾牌只能用同点对子叉。')
         if seat != self.turn:
-            advanced_intercept = old and (action == 'dead4' and old.get('special') == 'dead' or action == 'dead' and old.get('special') == 'dot' or action == 'press' and old.get('special') == 'dot' and old.get('direct'))
-            priority_intercept = old and action in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')
-            if not advanced_intercept and not priority_intercept: raise RuleError('还没轮到你出牌。')
+            if not old or action not in PRIORITY_ACTIONS:
+                raise RuleError('还没轮到你出牌。')
         if old and self.last_seat == seat: raise RuleError('请等待其他玩家回应。')
         combos = interpretations(cards, self.mode, self.main, wildcard, self.pattern, all_aces)
         if not combos: raise RuleError('混子指定或牌型无效；单张黑桃A不能代替其他点数。')
@@ -610,7 +628,7 @@ class Game:
                 ok = chain == 'dot' and len(cards) == 1 and cards[0]['rank'] in (15, self.main, 16, 17)
                 direct = True
             elif action == 'dead':
-                ok = (old.get('baseKind', old['kind']) == '对子' or chain == 'dot') and chain not in ('cross', 'hook') and len(cards) == 3 and matched
+                ok = old.get('baseKind', old['kind']) == '对子' and chain not in ('cross', 'hook') and len(cards) == 3 and matched
                 direct = True
             elif action == 'dead4':
                 ok = self.options.get('advancedDead', False) and chain == 'dead' and len(cards) == 4 and matched
@@ -622,7 +640,9 @@ class Game:
                 ok = eligible and matched and (self.options.get('advancedHui', False) or old['n'] == 1)
             if not ok: raise RuleError('所选牌不满足' + {'cross': '叉', 'hook': '勾', 'dot': '点', 'press': '压', 'dead': '死压', 'dead4': '进阶死压', 'hui': '回'}[action] + '的条件。')
             c = matched or combos[0]
-            return {**c, 'baseKind': c['kind'], 'kind': {'cross': '叉', 'hook': '勾', 'dot': '点', 'press': '压', 'dead': '死压', 'dead4': '进阶死压', 'hui': '回'}[action]}, direct
+            kind = {'cross': '叉', 'hook': '勾', 'dot': '死点' if direct else '点',
+                    'press': '压', 'dead': '死压', 'dead4': '进阶死压', 'hui': '回'}[action]
+            return {**c, 'baseKind': c['kind'], 'kind': kind}, direct
         for combo in sorted(combos, key=lambda c: (c['power'], c['value'])):
             if not old: return combo, False
             if combo['power']:
@@ -889,7 +909,7 @@ class Game:
         moves = self.candidates(seat)
         if self.priority and self.priority['pending'] and (self.players[seat].get('bot') or self.players[seat].get('autoplay')):
             if self.solo(): return None
-            moves = [m for m in moves if m['action'] not in ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')]
+            moves = [m for m in moves if m['action'] not in PRIORITY_ACTIONS]
         hand = self.hands[seat]
         def allied(other):
             return other != seat and ((self.mode == 'landlord' and seat != self.landlord and other != self.landlord) or self.mode in ('standard', 'basic') and other % 2 == seat % 2)

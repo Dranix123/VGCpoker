@@ -168,7 +168,7 @@ class Rules(unittest.TestCase):
             g.action(3,'auto',['d0','d1']);self.assertEqual(g.last['special'],'cross')
             g.action(1,'auto',['b0']);self.assertEqual(g.last['special'],'hook')
         g=table(options={'advancedDead':True});g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,10],prefix='d');g.hands[1]=cards([7]*3+[10],prefix='b');g.hands[2]=cards([7]*4+[10],prefix='c')
-        g.action(0,'auto',['a0','a1']);g.action(3,'auto',['d0']);self.assertEqual(g.last['special'],'dot')
+        g.action(0,'auto',['a0','a1'])
         g.action(1,'auto',['b0','b1','b2']);self.assertEqual(g.last['special'],'dead')
         g.action(2,'auto',['c0','c1','c2','c3']);self.assertEqual(g.last['special'],'dead4')
         g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,10],prefix='d');g.hands[2]=cards([15,9],prefix='c')
@@ -556,15 +556,37 @@ class Rules(unittest.TestCase):
 
     def test_dot_press_direct_lead(self):
         g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,9],prefix='b');g.hands[2]=cards([15,8,9],prefix='c')
-        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0']);g.action(2,'press',['c0'])
+        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0'])
+        self.assertEqual(g.last['kind'],'点');self.assertFalse(g.last['direct'])
+        g.action(2,'press',['c0'])
+        self.assertEqual(g.last['kind'],'压')
         self.assertEqual(g.turn,2)
         g.action(2,'play',['c1']);self.assertEqual(g.last['kind'],'单张')
         g=table();g.hands[0]=cards([15,15,9],prefix='a');g.hands[3]=cards([15,9],prefix='b')
+        other_hands=g.hands[1:3]
         g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0']);self.assertEqual(g.turn,3)
+        self.assertEqual(g.hands[1:3],other_hands)
+        self.assertEqual((len(g.hands[0]),len(g.hands[3])),(1,1))
+        self.assertEqual(g.last['kind'],'死点')
+        self.assertEqual(g.log[-1],g.players[3]['name']+'获得自由牌权。')
 
-    def test_dead_has_priority_over_dot(self):
-        g=table();g.hands[0]=cards([7,7,9],prefix='a');g.hands[3]=cards([7,9],prefix='b');g.hands[1]=cards([7,7,7,9],prefix='d')
-        g.action(0,'play',['a0','a1']);g.action(3,'dot',['b0']);g.action(1,'dead',['d0','d1','d2'])
+    def test_press_follows_turn_order_and_dead_requires_pair(self):
+        g=table()
+        g.interactive=True
+        g.hands[0]=cards([7,7,9],prefix='a')
+        g.hands[3]=cards([7,9],prefix='d')
+        g.hands[2]=cards([15,7,7,7,8],prefix='c')
+        g.hands[1]=cards([17,9],prefix='b')
+        g.action(0,'play',['a0','a1'])
+        g.action(3,'dot',['d0'])
+        self.assertEqual(g.turn,2)
+        self.assertIsNone(g.priority)
+        with self.assertRaises(RuleError): g.action(1,'auto',['b0'])
+        with self.assertRaises(RuleError): g.action(2,'auto',['c1','c2','c3'])
+        with self.assertRaises(RuleError): g.action(2,'press',['c4'])
+        g.action(2,'pass')
+        g.action(1,'auto',['b0'])
+        self.assertEqual(g.last['kind'],'压')
         self.assertEqual(g.turn,1)
 
     def test_next_round_allows_promotion(self):

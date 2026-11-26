@@ -41,10 +41,12 @@ class WebPlaytest:
         if path == '/api/playtest':
             return handler.respond({'configured': bool(key), 'models': DEEPSEEK_MODELS,
                                     'rules': BOOLEAN_OPTIONS, 'runs': service.recent()})
-        replay = re.fullmatch(r'/api/playtest/runs/([0-9a-f]{16})/matches/([1-9][0-9]?)(?:/frames/(0|[1-9][0-9]{0,3}))?', path)
+        replay = re.fullmatch(r'/api/playtest/runs/([0-9a-f]{16})/matches/([1-9][0-9]?)'
+                              r'(?:/frames/(0|[1-9][0-9]{0,3})(?:/([1-9][0-9]?))?)?', path)
         if replay:
-            run, number, frame = replay.groups()
-            return self.replay(handler, service, run, int(number), None if frame is None else int(frame))
+            run, number, frame, count = replay.groups()
+            return self.replay(handler, service, run, int(number),
+                               None if frame is None else int(frame), None if count is None else int(count))
         route = re.fullmatch(r'/api/playtest/runs/([0-9a-f]{16})(/log)?', path)
         if route:
             run, log = route.groups()
@@ -55,7 +57,9 @@ class WebPlaytest:
                 return handler.respond(summary)
         return handler.respond({'error': '找不到测试任务。'}, 404)
 
-    def replay(self, handler, service, run, number, frame):
+    def replay(self, handler, service, run, number, frame, count):
+        if count is not None and count > 32:
+            return handler.respond({'error': '每次最多读取 32 步回放。'}, 400)
         summary = service.summary(run)
         if not summary:
             return handler.respond({'error': '找不到测试任务。'}, 404)
@@ -68,12 +72,15 @@ class WebPlaytest:
         config = summary['config']
         try:
             with service.lock:
-                record = load_replay(directory, number, config, result, 0 if frame is None else frame)
+                record = load_replay(directory, number, config, result, frame or 0, count or 1)
         except FileNotFoundError:
             record = None
         if record is None:
             return handler.respond({'error': '找不到回放画面。'}, 404)
-        frames, view = record
+        frames, views = record
+        if count is not None:
+            return handler.respond({'frames': views})
+        view = views[0]
         if frame is not None:
             return handler.respond(view)
         mode = config['mode']

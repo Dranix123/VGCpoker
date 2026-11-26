@@ -120,6 +120,14 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(view['first']['game']['hand'],[])
             self.assertEqual([len(h['cards']) for h in view['first']['game']['publicHands']],[17,17,17])
             self.assertEqual(self.request(alice,replay+'/frames/2')[1]['step'],2)
+            status, batch = self.request(alice,replay+'/frames/1/16')
+            self.assertEqual(status,200)
+            self.assertEqual([frame['step'] for frame in batch['frames']],[1,2])
+            self.assertEqual(batch['frames'][1],self.request(alice,replay+'/frames/2')[1])
+            self.assertEqual(self.request(alice,replay+'/frames/0/33')[0],400)
+            self.assertEqual(self.request(alice,replay+'/frames/3/16')[0],404)
+            self.assertEqual(self.request(bob,replay+'/frames/1/16')[0],404)
+            self.assertEqual(self.request(ungranted,replay+'/frames/1/16')[0],403)
             self.assertEqual(self.request(alice,replay+'/frames/3')[0],404)
             self.assertEqual(self.request(alice,route+'/matches/2')[0],404)
             with alice.open(self.url+'/api/'+route+'/log') as response:
@@ -938,6 +946,33 @@ class ServerIntegration(unittest.TestCase):
             with self.assertRaises(ValueError):server.model_move({'endpoint':'https://example.com/v1','key':'test','model':'test'},g,0)
         for url in ('http://example.com/v1','https://127.0.0.1/v1','https://user:pass@example.com/v1'):
             with self.assertRaises(ValueError):server.validate_endpoint(url)
+
+    def test_room_model_can_choose_a_pending_skill_with_full_hand_and_goal(self):
+        from test_conveyor import ConveyorRules
+        fixture = ConveyorRules()
+        game = fixture.game('money','anchor','anchor','anchor')
+        core = fixture.table(game,[[4,9],[8],[10],[11,12]])
+        card = core.hands[3].pop()
+        core.discard.append(card)
+        core.resources[0]['money'] = 4
+        core.offer(0,'buy','聚宝',cards=[card])
+        expected = {'action':'choice','ids':[card['id']]}
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {'choices':[{'message':{'content':json.dumps({'move':expected})}}]}).encode()
+        opener = unittest.mock.MagicMock()
+        opener.open.return_value = response
+        with patch.object(server,'validate_endpoint',return_value='https://example.com/v1'), patch.object(server.urllib.request,'build_opener',return_value=opener):
+            move = server.model_move({'endpoint':'https://example.com/v1','key':'test-key','model':'test'},game,0)
+        prompt = json.loads(json.loads(opener.open.call_args[0][0].data)['messages'][1]['content'])
+        self.assertEqual(prompt['hand'],core.visible_hand(0))
+        self.assertEqual(prompt['choice']['kind'],'buy')
+        self.assertIn('各自为战',prompt['goal'])
+        self.assertEqual(move,{**expected,'actor':0})
+        self.assertEqual(core.resources[0]['money'],4)
+        game.action(0,**move)
+        self.assertIn(card,core.hands[0])
+        self.assertEqual(core.resources[0]['money'],0)
 
     def test_conveyor_room_selection_start_and_private_view(self):
         client=self.clients[0]

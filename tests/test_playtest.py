@@ -10,9 +10,98 @@ from urllib.request import Request, urlopen
 
 from playtest import DeepSeek, PlaytestService, play_batch, run_config, serve
 from playtest_replay import load_replay, read, record, replay_path, restore_legacy
+from game_ai import alternatives, model_context, select_model_move
+from engine import RuleError
 
 
 class Playtest(unittest.TestCase):
+    def test_model_context_keeps_three_complete_tricks_and_all_owned_cards(self):
+        from test_conveyor import ConveyorRules
+        from test_engine import cards, table
+
+        game = table('landlord')
+        game.turn = 0
+        game.hands[0] = cards([4, 5, 6, 7, 8, 9], prefix='leader')
+        for _ in range(4):
+            game.action(0, 'play', [game.hands[0][0]['id']])
+            game.action(2, 'pass')
+            game.action(1, 'pass')
+        context = model_context(game, game, 0, [])
+        rounds = context['recentRounds']
+        self.assertEqual(len(rounds), 3)
+        self.assertEqual([next(item['cards'][0]['rank'] for item in group if isinstance(item, dict) and item['cards'])
+                          for group in rounds], [5, 6, 7])
+        self.assertTrue(all(sum('不出' in item for item in group if isinstance(item, str)) == 2 for group in rounds))
+        self.assertIn('地主', context['goal'])
+        self.assertEqual(context['hand'], game.visible_hand(0))
+
+        fixture = ConveyorRules()
+        game = fixture.game('twins', 'anchor', 'anchor', 'anchor')
+        core = fixture.table(game, [[4, 5], [6, 7], [8], [9], [10]])
+        context = model_context(game, core, 0, [])
+        self.assertEqual(context['hand'], core.visible_hand(0))
+        self.assertEqual(context['otherOwnHands'][0]['hand'], core.visible_hand(1))
+        self.assertEqual(len(context['otherOwnHands']), 1)
+        self.assertTrue(all('hand' not in seat for seat in context['players']))
+
+    def test_model_can_take_active_and_optional_conveyor_actions(self):
+        from test_conveyor import ConveyorRules
+
+        fixture = ConveyorRules()
+        game = fixture.game('balance', 'money', 'reflux', 'anchor')
+        core = fixture.table(game, [[4, 5, 6], [9], [7, 8, 9, 10, 11, 12], [13]])
+        fallback = game.bot_action(0)
+        moves = alternatives(game, core, 0, fallback)
+        self.assertTrue(any(move['action'] == 'skill' for move in moves))
+        reserve = core.hands[0][1]['id']
+        selected = {'action': 'skill', 'ids': [core.hands[0][0]['id'], core.hands[0][2]['id']]}
+        before = core.hands[0][:]
+        self.assertNotIn(selected, moves)
+        self.assertEqual(select_model_move(game, 0, 0, moves, selected), selected)
+        self.assertEqual(core.hands[0], before)
+        with self.assertRaises(RuleError):
+            select_model_move(game, 0, 0, moves, {'action': 'skill', 'ids': [core.hands[1][0]['id']]})
+        game.action(0, **selected)
+        self.assertIn(reserve, [card['id'] for card in core.hands[0]])
+
+        card = core.hands[2].pop()
+        core.discard.append(card)
+        core.offer(2, 'reflux', '回收', cards=[card])
+        fallback = game.bot_action(2)
+        self.assertEqual(fallback['ids'], [card['id']])
+        moves = alternatives(game, core, 2, fallback)
+        self.assertTrue(any(move.get('ids') == [] for move in moves))
+        skip = select_model_move(game, 2, 2, moves, {'action': 'choice', 'ids': []})
+        game.action(2, **skip)
+        core.resources[1]['money'] = 4
+        core.offer(1, 'buy', '聚宝', cards=[card])
+        moves = alternatives(game, core, 1, game.bot_action(1))
+        buy = select_model_move(game, 1, 1, moves, {'action': 'choice', 'ids': [card['id']]})
+        game.action(1, **buy)
+        self.assertIn(card, core.hands[1])
+        self.assertEqual(core.resources[1]['money'], 0)
+
+    def test_model_can_keep_urgent_card_or_use_it_outside_its_turn(self):
+        from test_conveyor import ConveyorRules
+        fixture = ConveyorRules()
+        game = fixture.game('anchor','anchor','anchor','anchor')
+        core = fixture.table(game,[[4,5,6],[18,9],[10,11],[12,13]])
+        core.ai_model_reactions = True
+        fallback = game.bot_action(1)
+        self.assertEqual(fallback['action'],'reaction-decline')
+        moves = alternatives(game,core,1,fallback)
+        self.assertTrue(any(move.get('effect') == 'ban' for move in moves))
+        decline = select_model_move(game,1,1,moves,0)
+        game.action(1,**decline)
+        self.assertTrue(any(card['rank'] == 18 for card in core.hands[1]))
+        self.assertIsNone(game.bot_action(1))
+        game.action(0,'play',[core.hands[0][0]['id']])
+        fallback = game.bot_action(1)
+        moves = alternatives(game,core,1,fallback)
+        ban = next(move for move in moves if move.get('effect') == 'ban' and move.get('target') == core.turn)
+        game.action(1,**select_model_move(game,1,1,moves,ban))
+        self.assertTrue(core.resources[core.turn]['ban'])
+
     def test_separate_replays_and_legacy_recovery(self):
         config = run_config({'driver': 'rules', 'mode': 'landlord', 'games': 2}, False)
         with TemporaryDirectory() as temp:
@@ -44,7 +133,7 @@ class Playtest(unittest.TestCase):
                     for state in cached:
                         state['game'].pop('publicHands')
                         append(**state)
-                _, upgraded = load_replay(output, number, config, match, play['step'])
+                _, [upgraded] = load_replay(output, number, config, match, play['step'])
                 self.assertEqual(upgraded['game']['seatPlays'], frame['game']['seatPlays'])
                 self.assertEqual(upgraded['game']['publicHands'], frame['game']['publicHands'])
                 path.unlink()

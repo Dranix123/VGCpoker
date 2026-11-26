@@ -21,6 +21,8 @@ from conveyor import ConveyorGame
 from conveyor_skills import SKILLS, available
 from engine import Game, MODES, RuleError
 from playtest_replay import record, replay_path, spectator_view
+from game_ai import (MODEL_INSTRUCTIONS, alternatives, bot_turn_order, decode_selection, model_context,
+                     move_args, select_model_move)
 
 
 OUTPUT = Path(__file__).resolve().parent / 'output' / 'playtests'
@@ -96,10 +98,9 @@ class DeepSeek:
             'model': self.model,
             'thinking': {'type': 'enabled' if self.thinking else 'disabled'},
             'response_format': {'type': 'json_object'},
-            'max_tokens': 2048 if self.thinking else 64,
+            'max_tokens': 2048 if self.thinking else 512,
             'messages': [
-                {'role': 'system', 'content': '你正在玩 VGC 扑克。按当前身份及阵营争胜。'
-                 '只能从 moves 选择一项，索引从 0 开始。返回 JSON，如 {"index":0}。'},
+                {'role': 'system', 'content': MODEL_INSTRUCTIONS},
                 {'role': 'user', 'content': json.dumps(context, ensure_ascii=False, separators=(',', ':'))},
             ],
         }
@@ -110,11 +111,9 @@ class DeepSeek:
         if len(raw) > 65536:
             raise ValueError('response_too_large')
         result = json.loads(raw)
-        index = json.loads(result['choices'][0]['message']['content'])['index']
-        if type(index) is not int or not 0 <= index < count:
-            raise ValueError('invalid_move_index')
+        selection = decode_selection(result['choices'][0]['message']['content'], count)
         usage = result.get('usage') or {}
-        return index, {key: usage[key] for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+        return selection, {key: usage[key] for key in ('prompt_tokens', 'completion_tokens', 'total_tokens')
                        if type(usage.get(key)) is int}
 
 
@@ -144,73 +143,12 @@ def next_action(game, core):
         seats = [owners[i] for i in sorted(core.confirmation_seats(), key=lambda i: (start - i) % len(owners))
                  if i not in core.rps]
     else:
-        seats = range(len(game.players))
+        seats = bot_turn_order(game)
     for seat in seats:
         move = game.bot_action(seat)
         if move:
             return seat, move.pop('actor', seat), move, False
     raise RuleError('规则 AI 未返回行动。')
-
-
-def move_args(move):
-    fields = {'label', 'power', 'n'}
-    if move['action'] not in ('bid', 'rps', 'choice'):
-        fields.add('value')
-    return {k: v for k, v in move.items() if k not in fields}
-
-
-def alternatives(game, core, actor, fallback):
-    pending = getattr(core, 'pending', [])
-    moves = [fallback]
-    if pending:
-        choice = pending[0]
-        if choice['kind'] == 'deal':
-            moves.extend(dict(action='choice', value=n) for n in range(1, choice['maximum'] + 1))
-            if choice.get('skill') in ('trade', 'request'):
-                moves.append(dict(action='choice', effect='judge' if choice['skill'] == 'trade' else 'request'))
-            if choice.get('skill') == 'redirect':
-                moves.extend(dict(action='choice', effect='redirect', target=s) for s in core.active() if s != actor)
-    elif core.phase == 'bid':
-        moves.extend(dict(action='bid', value=n) for n in [0, *range(core.bid + 1, 4)])
-    elif core.phase == 'rps':
-        moves.extend(dict(action='rps', value=v) for v in ('rock', 'paper', 'scissors'))
-    elif core.phase == 'play':
-        if game.mode == 'conveyor' and (core.resources[actor]['ban'] or core.must_scavenge(actor)):
-            return moves
-        if core.priority and actor in core.priority['bots']:
-            moves.append({'action': 'priority-decline'})
-            moves.extend({**m, 'action': 'priority-play', 'special': m['action']} for m in core.priority_moves(actor))
-        elif actor == core.turn:
-            if core.last and core.last_seat != actor:
-                moves.append({'action': 'pass'})
-            moves.extend(core.candidates(actor))
-    unique = {}
-    for move in moves:
-        unique.setdefault(json.dumps(move_args(move), sort_keys=True), move)
-        if len(unique) >= 40:
-            break
-    return list(unique.values())
-
-
-def model_context(game, core, actor, moves):
-    owners = getattr(core, 'owners', list(range(len(core.players))))
-    teammates = []
-    if game.mode in ('basic', 'standard'):
-        teammates = [(actor + 2) % len(owners)]
-    elif game.mode == 'landlord' and core.landlord is not None and actor != core.landlord:
-        teammates = [s for s in range(len(owners)) if s not in (core.landlord, actor)]
-    context = dict(mode=game.mode, phase=core.phase, actor=actor, player=owners[actor],
-                   teammates=teammates, main=core.main, landlord=core.landlord, bid=core.bid, last=core.last,
-                   lastActor=core.last_seat, recentPlays=core.seat_plays,
-                   players=[dict(actor=i, owner=owners[i], count=len(h), finished=i in core.finished)
-                            for i, h in enumerate(core.hands)],
-                   hand=core.visible_hand(actor), moves=moves)
-    if game.mode == 'conveyor':
-        context.update(skill=SKILLS[core.skills[actor]], pile=len(core.pile),
-                       zone=core.zones[actor], choice=core.pending[0] if core.pending else None,
-                       resources={k: v for k, v in core.resources[actor].items() if k != 'markCards'},
-                       firstOutEndsRound=game.options.get('firstOutEndsRound', False))
-    return context
 
 
 def encode_state(value):
@@ -286,25 +224,34 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                         break
                     steps = step
                     summary['currentStep'] = step
+                    model_available = bool(model and not summary.get('modelDisabledReason')
+                                           and summary['calls'] < config['maxModelCalls'])
+                    if game.mode == 'conveyor':
+                        core.ai_model_reactions = model_available
                     before, messages = snapshot(core), core.log[:]
                     seat, actor, fallback, forced = next_action(game, core)
                     move, source, api = fallback, 'forced' if forced else 'rules', None
                     options = [fallback]
-                    if model and not forced and not summary.get('modelDisabledReason') and summary['calls'] < config['maxModelCalls']:
+                    if model_available and not forced:
                         options = alternatives(game, core, actor, fallback)
                         if len(options) > 1:
                             summary['calls'] += 1
                             started = time.monotonic()
                             try:
-                                index, usage = model.choose(model_context(game, core, actor, options), len(options))
-                                move, source = options[index], 'deepseek'
-                                api = dict(index=index, usage=usage)
+                                selection, usage = model.choose(model_context(game, core, actor, options), len(options))
+                                move = select_model_move(game, seat, actor, options, selection)
+                                source = 'deepseek'
+                                api = dict(usage=usage)
+                                if type(selection) is int:
+                                    api['index'] = selection
                                 for key, count in usage.items():
                                     summary['tokens'][key] = summary['tokens'].get(key, 0) + count
-                            except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
+                            except (OSError, RuleError, ValueError, KeyError, IndexError, TypeError) as error:
                                 summary['fallbacks'] += 1
                                 source = 'fallback'
                                 api = dict(error=type(error).__name__)
+                                if isinstance(error, RuleError):
+                                    api['reason'] = str(error)
                                 if isinstance(error, urllib.error.HTTPError):
                                     api['status'] = error.code
                                     if error.code in (401, 403):

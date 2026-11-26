@@ -30,7 +30,7 @@ def record(path):
         yield append
 
 
-def read(path, frame):
+def read_frames(path, frame, count):
     with path.with_suffix('.idx').open('rb') as index:
         frames = index.seek(0, 2) // OFFSET.size
         if not 0 <= frame < frames:
@@ -39,7 +39,13 @@ def read(path, frame):
         offset, = OFFSET.unpack(index.read(OFFSET.size))
     with path.open('rb') as data:
         data.seek(offset)
-        return frames, json.loads(data.readline())
+        views = [json.loads(data.readline()) for _ in range(min(count, frames - frame))]
+    return frames, views
+
+
+def read(path, frame):
+    batch = read_frames(path, frame, 1)
+    return (batch[0], batch[1][0]) if batch else None
 
 
 def spectator_view(game, core):
@@ -58,14 +64,14 @@ def spectator_view(game, core):
     return view
 
 
-def load_replay(directory, match, config, result, frame):
+def load_replay(directory, match, config, result, frame, count=1):
     path = replay_path(directory, match)
     if not path.exists():
         restore_legacy(directory, path, match, config, result)
     else:
-        opening = read(path, 0)
-        if opening and opening[1]['game'].get('publicHands'):
-            return opening if frame == 0 else read(path, frame)
+        opening = read_frames(path, 0, 1)
+        if opening and opening[1][0]['game'].get('publicHands'):
+            return opening if frame == 0 and count == 1 else read_frames(path, frame, count)
         # Keep recorded plays and state intact while adding the hands from the original log.
         with TemporaryDirectory(dir=path.parent) as temp:
             replacement = Path(temp) / path.name
@@ -75,7 +81,7 @@ def load_replay(directory, match, config, result, frame):
                     replacement.with_suffix('.idx').replace(path.with_suffix('.idx'))
             except FileNotFoundError:
                 pass
-    return read(path, frame)
+    return read_frames(path, frame, count)
 
 
 def restore_legacy(directory, path, match, config, result, previous=None):

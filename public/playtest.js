@@ -188,17 +188,72 @@ function openPlaytestReplay(run, match){
         <button type="button" class="secondary" data-replay-prev disabled>上一步</button>
         <button type="button" class="primary" data-replay-toggle disabled>播放</button>
         <button type="button" class="secondary" data-replay-next disabled>下一步</button>
+        <select class="replay-speed" aria-label="播放速度" disabled>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+        </select>
         <span class="replay-counter"></span>
       </nav>
     </div>`;
   const stage=$('.replay-stage',dialog), status=$('.replay-status',dialog), counter=$('.replay-counter',dialog);
   const slider=$('input',dialog), prev=$('[data-replay-prev]',dialog), next=$('[data-replay-next]',dialog), toggle=$('[data-replay-toggle]',dialog);
-  let info, current=0, playing=false, timer, request=0, closed=false;
+  const speed=$('.replay-speed',dialog);
+  const batchSize=16;
+  const batches=new Map();
+  let info, current=0, target=0, playing=false, timer, request=0, closed=false;
 
   function stop(){
     playing=false;
     clearTimeout(timer);
     toggle.textContent='播放';
+  }
+
+  function selectFrame(index){
+    target=index;
+    slider.value=index;
+    slider.setAttribute('aria-valuetext','第 '+index+' 步，共 '+(info.frames-1)+' 步');
+    prev.disabled=index===0;
+    next.disabled=index===info.frames-1;
+  }
+
+  function pause(){
+    stop();
+    request++;
+    selectFrame(current);
+  }
+
+  function batchStart(index){
+    return index-(index-1)%batchSize;
+  }
+
+  function loadBatch(start){
+    if(!batches.has(start)){
+      const pending=api(endpoint+'/frames/'+start+'/'+batchSize).catch(error=>{
+        if(batches.get(start)===pending)batches.delete(start);
+        throw error;
+      });
+      batches.set(start,pending);
+      if(batches.size>4)batches.delete(batches.keys().next().value);
+    }
+    return batches.get(start);
+  }
+
+  async function loadFrame(index){
+    if(index===0)return info.first;
+    const start=batchStart(index);
+    const batch=await loadBatch(start);
+    return batch.frames[index-start];
+  }
+
+  function bufferAhead(index){
+    const ahead=Math.min(index+batchSize/2,info.frames-1);
+    loadBatch(batchStart(ahead)).catch(()=>{});
+  }
+
+  function scheduleNext(){
+    clearTimeout(timer);
+    if(playing&&current===target)timer=setTimeout(()=>seek(current+1),850/Number(speed.value));
   }
 
   function paint(frame, index){
@@ -224,31 +279,43 @@ function openPlaytestReplay(run, match){
       frame.legacy?'早期记录依据日志还原':''
     ].filter(Boolean).join(' · ');
     counter.textContent=index+' / '+(info.frames-1);
-    slider.value=index;
-    slider.setAttribute('aria-valuetext','第 '+index+' 步，共 '+(info.frames-1)+' 步');
-    prev.disabled=index===0;
-    next.disabled=last;
+    selectFrame(index);
     if(last)stop();
-    if(playing)timer=setTimeout(()=>seek(current+1),850);
+    else bufferAhead(index);
+    scheduleNext();
   }
 
   async function seek(index){
     clearTimeout(timer);
+    selectFrame(index);
     const version=++request;
     try{
-      const frame=index===0?info.first:await api(endpoint+'/frames/'+index);
+      const frame=await loadFrame(index);
       if(!closed&&version===request)paint(frame,index);
     }catch(error){
-      if(!closed&&version===request){stop();slider.value=current;status.textContent=error.message;}
+      if(!closed&&version===request){pause();status.textContent=error.message;}
     }
   }
 
+  function step(offset){
+    const from=playing?current:target;
+    const index=Math.max(0,Math.min(from+offset,info.frames-1));
+    stop();
+    seek(index);
+  }
+
   $('[data-replay-close]',dialog).onclick=()=>dialog.close();
-  prev.onclick=()=>{stop();seek(current-1);};
-  next.onclick=()=>{stop();seek(current+1);};
-  slider.oninput=()=>{stop();request++;timer=setTimeout(()=>seek(Number(slider.value)),80);};
+  prev.onclick=()=>step(-1);
+  next.onclick=()=>step(1);
+  slider.oninput=()=>{
+    stop();
+    request++;
+    selectFrame(Number(slider.value));
+    timer=setTimeout(()=>seek(target),80);
+  };
+  speed.onchange=()=>{if(playing)scheduleNext();};
   toggle.onclick=()=>{
-    if(playing){stop();request++;return;}
+    if(playing){pause();return;}
     playing=true;
     toggle.textContent='暂停';
     seek(current===info.frames-1?0:current+1);
@@ -256,7 +323,7 @@ function openPlaytestReplay(run, match){
   stage.onclick=event=>{
     const skill=conveyorSkill(event.target.closest('[data-skill]')?.dataset.skill);
     if(!skill)return;
-    stop();
+    pause();
     $('.replay-skill',stage)?.remove();
     const detail=document.createElement('aside');
     detail.className='replay-skill';
@@ -271,7 +338,7 @@ function openPlaytestReplay(run, match){
     info=data;
     $('#replay-title',dialog).textContent=names[info.room.mode]+' · 第 '+match+' 局回放';
     slider.max=info.frames-1;
-    slider.disabled=toggle.disabled=info.frames<2;
+    slider.disabled=toggle.disabled=speed.disabled=info.frames<2;
     paint(info.first,0);
   }).catch(error=>{if(!closed)status.textContent=error.message;});
 }

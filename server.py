@@ -21,6 +21,7 @@ from conveyor_skills import SKILLS, available as conveyor_skills
 from analytics import Analytics
 from admin import start_admin
 from playtest_web import WebPlaytest, initialize_access, set_access
+from game_ai import MODEL_INSTRUCTIONS, alternatives, bot_turn_order, decode_selection, model_context, select_model_move
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / 'data' / 'poker.sqlite3'
@@ -152,6 +153,9 @@ def perform_game_action(room, seat, move):
     urgent = g.mode == 'conveyor' and move.get('action') == 'urgent'
     if clock and not pressure and not choice and not urgent and room['game'].priority and clock['key'][1] == room['game'].play_number and (clock['seat'] != seat or room['game'].mode == 'conveyor' and room['game'].actor(seat,move.get('actor')) != clock['actor']): raise RuleError('等待优先管牌倒计时结束。')
     if audio_waiting(room): raise RuleError('等待本次行动播报完成。')
+    if move['action'] == 'reaction-decline':
+        g.action(seat, **move)
+        return
     if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
     previous = g.last_voice_play; old_phase = g.phase
     reported = set(g.reported) if g.mode != 'conveyor' else set()
@@ -166,6 +170,7 @@ def perform_game_action(room, seat, move):
     if g.last_voice_play is not previous:
         play = g.last_voice_play; kind = play['kind']
         key = kind + '-' + str(printed_rank(play['ranks'][0])) if kind in ('单张', '对子') else kind
+        if kind == '死点': key = '点'
         if '张飞机' in kind: key = '飞机带对' if kind.endswith('对') else '飞机带单' if '带' in kind else '飞机'
         items += [{'effect': 'play'}, {'voice': key}]
     else:
@@ -246,28 +251,28 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
 def model_move(config, g, seat):
-    if g.priority and not g.priority['pending'] and seat in g.priority['bots']:
-        moves = [{'action': 'priority-play', 'special': m['action'], 'ids': m['ids'], **({'wildcard': m['wildcard']} if 'wildcard' in m else {})} for m in g.priority_moves(seat)[:50]] + [{'action': 'priority-decline'}]
-    else:
-        moves = g.candidates(seat)[:50]
-        if g.last and g.last_seat != seat: moves.append({'action': 'pass'})
-    if not moves: return {'action': 'pass'}
+    fallback = g.bot_action(seat)
+    if fallback is None:
+        return None
+    core = g.core if g.mode == 'conveyor' else g
+    actor = fallback.pop('actor', seat)
+    moves = alternatives(g, core, actor, fallback)
+    if len(moves) == 1:
+        return {**fallback, **({'actor': actor} if g.mode == 'conveyor' else {})}
     endpoint = validate_endpoint(config['endpoint'])
     if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
-    # Only this bot's hand and public table state are shared with its configured provider.
-    prompt = {'table': g.view(seat), 'legal_moves': [{**m, 'index': i} for i, m in enumerate(moves)]}
-    system = 'You are a card-game player. Choose one legal_moves index to maximize your winning chance. Return only JSON: {"index": 0}.'
-    if g.mode == 'conveyor': system += ' This is free-for-all: there are no teammates; first place gains two levels, second place one, others none.'
-    payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)}], 'temperature': .2, 'max_tokens': 80}
+    prompt = model_context(g, core, actor, moves)
+    payload = {'model': config['model'], 'messages': [{'role': 'system', 'content': MODEL_INSTRUCTIONS},
+               {'role': 'user', 'content': json.dumps(prompt, ensure_ascii=False)}], 'temperature': .2, 'max_tokens': 512}
     req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['key']})
     with urllib.request.build_opener(NoRedirect).open(req, timeout=12) as response:
         raw = response.read(65537)
         if len(raw) > 65536: raise ValueError('Response too large')
         content = json.loads(raw)['choices'][0]['message']['content'].strip()
         if content.startswith('```'): content = content.strip('`').removeprefix('json').strip()
-        index = json.loads(content)['index']
-        if not isinstance(index, int) or index not in range(len(moves)): raise ValueError('Invalid move')
-        return moves[index]
+        selection = decode_selection(content, len(moves))
+        move = select_model_move(g, seat, actor, moves, selection)
+        return {**move, **({'actor': actor} if g.mode == 'conveyor' else {})}
 
 def tick_bot(code, seat, version, snapshot, config, match_id=None):
     try:
@@ -330,14 +335,15 @@ def bot_loop():
                     perform_game_action(room, g.turn, {'action': 'pass'})
                     room['revision'] += 1
                     continue
-                for seat, p in enumerate(room['players']):
+                for seat in bot_turn_order(g):
+                    p = room['players'][seat]
                     if clock and clock['seat'] != seat: continue
                     if not (p.get('bot') or p.get('autoplay')): continue
                     if g.phase == 'setup' and confirmation_seat(room) != seat: continue
                     move = g.bot_action(seat)
                     if not move: continue
                     config = room.get('modelConfig') if p.get('bot') and p.get('model') else None
-                    if config and g.phase == 'play' and not (room['mode'] == 'conveyor' and g.core.pending):
+                    if config:
                         BOT_BUSY.add(room['code'])
                         threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId']), daemon=True).start()
                     else:

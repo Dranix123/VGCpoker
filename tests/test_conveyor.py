@@ -76,11 +76,16 @@ class ConveyorRules(unittest.TestCase):
         with self.assertRaisesRegex(RuleError, '首出'):
             self.game(*(['scavenge']*4))
 
-    def test_stars_counts_all_active_ordinary_cards_not_zones(self):
-        g=self.game('stars');c=self.table(g,[[4,5],[7,8,9],[10],[11,12]])
-        c.zones[1]=[c.hands[1].pop()]
+    def test_stars_requires_ordering_and_counts_each_active_identity(self):
+        g=self.game('stars','twins','twins','anchor')
+        c=self.table(g,[[4,5],[7,8,9],[10],[11,12],[13],[14]])
         c.free_lead()
-        self.assertEqual(len(c.pending[0]['cards']),7)
+        self.assertEqual(len(c.pending[0]['cards']),6)
+        with self.assertRaisesRegex(RuleError,'当前选择'):
+            g.action(0,'play',[c.hands[0][0]['id']])
+        ordered = [card['id'] for card in reversed(c.pending[0]['cards'])]
+        g.action(0,'choice',ordered)
+        self.assertEqual([card['id'] for card in c.pile[:6]],ordered)
         self.conservation(g)
 
     def test_chase_force_depends_on_finishers_instead_of_remaining_cards(self):
@@ -206,10 +211,23 @@ class ConveyorRules(unittest.TestCase):
         g=self.game('trade');c=self.table(g,[[18,18,18,8],[7],[8],[9]])
         for effect in ('judge-boost','judge-boost','judge-color'):
             g.action(0,'urgent',[c.hands[0][0]['id']],effect=effect)
-        self.assertEqual(c.judge(0,dict(rank=17,suit='J')),(35,'J'))
-        self.assertEqual(c.judge(0,dict(rank=16,suit='J')),(25,'J'))
-        self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(8,'S'))
-        self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(8,'C'))
+        self.assertEqual(c.judge(0,dict(rank=17,suit='J')),(35,None,'红色'))
+        self.assertEqual(c.judge(0,dict(rank=16,suit='J')),(25,None,'黑色'))
+        self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(8,'S','黑色'))
+        self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(8,'C','黑色'))
+
+    def test_delta_and_urgent_judgments_keep_distinct_color_and_suit(self):
+        g=self.game('trade')
+        c=self.table(g,[[4,9],[7],[8],[11]])
+        c.resources[0]['judgeColor']=1
+        self.assertEqual(c.judge(0,dict(rank=8,suit='T')),(8,'T','紫色'))
+        self.assertEqual(c.judge(0,dict(rank=18,suit='U')),(2,None,None))
+        self.assertEqual(c.resources[0]['judgeColor'],1)
+        c.offer(0,'deal','献祭',maximum=1)
+        c.pile[0]['rank'],c.pile[0]['suit']=17,'J'
+        g.action(0,'choice',effect='judge')
+        self.assertIn('献祭判定：大王（红色，无花色）。',c.log)
+        self.assertEqual(len(c.hands[0]),3)
 
     def test_redemption_clears_physical_zones_and_counts_unique_mark_types(self):
         g=self.game('redemption','seven','stash','money');c=self.table(g,[[4,5,6],[7,8],[9,10],[11,12]])
@@ -533,6 +551,27 @@ class ConveyorRules(unittest.TestCase):
         g=self.game('balance');c=self.table(g,[[4,5,6],[7],[8],[9]])
         g.action(0,'skill',[c.hands[0][0]['id']])
         self.assertEqual(len(c.hands[0]),3);self.assertEqual(len(c.pile)+sum(len(q.get('cards',[])) for q in c.pending if q['kind']=='stars'),39);self.assertEqual(c.turn,3)
+
+    def test_balance_requires_enough_pile_cards_for_a_full_exchange(self):
+        g=self.game('balance','equilibrium','anchor','anchor')
+        c=self.table(g,[[4,5,6],[7],[8],[9]])
+        selected = [card['id'] for card in c.hands[0][:2]]
+        pile = c.pile[:]
+        before = c.hands[0][:]
+        for remaining in (0,1):
+            with self.subTest(remaining=remaining):
+                c.pile, c.discard = pile[:remaining], pile[remaining:]
+                with self.assertRaisesRegex(RuleError,'牌堆不足'):
+                    g.action(0,'skill',selected)
+                self.assertEqual(c.hands[0],before)
+        c.pile, c.discard = pile[:2], pile[2:]
+        with self.assertRaisesRegex(RuleError,'平衡之力限制'):
+            g.action(0,'skill',selected)
+        draw = c.pile[0]
+        g.action(0,'skill',selected[:1])
+        self.assertIn(draw,c.hands[0])
+        self.assertEqual(len(c.hands[0]),3)
+        self.conservation(g)
 
     def test_gift_replaces_ordinary_deal(self):
         g=self.game('gift');c=self.table(g,[[4,5],[7],[8],[9]])
@@ -914,6 +953,49 @@ class ConveyorRules(unittest.TestCase):
         g.action(2,'cross',[card['id'] for card in c.hands[2][:2]])
         self.assertEqual(len(c.hands[2]),1)
         self.assertEqual(c.resources[2]['shield'],2)
+        self.conservation(g)
+
+    def test_dead_dot_draws_before_automatic_passes_and_then_grants_free_lead(self):
+        for rank in (15,3):
+            with self.subTest(rank=rank):
+                g=self.game('anchor','anchor','anchor','anchor')
+                c=self.table(g,[[rank,rank,8],[10,11],[rank,9,10],[11,12]])
+                c.interactive=True
+                g.action(0,'play',[card['id'] for card in c.hands[0][:2]])
+                first_draws=[card['id'] for card in c.pile[:5]]
+                before=len(c.log)
+                g.action(2,'auto',[c.hands[2][0]['id']])
+                self.assertEqual(c.seat_plays[2]['kind'],'死点')
+                self.assertEqual([c.hands[s][-1]['id'] for s in (2,3,1,0)],first_draws[:4])
+                self.assertEqual(c.log[before+1:],[
+                    '玩家2获得1张牌。',
+                    '玩家3：不出（自动）。','玩家3获得1张牌。',
+                    '玩家1：不出（自动）。','玩家1获得1张牌。',
+                    '玩家0：不出（自动）。','玩家0获得1张牌。',
+                    '玩家2获得自由牌权。',
+                ])
+                self.assertEqual(c.turn,2)
+                self.assertIsNone(c.priority)
+                with self.assertRaises(RuleError): g.action(3,'press',[c.hands[3][0]['id']])
+                g.action(2,'play',[c.hands[2][0]['id']])
+                self.assertEqual(c.hands[2][-1]['id'],first_draws[4])
+                self.conservation(g)
+
+    def test_dead_dot_waits_for_its_draw_choice_before_other_draws(self):
+        g=self.game('anchor','extra','extra','anchor')
+        c=self.table(g,[[15,15,8],[10,11],[15,9],[11,12]])
+        g.action(0,'play',[card['id'] for card in c.hands[0][:2]])
+        before=len(c.pile)
+        g.action(2,'dot',[c.hands[2][0]['id']])
+        self.assertEqual((c.pending[0]['seat'],c.pending[0]['kind']),(2,'deal'))
+        self.assertEqual(len(c.pile),before)
+        g.action(2,'choice',value=2)
+        self.assertEqual((c.pending[0]['seat'],c.pending[0]['kind']),(1,'deal'))
+        self.assertEqual(len(c.pile),before-3)
+        self.assertNotIn('玩家2获得自由牌权。',c.log)
+        g.action(1,'choice',value=1)
+        self.assertEqual(len(c.pile),before-5)
+        self.assertEqual(c.log[-1],'玩家2获得自由牌权。')
         self.conservation(g)
 
     def test_next_round_bonus_deals_and_keeps_one_extra_for_first_and_next(self):

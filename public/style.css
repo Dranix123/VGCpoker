@@ -723,8 +723,9 @@ footer{gap:24px}
 .replay-skill{padding:10px;border:1px solid var(--line);background:var(--panel)}
 .replay-skill p{margin:5px 0 0;white-space:pre-line}
 .replay-footer{display:grid;gap:6px;border-top:1px solid var(--line)}
-.replay-footer nav{display:flex;gap:8px;align-items:center}
+.replay-footer nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .replay-footer nav button{padding:7px 11px}
+.replay-speed{padding:7px 6px;border:1px solid var(--ink);border-radius:3px;background:var(--panel);color:var(--ink);font-size:12px}
 .replay-footer input{width:100%;accent-color:var(--ink);padding:0;min-height:20px}
 .replay-status,.replay-counter{margin:0;font-size:12px;color:var(--muted)}
 .replay-counter{margin-left:auto;white-space:nowrap}
