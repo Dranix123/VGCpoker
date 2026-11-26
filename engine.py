@@ -1,6 +1,7 @@
 """Server-authoritative card rules. Ranks: 3..14(A), 15(2), 16/17(jokers), 18(urgent)."""
 import random
 import itertools
+import json
 from collections import Counter
 
 RANKS = list(range(3, 16))
@@ -249,7 +250,7 @@ class Game:
         self.play_number = 0
         self.last_voice_play = None
         self.passes, self.finished, self.log = set(), [], []
-        self.ai_recent_rounds, self.ai_current_round = [], []
+        self.ai_older_rounds, self.ai_recent_rounds, self.ai_current_round = [], [], []
         self.hui_used = False
         self.landlord, self.bid, self.bids = None, 0, []
         self.promotions, self.reveals, self.rps = {}, [], {}
@@ -282,8 +283,7 @@ class Game:
     def announce(self, text):
         self.log.append(text)
         self.log = self.log[-45:]
-        if self.phase == 'play':
-            self.ai_current_round.append(text)
+        self.ai_current_round.append(text)
 
     def can_reveal(self, seat):
         return self.first is None and any(c['rank'] == 3 and c['suit'] == 'S' for c in self.hands[seat])
@@ -318,7 +318,8 @@ class Game:
     def announce_free_lead(self, seat):
         if self.play_number and self.ai_current_round:
             self.ai_recent_rounds.append(self.ai_current_round)
-            self.ai_recent_rounds = self.ai_recent_rounds[-3:]
+            if len(self.ai_recent_rounds) > 3:
+                self.ai_older_rounds.append(json.dumps(self.ai_recent_rounds.pop(0), ensure_ascii=False))
             self.ai_current_round = []
         self.announce(self.players[seat]['name'] + '获得自由牌权。')
 
@@ -852,6 +853,29 @@ class Game:
                 if given: output.append({'action': 'urgent', 'ids': [wild[0]['id'], given['id']], 'target': targets[0], 'wildcard': {wild[0]['id']: 18}, 'label': '黑桃A代急牌', 'power': 1, 'value': 0, 'n': 2})
         return sorted(output, key=lambda x: (x['power'], -x['n'], x['value']))
 
+    def opening_reserves(self, seat, moves):
+        """Ordinary opening leads that retain a ready 4A4 for regaining control."""
+        if self.play_number or self.last or self.mode == 'landlord' or self.phase != 'play' or seat != self.turn:
+            return []
+        controls = [set(m['ids']) for m in moves if m.get('label') == '4A4']
+        if not controls:
+            return []
+        hand = self.visible_hand(seat)
+        resources = getattr(self, 'resources', None)
+        if any(len(h) <= 2 and (resources is None or resources[i]['turns'] >= 2)
+               for i, h in enumerate(self.hands) if i != seat and i not in self.finished):
+            return []
+        if resources is None or resources[seat]['turns'] >= 2:
+            if any(len(m.get('ids', ())) == len(hand) and m['action'] in ('play', 'auto') for m in moves):
+                return []
+        if resources is None or resources[seat]['turns'] >= 1:
+            for used in controls:
+                left = [c.get('effective', c['rank']) for c in hand if c['id'] not in used]
+                if not left or classifications(left, self.mode, self.main, self.pattern):
+                    return []
+        return [i for i, m in enumerate(moves) if m['action'] in ('play', 'auto') and not m.get('power')
+                and any(used.isdisjoint(m['ids']) for used in controls)]
+
     def keeps_urgent_playable(self, seat, move):
         remaining = [c for c in self.hands[seat] if c['id'] not in move.get('ids', [])]
         urgent = sum(c['rank'] == 18 for c in remaining)
@@ -919,6 +943,9 @@ class Game:
         if not moves: return {'action': 'pass'}
         for move in moves:
             if len(move['ids']) == len(hand): return move
+        opening = self.opening_reserves(seat, moves)
+        if opening:
+            moves = [moves[i] for i in opening]
         if self.mode == 'landlord' and not responding:
             # If the whole hand partitions into two legal plays, preserve that exit.
             exits = []

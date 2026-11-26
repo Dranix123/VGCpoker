@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from playtest import DeepSeek, PlaytestService, play_batch, run_config, serve
 from playtest_replay import load_replay, read, record, replay_path, restore_legacy
-from game_ai import alternatives, model_context, model_payload, select_model_move
+from game_ai import alternatives, decision_packet, model_context, model_payload, request_decision, select_model_move
 from engine import RuleError
 
 
@@ -89,6 +89,75 @@ class Playtest(unittest.TestCase):
         repair = {'move': {'action':'play','ids':['opponent']}, 'index':1}
         self.assertEqual(select_model_move(game, 0, 0, moves, repair), run)
         self.assertEqual(len(game.hands[0]), 6)
+
+    def test_actor_memory_updates_hand_and_no_events_lost_across_compaction(self):
+        from test_engine import table, cards
+        game = table('landlord')
+        game.turn = 0
+        game.hands[0] = cards([4,5,6,7,8,9,10,11], prefix='own')
+        packet, memory = decision_packet(game, game, 0, [], None, ())
+        memory['plan'] = '留住顺子'
+        for i in range(5):
+            game.action(0, 'play', ['own'+str(i)])
+            game.action(2, 'pass')
+            game.action(1, 'pass')
+        packet, updated = decision_packet(game, game, 0, [], memory, ())
+        self.assertEqual(packet['plan'], '留住顺子')
+        self.assertEqual(packet['updates'][-1]['hand'], {'own'+str(i): None for i in range(5)})
+        self.assertEqual(sum(e[1]=='不出' for r in packet['news'].values() for e in r if isinstance(e,list)),10)
+        same, _ = decision_packet(game, game, 0, [], updated, ())
+        self.assertFalse(same['news'])
+        self.assertEqual(len(same['rounds']), 4)  # Three complete tricks and the current lead
+        other, _ = decision_packet(game, game, 1, [], None, ())
+        self.assertNotIn('plan',other)
+        self.assertNotIn('own7',json.dumps(other))
+
+    def test_reprompt_invalid_move_without_committing_private_plan_or_spending_extra(self):
+        from test_engine import cards, table
+        game = table('landlord')
+        game.turn = 0
+        game.hands[0] = cards([4,5,6,7,8,9], prefix='hold')
+        options = alternatives(game, game, 0, game.bot_action(0))
+        packets = []
+        def choose(packet, count):
+            packets.append(packet)
+            if len(packets) == 1:
+                return {'selection':{'action':'play','ids':['unowned']},'plan':'错误计划'}, {'prompt_tokens':8}
+            return {'selection':0,'plan':'保留牌权'}, {'prompt_tokens':9,'prompt_cache_hit_tokens':3}
+        move, report, memory = request_decision(game,game,0,0,options,None,choose)
+        self.assertEqual(move,options[0])
+        self.assertEqual(len(packets),2)
+        self.assertEqual(packets[0]['news'],packets[1]['news'])
+        self.assertIn('retry',packets[1])
+        self.assertNotIn('错误计划',json.dumps(packets[1],ensure_ascii=False))
+        self.assertEqual(report['usage'],{'prompt_tokens':17,'prompt_cache_hit_tokens':3})
+        self.assertEqual(memory['plan'],'保留牌权')
+        self.assertEqual(len(game.hands[0]),6)
+
+    def test_opening_control_and_immediate_exit(self):
+        from test_engine import cards, table
+        from test_conveyor import ConveyorRules
+        for mode, control in [('basic',[4,4,14]), ('standard',[4,4,4,14,14]),
+                              ('trio',[4,4,4,14,14]), ('conveyor',[4,4,4,14,14])]:
+            with self.subTest(mode=mode):
+                if mode == 'conveyor':
+                    fixture = ConveyorRules()
+                    game = fixture.game(*['anchor']*4)
+                    core = fixture.table(game,[control+[6,8,11,13], [7],[8]*4,[9]*4])
+                    core.resources[1]['turns'] = 0
+                else:
+                    game = core = table(mode)
+                    core.turn = 0
+                    core.hands[0] = cards(control+[6,8,11,13],prefix='own')
+                fallback = game.bot_action(0)
+                original = {c['id'] for c in core.hands[0] if c['rank'] in (4,14)}
+                self.assertTrue(original.isdisjoint(fallback['ids']))
+                options = alternatives(game,core,0,fallback)
+                packet, _ = decision_packet(game,core,0,options,None,())
+                self.assertTrue(packet['opening'])
+                self.assertTrue(any(m.get('label')=='4A4' for m in options))
+                core.hands[0] = [c for c in core.hands[0] if c['id'] in original]
+                self.assertEqual(set(game.bot_action(0)['ids']),original)
 
     def test_model_can_take_active_and_optional_conveyor_actions(self):
         from test_conveyor import ConveyorRules
@@ -287,15 +356,18 @@ class Playtest(unittest.TestCase):
         self.assertEqual(summary['calls'], 5)
         self.assertTrue(summary['modelBudgetReached'])
         self.assertEqual(summary['tokens']['total_tokens'], 44)
-        self.assertEqual(actions[0]['source'], 'fallback')
-        self.assertEqual(actions[0]['api']['status'], 429)
+        self.assertEqual(actions[0]['source'], 'deepseek')
+        self.assertEqual(summary['fallbacks'], 0)
+        self.assertEqual(actions[0]['api']['attempts'][0]['status'], 429)
+        self.assertIn('retry', model.contexts[1])
         self.assertNotIn('test-secret', log)
-        self.assertGreater(len({c['player'] for c in model.contexts}), 1)
+        self.assertGreater(len({c['table']['player'] for c in model.contexts}), 1)
         for context in model.contexts:
-            self.assertEqual(sum(c['count'] for c in context['players'] if c['actor'] == context['actor']), len(context['hand']))
-            self.assertTrue(all('hand' not in p for p in context['players']))
+            base = context['base']
+            self.assertEqual(base['counts'][context['table']['actor']], len(base['hand']))
+            self.assertNotIn('shownHands',base)
 
-    def test_invalid_api_request_does_not_repeat_for_the_rest_of_the_run(self):
+    def test_three_failed_requests_only_replace_one_decision_and_respect_budget(self):
         class InvalidRequest:
             model = 'deepseek-flash'
 
@@ -306,9 +378,11 @@ class Playtest(unittest.TestCase):
         with TemporaryDirectory() as temp:
             summary = {}
             play_batch('test', Path(temp), config, InvalidRequest(), summary.update)
+            actions = [e for e in map(json.loads, (Path(temp)/'events.jsonl').read_text().splitlines()) if e.get('api')]
         self.assertEqual(summary['status'], 'completed')
-        self.assertEqual((summary['calls'], summary['fallbacks']), (1, 1))
-        self.assertEqual(summary['modelDisabledReason'], 'http_400')
+        self.assertEqual((summary['calls'], summary['fallbacks']), (5, 2))
+        self.assertEqual([len(e['api']['attempts']) for e in actions], [3,2])
+        self.assertTrue(all(a['status'] == 400 for e in actions for a in e['api']['attempts']))
 
     def test_cancellation_stops_after_current_model_request(self):
         cancelled = threading.Event()

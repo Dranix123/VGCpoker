@@ -802,12 +802,19 @@ class ConveyorRules(unittest.TestCase):
     def test_bond_draft_requires_target_and_switch_replaces_only_own_link(self):
         g = self.game('bond', 'bond', 'stash', 'balance')
         c = g.core
-        g.action(0, 'keep', [card['id'] for card in c.hands[0][:3]])
+        for seat in (0, 1, 3):
+            g.action(seat, 'keep', [card['id'] for card in c.hands[seat][:c.keep_counts[seat]]])
+            self.assertFalse(c.pending)
+            self.assertEqual(c.phase, 'draft')
+        g.action(2, 'keep', [card['id'] for card in c.hands[2][:c.keep_counts[2]]])
+        self.assertEqual([choice['seat'] for choice in c.pending], [0, 1])
         self.assertTrue(c.pending[0]['required'])
         with self.assertRaises(RuleError): g.action(0, 'choice')
         g.action(0, 'choice', target=2)
-        c.phase = 'play'; c.turn = 0; c.pending = []
-        c.bonds.append(dict(owner=1, seats=[1,2]))
+        self.assertEqual(c.phase, 'draft')
+        g.action(1, 'choice', target=2)
+        self.assertIn(c.phase, ('setup', 'play'))
+        c.phase = 'play'; c.turn = 0
         c.zones[2] = [c.hands[2].pop()]
         self.assertEqual(g.view(0)['conveyor']['boundHands'][0]['zone'], c.zones[2])
         self.assertEqual(g.view(3)['conveyor']['boundHands'], [])

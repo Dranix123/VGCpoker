@@ -41,10 +41,16 @@ test('opponents’ skills open a read-only description from the table',async()=>
  await click({target:{closest:()=>button}});
  assert.match(modal,/cv-skill-select/);
 });
-test('opening hand selection is marked as selection rather than confirmation',()=>{
- const html=table(false,false,{phase:'draft',reveals:[],ready:[]});
- assert.ok(html.includes('选牌中...'));
- assert.ok(!html.includes('等待确认...'));
+test('all seats can pick at once and the two twin identities count as one seat',()=>{
+ const opening={phase:'draft',reveals:[],ready:[]};
+ const html=table(false,false,opening);
+ assert.equal((html.match(/选牌中\.\.\./g)||[]).length,4);
+ assert.match(html,/已确认 0 \/ 4 人/);
+ const actors=[0,0,1,2,3].map((owner,id)=>({id,owner,drafted:owner===0,resources:{}}));
+ const waiting=table(false,false,opening,{actors,drafted:true});
+ assert.match(waiting,/已确认 1 \/ 4 人 · 等待其他玩家/);
+ assert.equal((waiting.match(/选牌中\.\.\./g)||[]).length,3);
+ assert.doesNotMatch(waiting,/data-action="cv-keep"/);
 });
 test('conveyor spectators get no hand, target choices or gameplay controls',()=>{
  const html=table(true);

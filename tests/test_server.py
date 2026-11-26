@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 from datetime import date, timedelta
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 import server
@@ -988,17 +989,20 @@ class ServerIntegration(unittest.TestCase):
         room=server.ROOMS[code];g=room['game'];g.action(0,'bid',value=3)
         import copy
         old_count=len(g.hands[0]);version=room['revision']
-        with patch.object(server,'model_move',side_effect=TimeoutError()):
+        room['modelConfig'] = {'endpoint':'https://example.com'}
+        with patch.object(server,'validate_endpoint',side_effect=TimeoutError()) as requests:
             server.BOT_BUSY.add(code)
-            server.tick_bot(code,0,version,copy.deepcopy(g),{})
+            server.tick_bot(code,0,version,copy.deepcopy(g),{'endpoint':'https://example.com'})
+        self.assertEqual(requests.call_count,3)
         self.assertLess(len(g.hands[0]),old_count)
         self.assertNotIn(code,server.BOT_BUSY)
         version=room['revision'];old_hands=copy.deepcopy(g.hands)
-        with patch.object(server,'model_move',return_value={'action':'pass'}):
-            server.tick_bot(code,1,version-1,copy.deepcopy(g),{})
+        with patch.object(server,'model_move') as dispatch:
+            server.tick_bot(code,1,version-1,copy.deepcopy(g),room['modelConfig'])
+            dispatch.assert_not_called()
         self.assertEqual(room['revision'],version);self.assertEqual(g.hands,old_hands)
 
-    def test_live_model_auth_failure_pauses_requests_and_reuses_rule_move(self):
+    def test_live_auth_error_retries_three_times_then_uses_rules_once(self):
         import copy
         code = self.new_room('landlord',1)
         for _ in range(2): self.request(self.clients[0],'bot',{})
@@ -1009,10 +1013,10 @@ class ServerIntegration(unittest.TestCase):
         config = {'endpoint':'https://api.deepseek.com','model':'deepseek-flash','key':'test-secret'}
         room['modelConfig'] = config.copy()
         fallback = game.bot_action(0)
-        with patch.object(server,'model_move',side_effect=urllib.error.HTTPError(config['endpoint'],401,'auth',{},None)):
+        with patch.object(server,'validate_endpoint',side_effect=urllib.error.HTTPError(config['endpoint'],401,'auth',{},None)) as requests:
             server.tick_bot(code,0,room['revision'],copy.deepcopy(game),config,room['matchId'],fallback)
-        self.assertEqual(room['modelRetryAt'],float('inf'))
-        self.assertTrue(any('HTTP 401' in line for line in game.log))
+        self.assertEqual(requests.call_count,3)
+        self.assertEqual(room['modelConfig'],config)
         self.assertEqual(game.play_number,1)
         with patch.object(server,'validate_endpoint',return_value=config['endpoint']):
             self.request(self.clients[0],'model-settings',config)
@@ -1025,13 +1029,15 @@ class ServerIntegration(unittest.TestCase):
         response.__enter__.return_value.read.return_value=json.dumps({'choices':[{'message':{'content':'{"index":0}'}}]}).encode()
         opener=unittest.mock.MagicMock();opener.open.return_value=response
         with patch.object(server,'validate_endpoint',return_value='https://example.com/v1'),patch.object(server.urllib.request,'build_opener',return_value=opener):
-            move=server.model_move({'endpoint':'https://example.com/v1','key':'test-key','model':'test'},g,0)
+            move,api,_=server.model_move({'endpoint':'https://example.com/v1','key':'test-key','model':'test'},g,0,g.bot_action(0))
             g.validate_play(0,g.select(0,move['ids']),move['action'])
             request=opener.open.call_args[0][0]
             payload=json.loads(request.data)
             self.assertNotIn('hands',payload['messages'][1]['content'])
             response.__enter__.return_value.read.return_value=b'{"choices":[{"message":{"content":"{\\"index\\":9999}"}}]}'
-            with self.assertRaises(ValueError):server.model_move({'endpoint':'https://example.com/v1','key':'test','model':'test'},g,0)
+            _,api,memory=server.model_move({'endpoint':'https://example.com/v1','key':'test','model':'test'},g,0,g.bot_action(0))
+            self.assertEqual([a['reason'] for a in api['attempts']],['invalid_move_index']*3)
+            self.assertIsNone(memory)
         for url in ('http://example.com/v1','https://127.0.0.1/v1','https://user:pass@example.com/v1'):
             with self.assertRaises(ValueError):server.validate_endpoint(url)
 
@@ -1051,11 +1057,11 @@ class ServerIntegration(unittest.TestCase):
         opener = unittest.mock.MagicMock()
         opener.open.return_value = response
         with patch.object(server,'validate_endpoint',return_value='https://example.com/v1'), patch.object(server.urllib.request,'build_opener',return_value=opener):
-            move = server.model_move({'endpoint':'https://example.com/v1','key':'test-key','model':'test'},game,0)
+            move,api,_ = server.model_move({'endpoint':'https://example.com/v1','key':'test-key','model':'test'},game,0,game.bot_action(0))
         prompt = json.loads(json.loads(opener.open.call_args[0][0].data)['messages'][1]['content'])
-        self.assertEqual(prompt['hand'],core.visible_hand(0))
-        self.assertEqual(prompt['choice']['kind'],'buy')
-        self.assertIn('各自为战',prompt['goal'])
+        self.assertEqual(set(prompt['base']['hand']),{c['id'] for c in core.visible_hand(0)})
+        self.assertEqual(prompt['base']['choice']['kind'],'buy')
+        self.assertIn('各自为战',prompt['table']['goal'])
         self.assertEqual(move,{**expected,'actor':0})
         self.assertEqual(core.resources[0]['money'],4)
         game.action(0,**move)
@@ -1085,6 +1091,41 @@ class ServerIntegration(unittest.TestCase):
         with server.db() as c:
             metric=c.execute('SELECT * FROM usage_matches WHERE id=?',(room['matchId'],)).fetchone()
             self.assertEqual((metric['mode'],metric['channel']),('conveyor','single'))
+
+    def test_four_players_can_submit_draft_from_one_revision_during_deal_audio(self):
+        code = self.new_room('conveyor',4)
+        for client in self.clients:
+            self.request(client,'skill',{'skill':'anchor'})
+            self.request(client,'state',headers={'X-Poker-Audio':'1'})
+        status, data = self.request(self.clients[0],'start',{})
+        self.assertEqual(status,200,data)
+        room = server.ROOMS[code]
+        game = room['game']
+        self.assertTrue(server.audio_waiting(room))
+        audio_id = room['audioEvent']['id']
+        requests = [
+            dict(action='keep', actor=seat, matchId=room['matchId'], revision=room['revision'],
+                 ids=[card['id'] for card in game.core.hands[seat][:game.core.keep_counts[seat]]])
+            for seat in range(4)
+        ]
+        stale = {**requests[0], 'matchId':'previous-match'}
+        self.assertEqual(self.request(self.clients[0],'action',stale)[0],400)
+        self.assertEqual(game.core.drafted,set())
+        selected = (3,0,2)
+        with ThreadPoolExecutor(len(selected)) as clients:
+            replies = list(clients.map(lambda seat: self.request(self.clients[seat],'action',requests[seat]), selected))
+        for status, response in replies:
+            self.assertEqual(status,200,response)
+            self.assertEqual(response['room']['game']['phase'],'draft')
+            self.assertTrue(response['room']['game']['conveyor']['drafted'])
+        self.assertEqual(game.core.drafted,set(selected))
+        self.assertEqual(room['audioEvent']['id'],audio_id)
+        self.assertEqual(self.request(self.clients[0],'action',requests[0])[0],400)
+        status, response = self.request(self.clients[1],'action',requests[1])
+        self.assertEqual(status,200,response)
+        self.assertIn(response['room']['game']['phase'],('setup','play'))
+        self.assertEqual(game.core.drafted,{0,1,2,3})
+        self.assertEqual(room['audioEvent']['id'],audio_id)
 
     def test_twins_can_view_other_hand_during_audio(self):
         client=self.clients[0]

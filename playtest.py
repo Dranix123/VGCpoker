@@ -21,8 +21,8 @@ from conveyor import ConveyorGame
 from conveyor_skills import SKILLS, available
 from engine import Game, MODES, RuleError
 from playtest_replay import record, replay_path, spectator_view
-from game_ai import (MODEL_CONFIG_ERRORS, alternatives, bot_turn_order, model_context, model_payload,
-                     move_args, read_model_reply, select_model_move)
+from game_ai import (alternatives, bot_turn_order, model_payload,
+                     move_args, read_model_reply, request_decision)
 
 
 OUTPUT = Path(__file__).resolve().parent / 'output' / 'playtests'
@@ -197,6 +197,7 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                 core, steps = None, 0
                 recording = False
                 game, core = start_match(config, previous)
+                memories = {}
                 skills = [p.get('skill') for p in game.players]
                 append = replay.enter_context(record(replay_path(directory, number)))
                 append(0, spectator_view(game, core))
@@ -208,8 +209,7 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                         break
                     steps = step
                     summary['currentStep'] = step
-                    model_available = bool(model and not summary.get('modelDisabledReason')
-                                           and summary['calls'] < config['maxModelCalls'])
+                    model_available = bool(model and summary['calls'] < config['maxModelCalls'])
                     if game.mode == 'conveyor':
                         core.ai_model_reactions = model_available
                     before, messages = snapshot(core), core.log[:]
@@ -219,34 +219,21 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                     if model_available and not forced:
                         options = alternatives(game, core, actor, fallback)
                         if len(options) > 1:
-                            summary['calls'] += 1
-                            started = time.monotonic()
-                            try:
-                                selection, usage = model.choose(model_context(game, core, actor, options), len(options))
-                                for key, count in usage.items():
-                                    summary['tokens'][key] = summary['tokens'].get(key, 0) + count
-                                move = select_model_move(game, seat, actor, options, selection)
-                                source = 'deepseek'
-                                api = dict(usage=usage)
-                                if type(selection) is int:
-                                    api['index'] = selection
-                                elif 'index' in selection and move != selection['move']:
-                                    api['backupIndex'] = selection['index']
-                            except (OSError, RuleError, ValueError, KeyError, IndexError, TypeError) as error:
+                            decision, api, memory = request_decision(
+                                game, core, seat, actor, options, memories.get(actor), model.choose,
+                                attempts=min(3, config['maxModelCalls'] - summary['calls']),
+                                active=lambda: not cancelled or not cancelled.is_set())
+                            summary['calls'] += len(api['attempts'])
+                            for key, count in api['usage'].items():
+                                summary['tokens'][key] = summary['tokens'].get(key, 0) + count
+                            if cancelled and cancelled.is_set():
+                                break
+                            if decision is None:
                                 summary['fallbacks'] += 1
                                 source = 'fallback'
-                                api = dict(error=type(error).__name__)
-                                if isinstance(error, RuleError):
-                                    api['reason'] = str(error)
-                                if isinstance(error, urllib.error.HTTPError):
-                                    api['status'] = error.code
-                                    if error.code in MODEL_CONFIG_ERRORS:
-                                        summary['modelDisabledReason'] = f'http_{error.code}'
-                                elif type(error) is ValueError and str(error) in (
-                                        'invalid_move_index', 'invalid_move_action', 'invalid_move_cards', 'invalid_move_fields',
-                                        'invalid_move_json', 'empty_model_reply', 'truncated_model_reply', 'response_too_large'):
-                                    api['reason'] = str(error)
-                            api['milliseconds'] = round((time.monotonic() - started) * 1000)
+                            else:
+                                move, source = decision, 'deepseek'
+                            api['milliseconds'] = sum(a['milliseconds'] for a in api['attempts'])
                     try:
                         apply_move(game, core, seat, actor, move)
                     except RuleError as error:
@@ -257,6 +244,8 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                         summary['fallbacks'] += 1
                         move, source = fallback, 'fallback'
                         apply_move(game, core, seat, actor, move)
+                    if source == 'deepseek':
+                        memories[actor] = memory
                     announcements = new_messages(messages, core.log)
                     event('action', match=number, step=step, seat=seat, actor=actor, source=source,
                           move=move, alternatives=options, api=api, before=before, after=snapshot(core),

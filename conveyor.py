@@ -64,6 +64,7 @@ class ConveyorRound(Game):
         self.start_effects = {}
         self.phase = 'draft'
         self.log = []
+        self.ai_current_round = []
         self.last_effective = None
         self.defer_finish = False
         self.extra_args = {}
@@ -795,7 +796,6 @@ class ConveyorRound(Game):
                 self.split.add(seat)
             else: self.take(seat, rejected, 'bottom', mirror=False)
             self.drafted.add(seat)
-            if self.skill(seat, 'bond'): self.offer(seat, 'bond', '灵魂绑定：选择绑定对象', required=True)
             if self.skill(seat, 'blood'):
                 self.resources[seat]['blood'] = len(rejected)
             self.draft_ready()
@@ -904,6 +904,11 @@ class ConveyorRound(Game):
     def draft_ready(self):
         primary = {s for s, p in enumerate(self.players) if not p.get('second')}
         if primary <= self.drafted and not self.pending:
+            bound = {bond['owner'] for bond in self.bonds}
+            for seat in self.turn_order:
+                if seat in primary and seat not in bound and self.skill(seat, 'bond'):
+                    self.offer(seat, 'bond', '灵魂绑定：选择绑定对象', required=True)
+            if self.pending: return
             self.phase = 'setup'
             self.initial_counts = [len(h) for h in self.hands]
             self.announce('选牌完成。')
@@ -1366,7 +1371,8 @@ class ConveyorRound(Game):
             remaining = Counter(c['rank'] for c in left)
             split = sum(2 for r, n in remaining.items() if n < counts[r])
             return (bool(left or self.zones[seat]), len(remaining) * 6 + split + move['power'] * .6 + move['value'] * .08 - move['n'])
-        return min(moves, key=cost)
+        opening = self.opening_reserves(seat, moves)
+        return min((moves[i] for i in opening), key=cost) if opening else min(moves, key=cost)
 
 class ConveyorGame:
     """Translate four account seats to independent internal actors (twins = two)."""
