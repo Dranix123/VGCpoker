@@ -171,8 +171,8 @@ class ConveyorRound(Game):
     def gained(self, seat, number, end=False, mirror=True, drawn=True):
         if not number: return
         state = self.resources[seat]
+        if hasattr(self, 'action_gains'): self.action_gains.append((seat, number))
         if drawn:
-            if hasattr(self, 'action_gains'): self.action_gains.append((seat, number))
             self.announce(self.name(seat) + '获得%d张牌。' % number)
         if not end and self.skill(seat, 'encourage'):
             previous = state['cycleGains']

@@ -214,16 +214,21 @@ def perform_game_action(room, seat, move):
         actor = move.get('actor', g.actor(seat))
         if not played:
             key = 'cv-urgent-' + move.get('effect', 'discard') if action == 'urgent' else 'cv-skill-' + g.core.skills[actor] if action == 'skill' else 'cv-choice' if action == 'choice' else 'cv-keep' if action == 'keep' else labels.get(action, 'cv-action')
-            if key == 'cv-urgent-judge-boost': items = [{'text': '急牌，强化判定点数与花色'}]
-            else: items = [{'voice': 'cv-action' if key == 'cv-urgent-silence' else key}]
+            if key in ('cv-urgent-silence', 'cv-urgent-judge-boost'): key = 'cv-action'
+            items = [{'voice': key}]
         for report in reports:
-            if '牌堆已轮回' in report: items.append({'voice':'cv-recycle'})
+            count = re.search(r'获得(\d+)张牌', report)
+            if count: continue
+            elif '牌堆已轮回' in report: items.append({'voice':'cv-recycle'})
             elif '完成出牌，第' in report: items.append({'voice':'cv-finish'})
-            elif re.search(r'：不出（自动|禁手）', report) and not (action == 'pass' and report.startswith(g.core.name(actor) + '：')):
-                items.append({'voice':'pass'})
-            public_cards = re.search(r'(?:买入|拾取|赠送|弃置)(?:【)?(?:黑桃|红桃|梅花|方片|小王|大王|急)', report)
-            if public_cards or re.search(r'交给.+：.+。$', report):
-                items.append({'text': report})
+            for verb in ('买入', '拾取', '赠送', '弃置'):
+                if verb not in report: continue
+                detail = report.split(verb, 1)[1]
+                for suit, label in re.findall(r'(黑桃|红桃|梅花|方片)?(小王|大王|急|10|[3-9JQKA2])', detail):
+                    if suit: items.append({'voice':'cv-suit-' + {'黑桃':'S','红桃':'H','梅花':'C','方片':'D'}[suit]})
+                    rank = next((r for r, name in LABELS.items() if name == label), None)
+                    if rank and rank != 18: items.append({'voice':'单张-' + str(rank)})
+                break
         for target, count in getattr(g.core, 'action_gains', []):
             items.append({'dealTo':g.core.owners[target], 'count':count})
             items.append({'voice':'cv-deal-' + str(count) if count <= 30 else 'cv-deal', 'recipient':room['players'][g.core.owners[target]]['id'], 'dealTo':g.core.owners[target], 'count':count})

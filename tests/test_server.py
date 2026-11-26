@@ -417,7 +417,7 @@ class ServerIntegration(unittest.TestCase):
         room['priorityClock']['expires']=0;server.update_priority_clock(room)
         self.assertFalse(g.core.priority)
 
-    def test_buy_narrates_public_card_without_a_private_draw_voice(self):
+    def test_buy_logs_the_card_and_preserves_private_gain_voice(self):
         from conveyor import ConveyorGame
         room=server.ROOMS[self.new_room('basic',4)]
         for player, skill in zip(room['players'], ('money','anchor','anchor','anchor')):
@@ -431,10 +431,18 @@ class ServerIntegration(unittest.TestCase):
         c.resources[0]['money']=4
         c.offer(0,'buy','聚宝',cards=[card])
         server.perform_game_action(room,0,{'action':'choice','ids':[card['id']]})
-        for user in self.users:
-            items=server.room_view(room,user['id'])['audioEvent']['items']
-            self.assertTrue(any('买入方片9' in item.get('text','') for item in items))
-            self.assertFalse(any(item.get('voice','').startswith('cv-deal') for item in items))
+        for seat, user in enumerate(self.users):
+            view=server.room_view(room,user['id'])
+            self.assertTrue(any('买入方片9' in line for line in view['game']['log']))
+            self.assertFalse(any('获得1张牌' in line for line in view['game']['log']))
+            voices = [item.get('voice') for item in view['audioEvent']['items']]
+            self.assertIn('cv-choice', voices)
+            self.assertIn('cv-suit-D', voices)
+            self.assertIn('单张-9', voices)
+            self.assertEqual('cv-deal-1' in voices, seat == 0)
+        c.offer(0,'deal','选择发牌',maximum=1)
+        server.perform_game_action(room,0,{'action':'choice','value':1})
+        self.assertTrue(any('获得1张牌' in line for line in c.log))
 
     def test_draw_voice_is_visible_only_to_recipient(self):
         code=self.new_room('basic',4);room=server.ROOMS[code]
