@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import urllib.request
 import urllib.parse
 import ipaddress
@@ -46,6 +47,7 @@ def initialize():
         c.executescript('''
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE, salt TEXT NOT NULL, password TEXT NOT NULL, points INTEGER NOT NULL DEFAULT 1000, wins INTEGER NOT NULL DEFAULT 0, games INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS daily_checkins(user_id INTEGER PRIMARY KEY REFERENCES users(id), day TEXT NOT NULL, streak INTEGER NOT NULL, reward INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS results(id TEXT PRIMARY KEY, room TEXT NOT NULL, mode TEXT NOT NULL, outcome TEXT NOT NULL, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS rating_events(result_id TEXT NOT NULL REFERENCES results(id), user_id INTEGER NOT NULL REFERENCES users(id), delta INTEGER NOT NULL, PRIMARY KEY(result_id,user_id));
@@ -53,6 +55,32 @@ def initialize():
         initialize_access(c)
         c.execute('DELETE FROM sessions WHERE expires < ?', (int(time.time()),))
     STATS.initialize()
+
+def checkin_day():
+    return datetime.now(timezone(timedelta(hours=8))).date()
+
+
+def checkin_status(row, today):
+    checked = row is not None and row['day'] == today.isoformat()
+    current = row is not None and row['day'] >= (today - timedelta(days=1)).isoformat()
+    return dict(checked=checked, streak=row['streak'] if current else 0, reward=row['reward'] if checked else 0)
+
+
+def daily_checkin(uid):
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        today = checkin_day()
+        row = c.execute('SELECT * FROM daily_checkins WHERE user_id=?', (uid,)).fetchone()
+        status = checkin_status(row, today)
+        if status['checked']: return status
+        streak = status['streak'] + 1
+        reward = (10 + secrets.randbelow(21)) * (2 if streak >= 7 else 1)
+        c.execute("""INSERT INTO daily_checkins VALUES(?,?,?,?)
+                     ON CONFLICT(user_id) DO UPDATE SET day=excluded.day, streak=excluded.streak, reward=excluded.reward""",
+                  (uid, today.isoformat(), streak, reward))
+        c.execute('UPDATE users SET points=points+? WHERE id=?', (reward, uid))
+        return dict(checked=True, streak=streak, reward=reward)
+
 
 def rank(points):
     return next(name for limit, name in ((800, '纸牌学徒'), (1100, '墨线新秀'), (1400, '银笔高手'), (1800, '黑金大师'), (2400, '牌桌宗师'), (10**9, '无冕传奇')) if points < limit)
@@ -183,21 +211,16 @@ def perform_game_action(room, seat, move):
         actor = move.get('actor', g.actor(seat))
         if not played:
             key = 'cv-urgent-' + move.get('effect', 'discard') if action == 'urgent' else 'cv-skill-' + g.core.skills[actor] if action == 'skill' else 'cv-choice' if action == 'choice' else 'cv-keep' if action == 'keep' else labels.get(action, 'cv-action')
-            if key in ('cv-urgent-silence', 'cv-urgent-judge-boost', 'cv-urgent-judge-color'): key = 'cv-action'
-            items = [{'voice': key}]
+            if key == 'cv-urgent-judge-boost': items = [{'text': '急牌，强化判定点数与花色'}]
+            else: items = [{'voice': 'cv-action' if key == 'cv-urgent-silence' else key}]
         for report in reports:
-            count = re.search(r'获得(\d+)张牌', report)
-            if count: continue
-            elif '牌堆已轮回' in report: items.append({'voice':'cv-recycle'})
+            if '牌堆已轮回' in report: items.append({'voice':'cv-recycle'})
             elif '完成出牌，第' in report: items.append({'voice':'cv-finish'})
-            for verb in ('买入', '拾取', '赠送', '弃置'):
-                if verb not in report: continue
-                detail = report.split(verb, 1)[1]
-                for suit, label in re.findall(r'(黑桃|红桃|梅花|方片)?(小王|大王|急|10|[3-9JQKA2])', detail):
-                    if suit: items.append({'voice':'cv-suit-' + {'黑桃':'S','红桃':'H','梅花':'C','方片':'D'}[suit]})
-                    rank = next((r for r, name in LABELS.items() if name == label), None)
-                    if rank and rank != 18: items.append({'voice':'单张-' + str(rank)})
-                break
+            elif re.search(r'：不出（自动|禁手）', report) and not (action == 'pass' and report.startswith(g.core.name(actor) + '：')):
+                items.append({'voice':'pass'})
+            public_cards = re.search(r'(?:买入|拾取|赠送|弃置)(?:【)?(?:黑桃|红桃|梅花|方片|小王|大王|急)', report)
+            if public_cards or re.search(r'交给.+：.+。$', report):
+                items.append({'text': report})
         for target, count in getattr(g.core, 'action_gains', []):
             items.append({'dealTo':g.core.owners[target], 'count':count})
             items.append({'voice':'cv-deal-' + str(count) if count <= 30 else 'cv-deal', 'recipient':room['players'][g.core.owners[target]]['id'], 'dealTo':g.core.owners[target], 'count':count})
@@ -403,10 +426,23 @@ class Handler(BaseHTTPRequestHandler):
                         room = ROOMS.get(WATCHING.get(user['id']))
                         if room and not room['options'].get('allowSpectators'): room = None
                         if not room: WATCHING.pop(user['id'], None)
-                    return self.respond({'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES, 'playtest': bool(user['can_playtest'])}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    with db() as c:
+                        checkin = checkin_status(c.execute('SELECT * FROM daily_checkins WHERE user_id=?', (user['id'],)).fetchone(), checkin_day())
+                    return self.respond({'checkin': checkin, 'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES, 'playtest': bool(user['can_playtest'])}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
-                    with db() as c: users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
+                    target = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get('roomPlayer')
+                    with db() as c:
+                        if target:
+                            room = room_of(user['id'])
+                            if not room:
+                                room = ROOMS.get(WATCHING.get(user['id']))
+                                if room and not room['options'].get('allowSpectators'): room = None
+                            if not room or not any(str(p['id']) == target[0] and not p.get('bot') for p in room['players']):
+                                return self.respond({'error': '玩家已离桌。'}, 404)
+                            users = c.execute('SELECT id, username, points, wins, games FROM users WHERE id=?', (target[0],)).fetchall()
+                        else:
+                            users = c.execute('SELECT * FROM users ORDER BY points DESC, wins DESC LIMIT 50').fetchall()
                     return self.respond({'players': [user_view(u) for u in users]})
                 if path == '/api/history':
                     with db() as c:
@@ -479,6 +515,8 @@ class Handler(BaseHTTPRequestHandler):
         if not user: return self.respond({'error': '请先登录。'}, 401)
         uid = user['id']
         if path != '/api/play-preview' and self.headers.get('X-Poker-Audio') != '0': STATS.activity(uid)
+        if path == '/api/checkin':
+            return self.respond({'checkin': daily_checkin(uid)})
         if path == '/api/logout':
             WATCHING.pop(uid, None)
             room = room_of(uid)

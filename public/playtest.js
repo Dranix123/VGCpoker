@@ -81,7 +81,7 @@ function mountPlaytest(root){
         <progress value="${completed}" max="${count}" aria-label="已完成局数"></progress>
         <p>${completed} / ${count} 局${detail?' · '+detail:''}</p>
         <p class="muted">${task.model?esc(task.model)+' · '+(task.thinking?'思考开启':'思考关闭'):'规则 AI'} · 请求 ${task.calls||0} 次 · 回退 ${task.fallbacks||0} 次${task.tokens?.total_tokens?' · '+task.tokens.total_tokens+' tokens':''}</p>
-        ${task.modelDisabledReason?'<p class="form-error">DeepSeek 授权失败，余下行动使用规则 AI。</p>':''}
+        ${task.modelDisabledReason?`<p class="form-error">DeepSeek 请求失败（${esc(task.modelDisabledReason.replace('http_', 'HTTP '))}），余下行动使用规则 AI。</p>`:''}
         ${task.modelBudgetReached?'<p class="muted">已用完指定的模型调用次数。</p>':''}
         ${task.error?`<p class="form-error">${esc(task.error.reason||task.error.type)}</p>`:''}
         ${results?`<ul class="playtest-results">${results}</ul>`:''}
@@ -321,6 +321,9 @@ function openPlaytestReplay(run, match){
     seek(current===info.frames-1?0:current+1);
   };
   stage.onclick=event=>{
+    const avatar=event.target.closest('[data-player-seat]');
+    if(avatar){pause();openPlayerProfile(info.room,Number(avatar.dataset.playerSeat));return;}
+    if(event.target.closest('.seat-reveal')){pause();return;}
     const skill=conveyorSkill(event.target.closest('[data-skill]')?.dataset.skill);
     if(!skill)return;
     pause();

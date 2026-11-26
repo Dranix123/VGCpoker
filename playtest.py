@@ -254,7 +254,7 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                                     api['reason'] = str(error)
                                 if isinstance(error, urllib.error.HTTPError):
                                     api['status'] = error.code
-                                    if error.code in (401, 403):
+                                    if error.code in (400, 401, 402, 403, 404, 422):
                                         summary['modelDisabledReason'] = f'http_{error.code}'
                                 elif type(error) is ValueError and str(error) in ('invalid_move_index', 'response_too_large'):
                                     api['reason'] = str(error)

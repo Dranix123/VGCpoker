@@ -36,17 +36,17 @@ test('advanced rules use unchecked opt-out controls in supported modes',()=>{
     }
   }
 });
-test('current player replaces their previous play with an in-seat status',()=>{
-  const start=source.indexOf('const playedCards=');
-  const expression=source.slice(start+'const playedCards='.length,source.indexOf(';\n',start));
+test('current player keeps their previous play underneath the in-seat status',()=>{
+  const start=source.indexOf('const playStatus=');
+  const expression=source.slice(start,source.indexOf('    return',start));
   for(const turn of [0,1]){
-    const context={g:{phase:'play',turn},s:0,played:turn===0?{kind:'旧出牌'}:null};vm.createContext(context);
-    const html=vm.runInContext(expression,context);
+    const context={g:{phase:'play',turn},s:0,played:{kind:'旧出牌',order:1},playNumber:1,seatPlayCards:play=>play.kind};
+    vm.createContext(context);
+    const html=vm.runInContext(expression+'\nplayedCards',context);
     assert.equal(html.includes('出牌中...'),turn===0);
+    assert.ok(html.includes('旧出牌'));
   }
-  assert.ok(!source.includes('turnNotice('));
 });
-
 test('autoplay shows badges and cancellation while removing manual play controls',()=>{
  for(const enabled of [false,true]){
   const players=Array.from({length:4},(_,i)=>({id:i+1,name:String(i),connected:true,autoplay:i===0&&enabled}));
@@ -115,4 +115,19 @@ test('room setup keeps rule switches available in expandable options and a separ
   assert.equal(html.includes('data-ai-type hidden'),screen==='create');
   assert.equal(html.includes('name="joinPolicy"'),screen==='create');
  }
+});
+
+test('seat reveal previews use only visible hands and keep both twin identities in order',()=>{
+ const ctx={esc:String,ranks:{3:'3',9:'9',14:'A'},suits:{S:'♠',H:'♥'}};
+ vm.createContext(ctx);
+ vm.runInContext(source.slice(source.indexOf('function visibleCard('),source.indexOf('function publicHandsPanel(')),ctx);
+ const room={players:[{name:'甲'},{name:'乙'}]};
+ const game={phase:'play',hand:[{rank:14,suit:'S'}],publicHands:[
+  {owner:1,cards:[{rank:3,suit:'H',effective:9}]},{owner:1,cards:[{rank:9,suit:'S'}]}
+ ]};
+ assert.equal(ctx.seatRevealedHand(room,game,0),'');
+ const html=ctx.seatRevealedHand(room,game,1);
+ assert.match(html,/手牌 A[\s\S]*3♥→9[\s\S]*手牌 B[\s\S]*9♠/);
+ assert.doesNotMatch(html,/A♠/);
+ assert.match(ctx.seatRevealedHand({...room,replay:true},game,1),/id="replay-revealed-1"/);
 });

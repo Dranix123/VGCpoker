@@ -277,12 +277,12 @@ class Rules(unittest.TestCase):
             g.action(0,'play',['a0'])
             for seat in (3,2,1):g.action(seat,'pass')
             self.assertEqual(g.turn,2);self.assertIsNone(g.last)
-            self.assertIsNone(g.seat_plays[0])
+            self.assertIsNotNone(g.seat_plays[0])
             self.assertTrue(all(g.seat_plays[s]['passed'] for s in (1,2,3)))
             g.action(2,'play',['20'])
         g=table();g.turn=3;g.hands[3]=cards([15,15,9],prefix='d');g.hands[0]=cards([15],prefix='a')
         g.action(3,'play',['d0','d1']);g.action(0,'dot',['a0'])
-        self.assertEqual(g.turn,2);self.assertIsNone(g.last);self.assertIsNone(g.seat_plays[0])
+        self.assertEqual(g.turn,2);self.assertIsNone(g.last);self.assertEqual(g.seat_plays[0]['kind'],'死点')
 
     def test_bot_reserves_cards_for_urgent_gifts(self):
         g=table();g.interactive=True
@@ -450,13 +450,24 @@ class Rules(unittest.TestCase):
             self.assertEqual(g.last['special'],'hook');self.assertEqual(g.last_seat,1)
 
 
-    def test_display_pass_replaces_cards_and_next_round_hides_finished(self):
+    def test_display_pass_replaces_cards_and_finished_seat_keeps_last_play(self):
         g=table();g.hands[0]=cards([6],prefix='a')
         g.hands[3]=cards([7,10,13],prefix='d');g.hands[2]=cards([8,11,14],prefix='c');g.hands[1]=cards([9,12,15],prefix='b')
         g.action(0,'play',['a0']);g.action(3,'play',['d0']);g.action(2,'play',['c0']);g.action(1,'play',['b0'])
         self.assertIsNotNone(g.seat_plays[0])
-        g.action(3,'play',['d1']);self.assertIsNone(g.seat_plays[0])
+        g.action(3,'play',['d1']);self.assertIsNotNone(g.seat_plays[0])
         g.action(2,'pass');self.assertEqual(g.seat_plays[2]['kind'],'不出');self.assertEqual(g.seat_plays[2]['cards'],[])
+
+    def test_hui_matches_total_suits_for_straights_and_consecutive_pairs(self):
+        for ranks in ([5,6,7,8,9], [5,5,6,6,7,7]):
+            g=table()
+            g.options['advancedHui']=True
+            suits=list('SHCDD' if len(ranks)==5 else 'SSHHCC')
+            g.hands[0]=[dict(id='a'+str(i),rank=rank,suit=suits[i]) for i,rank in enumerate(ranks)]
+            g.hands[3]=[dict(id='b'+str(i),rank=rank-1,suit=suits[::-1][i]) for i,rank in enumerate(ranks)]
+            g.action(0,'play',[card['id'] for card in g.hands[0]])
+            g.action(3,'hui',[card['id'] for card in g.hands[3]])
+            self.assertEqual(g.seat_plays[3]['kind'],'回')
 
     def test_counterclockwise_turns_and_bidding(self):
         for mode in MODES:
@@ -623,8 +634,9 @@ class Rules(unittest.TestCase):
         g.hands[0]=cards([5,5,9],'S','a');g.hands[3]=cards([14,14,9],'S','b')
         g.action(0,'play',['a0','a1'])
         for rank in (7,15):
-            with self.assertRaises(RuleError):g.validate_play(3,g.hands[3][:2],'hui',rank)
-        self.assertEqual(g.validate_play(3,g.hands[3][:2],'hui',4)[0]['kind'],'回')
+            reply = cards([rank,14],'S','reply')
+            with self.assertRaises(RuleError):g.validate_play(3,reply,'hui',rank)
+        self.assertEqual(g.validate_play(3,cards([4,14],'S','reply'),'hui',4)[0]['kind'],'回')
 
     def test_wildcard_declared_suit_controls_hui_and_candidates(self):
         for mode in ('standard','trio'):
@@ -685,7 +697,7 @@ class Rules(unittest.TestCase):
             with self.assertRaises(RuleError):g.validate_play(seat,mismatch,'hui')
             g.action(seat,'auto',[c['id'] for c in reply]);self.assertEqual(g.last['special'],'hui')
 
-    def test_advanced_hui_airplane_compares_each_body_group(self):
+    def test_advanced_hui_airplane_compares_aggregate_body_suits(self):
         g=table(options={'advancedHui':True})
         lead=[{'id':'a'+str(i),'rank':r,'suit':s} for i,(r,s) in enumerate(zip([11]*3+[12]*3+[3,15],'SHCSHDHD'))]
         reply=[{'id':'b'+str(i),'rank':r,'suit':s} for i,(r,s) in enumerate(zip([9]*3+[10]*3+[16,17],'SHCSHDCS'))]
@@ -693,6 +705,8 @@ class Rules(unittest.TestCase):
         g.action(0,'play',[c['id'] for c in lead])
         self.assertEqual(g.validate_play(3,reply,'hui')[0]['kind'],'回')
         mismatch=[dict(c) for c in reply];mismatch[2]['suit'],mismatch[5]['suit']=mismatch[5]['suit'],mismatch[2]['suit']
+        self.assertEqual(g.validate_play(3,mismatch,'hui')[0]['kind'],'回')
+        mismatch[2]['suit']='H'
         with self.assertRaises(RuleError):g.validate_play(3,mismatch,'hui')
 
     def test_advanced_hui_wildcard_fills_body_suit_deficit(self):

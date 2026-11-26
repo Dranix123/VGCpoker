@@ -22,7 +22,7 @@ GOALS = {
 }
 MODEL_INSTRUCTIONS = (
     '按 goal 争胜。独立判断当前局面，参考 recentRounds 中按时间排列的最近三个完整牌权回合。'
-    '从 moves 选择一个编号，返回 {"index":0}。'
+    '只输出一个 JSON 对象。从 moves 选择一个编号，返回 {"index":0}。'
     '选牌、排序、发动技能或指定赖子也可以返回 {"move":{...}}，'
     '动作名取自 moveTypes，牌用实际牌 ID，target 用身份编号。'
     '守望的 ids 按牌堆从顶到底排列。回收和聚宝的空 ids 表示放弃。'
@@ -192,7 +192,7 @@ def urgent_moves(core, actor, conveyor):
             yield dict(action='urgent', ids=[card_id], effect='rotate', direction=direction, **declaration)
         if core.urgent_uses.get(card_id, 0) >= 3:
             continue
-        for effect in ('shield', 'judge-boost', 'judge-color'):
+        for effect in ('shield', 'judge-boost'):
             yield dict(action='urgent', ids=[card_id], effect=effect, **declaration)
         for effect in ('draw', 'ban', 'maximum', 'silence'):
             for target in targets:

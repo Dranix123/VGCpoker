@@ -156,7 +156,7 @@ test('the fourth use of an urgent card offers only rotation and destruction',asy
  let html='';const ctx=context({state:{room:{game:{hand:[{id:'urgent',rank:18,suit:'U',urgentUses:3},{id:'kept',rank:7,suit:'S'}],conveyor:{actor:0,turnActor:1,actors:[],resources:{}}}}},selected:new Set(['urgent']),urgentSelected:()=>true,wildcardPayload:()=>undefined,showModal:(kind,body)=>{html=body;},$:()=>null});
  vm.runInContext('conveyorUrgentUpdate=()=>{}',ctx);await vm.runInContext('conveyorPlay()',ctx);
  assert.match(html,/value="rotate" checked/);
- for(const effect of ['draw','discard','ban','shield','maximum','silence','judge-boost','judge-color'])assert.match(html,new RegExp('value="'+effect+'"[^>]*disabled'));
+ for(const effect of ['draw','discard','ban','shield','maximum','silence','judge-boost'])assert.match(html,new RegExp('value="'+effect+'"[^>]*disabled'));
  assert.ok(html.includes('本次必须轮换并销毁'));
 });
 

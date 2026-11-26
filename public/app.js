@@ -23,7 +23,7 @@ function markResponse(){
  const key=response?`${r.code}/${r.matchId}/${response.key}`:'';
  if(key===responseKey)return;
  responseKey=key;
- if(!selected.size&&response?.moves.length){const move=response.moves[0];selected=new Set(move.ids);wildcardMap=move.wildcard||{};}
+ if(!selected.size&&response?.moves.length){const move=response.moves[0];selected=new Set(move.ids);wildcardMap=move.wildcard||{};if(g.conveyor)conveyorDouble=move.double||null;}
 }
 async function requestMutation(path,body,isCurrent=()=>true){
  const before=state.room,phase=before?.game?.phase,choice=JSON.stringify(before?.game?.conveyor?.choice);
@@ -56,7 +56,7 @@ async function sync() {
     connectionLost=false;updateConnection();
     const oldRoom = state.room?.code, oldMatch = state.room?.matchId;
     state = next;
-    if (oldRoom !== state.room?.code || oldMatch !== state.room?.matchId) {selected.clear(); wildcardMap={};}
+    if (oldRoom !== state.room?.code || oldMatch !== state.room?.matchId) {selected.clear(); wildcardMap={};conveyorDouble=null;}
     const available = new Set(state.room?.game?.hand.map(c=>c.id) || []);
     selected = new Set([...selected].filter(id=>available.has(id)));
     markResponse();
@@ -88,12 +88,13 @@ function render() {
   document.body.classList.toggle('tribute-phase',g?.phase==='tribute');
   document.body.classList.toggle('opening-phase',['setup','rps','draft','tribute'].includes(g?.phase));
   document.body.classList.toggle('hand-choice-phase',!!g?.conveyor?.choice&&!g.conveyor.choice.cards&&conveyorHandChoices.has(g.conveyor.choice.kind));
-  const key = JSON.stringify([u,r,screen,settingsTab,state.preferences,state.features?.playtest,screen==='create'?state.matchCounts:null]);
+  const key = JSON.stringify([u,r,screen,settingsTab,state.checkin,state.preferences,state.features?.playtest,screen==='create'?state.matchCounts:null]);
   if(key===renderedKey){gameAudio.observe(r);return;}
   renderedKey=key;
   const handScroll=$('.hand')?.scrollLeft||0;
-  const previousTable=$('#view .board')?.dataset.table;
-  const currentTable=g?tableKey(r):null;
+  const previousTable=$('#view [data-table]')?.dataset.table;
+  const currentTable=r?(g?tableKey(r):'prep/'+r.code):null;
+  const revealed=previousTable===currentTable?$('#view .reveal-sheet[open]')?.id:null;
   const openPanels=previousTable===currentTable
     ? new Map($$('#view [data-table-panel]').map(panel=>[panel.dataset.tablePanel,panel.open])) : new Map();
   const tableFocus=previousTable===currentTable
@@ -104,6 +105,7 @@ function render() {
   if(!r) $('#view').innerHTML=screen==='home'?lobby():screen==='settings'?settingsScreen():flowScreen();
   else if(!g) $('#view').innerHTML=waiting(r);
   else $('#view').innerHTML=table(r,g);
+  if(revealed)openRevealedHand(document.getElementById(revealed));
   if(joinValue!==undefined && $('#join-code')){$('#join-code').value=joinValue; if(joinFocus)$('#join-code').focus();}
   if($('#view #playtest-panel'))mountPlaytest($('#view #playtest-panel'));
   const nextChoice=$('#cv-choice-form');
@@ -149,7 +151,12 @@ function render() {
 }
 function lobby() {
   const u=state.user;
-  return `<section class="game-home"><div class="home-copy"><h1 class="home-title">VGC<span>扑克牌俱乐部</span></h1><div class="title-splash">${esc(titleSplash)}</div><div class="main-menu"><button class="main-menu-item" data-action="open-create"><span class="menu-label">创建房间</span><span class="menu-arrow">↗</span></button><button class="main-menu-item" data-action="open-single"><span class="menu-label">单人模式</span><span class="menu-arrow">↗</span></button><button class="main-menu-item" data-action="settings"><span class="menu-label">设置</span><span class="menu-arrow">↗</span></button></div><div class="home-bottom"><span>${u?esc(u.name)+' · '+esc(u.rank)+' / '+u.points+' 积分':''}</span><button class="text-button" data-action="${u?'leaderboard':'auth'}">${u?'积分榜':'登录 / 注册'} ↗</button></div></div><div class="home-scene" aria-hidden="true"><div class="sketch-ring ring-one"></div><div class="sketch-ring ring-two"></div><div class="home-card-fan">${[['4','♣'],['A','♥'],['4','♠'],['A','♦'],['4','♣']].map(([r,s],i)=>`<div class="home-art-card ${s==='♥'||s==='♦'?'red':''}" data-index="${i}"><span>${r}<small>${s}</small></span><b>${s}</b><i>${r}<small>${s}</small></i></div>`).join('')}</div></div></section>`;
+  return `<section class="game-home"><div class="home-copy"><h1 class="home-title">VGC<span>扑克牌俱乐部</span></h1><div class="title-splash">${esc(titleSplash)}</div><div class="main-menu"><button class="main-menu-item" data-action="open-create"><span class="menu-label">创建房间</span><span class="menu-arrow">↗</span></button><button class="main-menu-item" data-action="open-single"><span class="menu-label">单人模式</span><span class="menu-arrow">↗</span></button><button class="main-menu-item" data-action="settings"><span class="menu-label">设置</span><span class="menu-arrow">↗</span></button></div><div class="home-bottom"><span>${u?esc(u.name)+' · '+esc(u.rank)+' / '+u.points+' 积分':''}</span><button class="text-button" data-action="${u?'leaderboard':'auth'}">${u?'积分榜':'登录 / 注册'} ↗</button>${u?dailyCheckinButton():''}</div></div><div class="home-scene" aria-hidden="true"><div class="sketch-ring ring-one"></div><div class="sketch-ring ring-two"></div><div class="home-card-fan">${[['4','♣'],['A','♥'],['4','♠'],['A','♦'],['4','♣']].map(([r,s],i)=>`<div class="home-art-card ${s==='♥'||s==='♦'?'red':''}" data-index="${i}"><span>${r}<small>${s}</small></span><b>${s}</b><i>${r}<small>${s}</small></i></div>`).join('')}</div></div></section>`;
+}
+function dailyCheckinButton(){
+ const checkin=state.checkin;
+ if(!checkin)return '';
+ return `<button class="text-button" data-action="checkin" ${checkin.checked?'disabled':''} title="每天随机获得 10–30 积分，连续签到第 7 天起翻倍">${checkin.checked?`已签到 · +${checkin.reward} · 连续 ${checkin.streak} 天`:'每日签到'}</button>`;
 }
 function flowScreen(){
  const single=screen==='single';
@@ -171,18 +178,14 @@ function settingsScreen(){
 function showSettingsModal(){showModal('settings',settingsScreen(),'SETTINGS');mountPlaytest($('#modal #playtest-panel'));}
 function navigate(next){screen=next;renderedKey='';render();window.scrollTo({top:0});}
 
-function roomHeading(r,playing=false){const g=r.game;const promoted=g&&Object.values(g.promotions).includes(g.main);const mainBadge=playing&&r.mode!=='landlord'?`<span class="main-indicator">主牌 <b>${ranks[g.main]}</b>${promoted?' · 升变':''}</span>`:'';if(r.replay)return mainBadge?`<div class="replay-main">${mainBadge}</div>`:'';return `<div class="room-heading"><div><h1>${esc(names[r.mode])}<span class="muted"> · ${r.spectator?'观战':playing?'对局':'准备室'}</span></h1>${mainBadge}</div><div class="room-heading-actions"><button class="room-number" data-action="copy"><small>房间号</small>${r.code} <small>⧉</small></button><button class="secondary room-exit" data-short-label="${r.spectator?'退出':playing&&g.phase!=='over'?'结束':'离开'}" data-action="${playing&&r.game.phase!=='over'&&!r.spectator?'resign':'leave'}">${r.spectator?'退出观战':playing&&r.game.phase!=='over'?(r.single?'结束本局':'返回大厅'):'离开房间'} ↗</button>${playing&&r.game.phase!=='over'&&!r.spectator&&r.canLeave?'<button class="text-button" data-action="leave">离开房间 ↗</button>':''}</div></div>${g?.phase==='over'?roundActions(r):''}`;}
-function roundActions(r){return `<nav class="round-actions" aria-label="本局结束操作">${!r.spectator?`<button class="primary" data-action="start" ${r.host!==state.user.id?'disabled':''}>${r.host===state.user.id?'再来一局 →':'等待房主开局'}</button>`:''}<button class="secondary" data-action="leave">回到主菜单</button></nav>`;}
+function roomHeading(r,playing=false,history=''){const g=r.game;const promoted=g&&Object.values(g.promotions).includes(g.main);const mainBadge=playing&&r.mode!=='landlord'?`<span class="main-indicator">主牌 <b>${ranks[g.main]}</b>${promoted?' · 升变':''}</span>`:'';if(r.replay)return mainBadge?`<div class="replay-main">${mainBadge}</div>`:'';return `<div class="room-heading"><div><h1>${esc(names[r.mode])}<span class="muted"> · ${r.spectator?'观战':playing?'对局':'准备室'}</span></h1>${mainBadge}</div><div class="room-heading-actions">${history}<button class="room-number" data-action="copy"><small>房间号</small>${r.code} <small>⧉</small></button><button class="secondary room-exit" data-short-label="${r.spectator?'退出':playing&&g.phase!=='over'?'结束':'离开'}" data-action="${playing&&r.game.phase!=='over'&&!r.spectator?'resign':'leave'}">${r.spectator?'退出观战':playing&&r.game.phase!=='over'?(r.single?'结束本局':'返回大厅'):'离开房间'} ↗</button>${playing&&r.game.phase!=='over'&&!r.spectator&&r.canLeave?'<button class="text-button" data-action="leave">离开房间 ↗</button>':''}</div></div>`;}
 function waiting(r) {
   if(r.mode==='conveyor')return conveyorWaiting(r);
-  if(r.spectator)return roomHeading(r)+`<section class="watch-waiting"><h2>等待房主开始</h2><p>${r.players.map(p=>esc(p.name)).join(' · ')}</p></section>`;
+  if(r.spectator)return roomHeading(r)+`<div class="prep-room">${preparationSeats(r)}<p>等待房主开始</p></div>`;
   const host=r.host===state.user.id;
-  const seats=Array.from({length:r.capacity},(_,i)=>{
-    const p=r.players[i];
-    if(!p&&host)return `<button class="waiting-seat empty-seat" data-action="invite-ai"><div class="avatar">＋</div><div><strong>邀请 AI</strong><small>空座位 · ${i+1}</small></div></button>`;
-    return `<div class="waiting-seat"><div class="avatar ${p?.bot?'bot':''}">${p?(p.bot?'✦':esc(p.name[0])):'＋'}</div><div><strong>${p?esc(p.name):'等待玩家加入'}</strong><small>${p?(p.id===r.host?'房主 · ':'')+(p.bot?(p.model?'模型 AI':'规则 AI'):(p.connected?'已落座':'暂时离线')):'空座位 · '+(i+1)}</small></div>${p?.bot&&host?`<button class="seat-remove" data-action="remove" data-seat="${i}" aria-label="移除AI">×</button>`:''}</div>`;
-  }).join('');
-  return roomHeading(r)+`<div class="waiting"><section><div class="waiting-table"><div class="waiting-center"><div class="table-logo">VGC</div></div></div><div class="waiting-seats">${seats}</div></section><aside class="waiting-info"><div class="side-panel"><h3>房间</h3><p>已落座 <b>${r.players.length} / ${r.capacity}</b><br>${r.mode==='landlord'?'三人 · 54 张 · 叫分抢地主':r.mode==='trio'?'三人 · 86 张 · 个人争先':r.mode==='basic'?'四人 · 54 张 · 对座组队':'四人 · '+(r.options.dlc?'150':'110')+' 张 · 对座组队'}<br>${r.rated?'全真人 · 本局计入积分':'含 AI · 本局为练习对局'}</p><button class="primary" data-action="start" ${!host||r.players.length!==r.capacity?'disabled':''}>开始对局 <span>→</span></button>${!host?'<p class="form-note">等待房主开始游戏。</p>':''}</div><div class="side-panel"><h3>邀请 AI</h3><button class="secondary" data-action="bot" ${!host||r.players.length===r.capacity?'disabled':''}>＋ 邀请规则 AI</button><button class="secondary" data-action="model-bot" ${!host||r.players.length===r.capacity||!state.preferences?.configured?'disabled':''}>＋ 邀请模型 AI</button><button class="text-button full" data-action="settings-api">API 设置 ↗</button><div class="divider"></div><button class="text-button" data-action="rules">阅读本桌玩法 →</button></div></aside></div>`;
+  const rules={landlord:'三人 · 54 张 · 叫分抢地主',trio:'三人 · 86 张 · 个人争先',basic:'四人 · 54 张 · 对座组队',standard:'四人 · '+(r.options.dlc?'150':'110')+' 张 · 对座组队'};
+  return roomHeading(r)+`<div class="prep-room">${preparationSeats(r)}<div class="prep-controls"><p>${rules[r.mode]} · ${r.rated?'计入积分':'练习对局'}</p><button class="primary" data-action="start" ${!host||r.players.length!==r.capacity?'disabled':''}>${host?'开始对局 →':'等待房主开始'}</button><button class="text-button" data-action="rules">本桌玩法</button></div></div>`;
+
 }
 function table(r,g) {
   if(r.mode==='conveyor')return conveyorTable(r,g);
@@ -191,11 +194,12 @@ function table(r,g) {
   const seats=r.players.map((p,s)=>{
     const relative=(s-me+r.capacity)%r.capacity;
     const finish=g.finished.indexOf(s);
-    const role=g.mode==='landlord'?(g.landlord===s?'地主':g.landlord!==null?'农民':''):(g.mode==='trio'?'':r.spectator?(s%2?'二队':'一队'):s%2===me%2?'同队':'对手');
+    const role=g.mode==='landlord'&&g.landlord!=null?(g.landlord===s?'地主':'农民'):'';
     const played=g.seatPlays?.[s]||(!g.seatPlays&&g.lastSeat===s?{...g.last,order:1}:null);
     const playNumber=g.playNumber??1;
-    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play opening-display" role="status">${g.ready.includes(s)?`<div class="seat-play-label">${g.phase==='rps'?'已出拳':'已确认'}</div>`:(g.phase==='setup'?g.confirmTurn:g.reveals.find(i=>!g.ready.includes(i)))===s?`<div class="playing">${g.phase==='rps'?'等待出拳...':'等待确认...'}</div>`:''}${g.reveals.includes(s)?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:g.phase==='play'&&g.priorityClock?.seat===s?`<div class="seat-play playing priority-clock" role="status">${r.replay?'优先管牌':g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`:g.phase==='play'&&!g.priorityClock&&g.turn===s?'<div class="seat-play playing" role="status">出牌中...</div>':played?`<div class="seat-play ${!played.passed&&played.order===playNumber?'latest':'older'}" aria-label="${esc(p.name)}的最近出牌">${seatPlayCards(played,g)}</div>`:'';
-    return `<div class="seat ${positions[relative]} ${(g.phase==='setup'?g.confirmTurn===s:['play','bid'].includes(g.phase)&&(g.priorityClock?g.priorityClock.seat===s:g.turn===s))?'turn':''} ${finish>=0?'finished':''}"><div class="avatar ${p.bot?'bot':''}">${p.bot?'✦':esc(p.name[0])}</div><div><div class="seat-name">${esc(p.name)}${s===me&&!r.spectator?' · 你':''}</div><div class="seat-meta">${g.urgentLast.includes(s)?'急牌末名':g.phase==='over'&&g.counts[s]>0?'剩 '+g.counts[s]+' 张':finish>=0?'第 '+(finish+1)+' 名':g.counts[s]+' 张牌'}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${!p.connected?' · 离线':''}</div></div>${role?`<span class="seat-role">${role}</span>`:''}${playedCards}${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
+    const playStatus=g.phase==='play'&&g.priorityClock?.seat===s?`<div class="playing priority-clock" role="status">${r.replay?'优先管牌':g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`:g.phase==='play'&&!g.priorityClock&&g.turn===s?'<div class="playing" role="status">出牌中...</div>':'';
+    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play opening-display" role="status">${g.ready.includes(s)?`<div class="seat-play-label">${g.phase==='rps'?'已出拳':'已确认'}</div>`:(g.phase==='setup'?g.confirmTurn:g.reveals.find(i=>!g.ready.includes(i)))===s?`<div class="playing">${g.phase==='rps'?'等待出拳...':'等待确认...'}</div>`:''}${g.reveals.includes(s)?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:played||playStatus?`<div class="seat-play ${played&&!played.passed&&played.order===playNumber?'latest':played&&!playStatus?'older':''}">${playStatus}${played?seatPlayCards(played,g):''}</div>`:'';
+    return `<div class="seat ${positions[relative]} ${(g.phase==='setup'?g.confirmTurn===s:['play','bid'].includes(g.phase)&&(g.priorityClock?g.priorityClock.seat===s:g.turn===s))?'turn':''} ${finish>=0?'finished':''}"><div class="seat-portrait">${playerAvatar(p,s)}${role?`<small class="seat-role">${role}</small>`: ''}</div><div><div class="seat-meta">${g.urgentLast.includes(s)?'急牌末名':g.phase==='over'&&g.counts[s]>0?'剩 '+g.counts[s]+' 张':finish>=0?'第 '+(finish+1)+' 名':g.counts[s]+' 张牌'}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${!p.connected?' · 离线':''}</div>${seatRevealedHand(r,g,s)}</div>${playedCards}${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
   }).join('');
   let center='',openingActions='';
   if(g.phase==='bid') center=`<div class="table-prompt">${g.turn===me?'轮到你叫分':esc(r.players[g.turn].name)+' 正在叫分'}</div><p class="table-sub">当前最高叫分 ${g.bid} · 三分直接成为地主</p>${g.turn===me?`<div class="phase-actions">${[0,1,2,3].map(n=>`<button class="${n===3?'primary':'secondary'}" data-action="bid" data-value="${n}" ${n&&n<=g.bid?'disabled':''}>${n?n+' 分':'不叫'}</button>`).join('')}</div>`:''}`;
@@ -228,10 +232,51 @@ function table(r,g) {
     : canPlay?actionDock(options):'';
   const handArea=r.spectator?'':`<section class="hand-area"><div class="hand-top"><strong>你的手牌 <span class="muted">/ ${g.hand.length} 张</span></strong><div class="hand-tools">${handTools(r)}</div></div>${openingActions}<div class="hand ${g.hand.length>23?'dense':''}">${g.hand.map(c=>card(c,canPlay||canReturn,g)).join('')}</div>${controls}</section>`;
   const summary=g.mode==='landlord'?`地主叫分 <b>${g.bid}</b>`:g.mode==='trio'?'三人个人争先':`${r.spectator?'一队':'我方'} <b>${g.scores[me%2]}</b> · ${r.spectator?'二队':'对方'} <b>${g.scores[1-me%2]}</b>`;
-  return roomHeading(r,true)+(r.replay?'':result)+`<div class="table-layout"><section class="board" data-table="${esc(tableKey(r))}">${seats}<div class="table-center">${center}</div></section>${tableHistory(g,`${summary}<br>${r.rated?'计入积分与段位':'练习 · 不计积分'}`)}</div>${handArea}${publicHandsPanel(r,g)}${r.replay?result:''}`;
+  const history=tableHistory(g,`${summary}<br>${r.rated?'计入积分与段位':'练习 · 不计积分'}`,r.replay);
+  if(result&&!r.replay)return roomHeading(r,true,history)+settlement(r,result);
+  return roomHeading(r,true,history)+`<div class="table-layout"><section class="board" data-table="${esc(tableKey(r))}">${seats}<div class="table-center">${center}</div></section>${r.replay?history:''}</div>${handArea}${publicHandsPanel(r,g)}${r.replay?result:''}`;
 }
 
 function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat)?'已明牌':'明牌'}</button>`:'';}
+function roundActions(r){return `<nav class="round-actions" aria-label="本局结束操作">${!r.spectator?`<button class="primary" data-action="start" ${r.host!==state.user.id?'disabled':''}>${r.host===state.user.id?'再来一局 →':'等待房主开局'}</button>`:''}<button class="secondary" data-action="leave">回到主菜单</button></nav>`;}
+function settlement(r,result,options=''){
+  return `<section class="result-stage" data-table="${esc(tableKey(r))}"><div class="score-sheet"><div class="score-scroll">${result}${options}</div>${roundActions(r)}</div></section>`;
+}
+function preparationSeats(r){
+  const capacity=r.capacity||4, host=!r.spectator&&r.host===state.user?.id;
+  const positions=capacity===3?['bottom','left','right']:['bottom','left','top','right'];
+  const seats=Array.from({length:capacity},(_,i)=>{
+    const p=r.players[i], side=positions[(i-(r.seat??0)+capacity)%capacity];
+    const skill=r.mode==='conveyor'&&(p?.skill||p?.botSkill);
+    const detail=skill?conveyorSkill(skill)?.name:p?.bot&&r.mode==='conveyor'?'随机技能':p?.bot?(p.model?'模型 AI':'规则 AI'):p?.id===r.host?'房主':p?.connected?'已落座':'暂时离线';
+    if(!p&&host)return `<button class="prep-seat ${side} vacant" data-action="invite-ai"><span class="avatar">＋</span><strong>邀请 AI</strong></button>`;
+    return `<div class="prep-seat ${side}${p?'':' vacant'}">${p?playerAvatar(p,i):'<span class="avatar">＋</span><strong>空座位</strong>'}<small>${p?esc(detail):'等待加入'}</small>${host&&p?.bot?`<button class="seat-remove" data-action="remove" data-seat="${i}" aria-label="移除${esc(p.name)}">×</button>`:''}</div>`;
+  }).join('');
+  return `<div class="prep-map" data-table="prep/${esc(r.code)}"><div class="prep-count"><strong>${r.players.length}<small> / ${capacity}</small></strong><span>已入座</span></div>${seats}</div>`;
+}
+const avatarInitial=p=>Array.from(p.name)[0]||'·';
+function playerAvatar(p,seat){
+  return `<button type="button" class="avatar player-avatar" data-action="seat-profile" data-player-seat="${seat}" aria-label="查看${esc(p.name)}的玩家资料" aria-haspopup="dialog"><span aria-hidden="true">${esc(avatarInitial(p))}</span></button>`;
+}
+async function openPlayerProfile(r,seat){
+  const p=r.players[seat], dialog=$('#seat-profile');
+  const detail=dialog.querySelector('.seat-profile-detail');
+  dialog.querySelector('.profile-suit').textContent=avatarInitial(p);
+  dialog.querySelector('h2').textContent=p.name;
+  dialog.querySelector('.profile-id').textContent=p.bot?(r.replay?'自动对局 AI':p.model?'模型 AI':'规则 AI'):'ID '+p.id;
+  detail.textContent=p.bot?'AI 不计段位积分。':'正在读取积分…';
+  const request=String(p.id);
+  dialog.dataset.player=request;
+  dialog.showModal();
+  if(p.bot)return;
+  try{
+    const profile=p.id===state.user?.id?state.user:(await api('leaderboard?roomPlayer='+encodeURIComponent(p.id))).players.find(u=>u.id===p.id);
+    if(!profile)throw Error('暂无该玩家的积分记录。');
+    if(dialog.open&&dialog.dataset.player===request){
+      detail.innerHTML=`<div class="profile-score"><strong>${esc(profile.points)}</strong> 积分</div><p>${esc(profile.rank)} · ${esc(profile.games)} 场 · ${esc(profile.wins)} 胜</p>`;
+    }
+  }catch(error){if(dialog.open&&dialog.dataset.player===request)detail.textContent=error.message;}
+}
 function tableKey(r){return r.code+'/'+r.matchId;}
 function handTools(r){
   const autoplay=!!r.players[r.seat]?.autoplay;
@@ -255,6 +300,7 @@ function actionDock(options=''){
   </div>`;
 }
 function seatPlayCards(play,g){
+  if(play.passed)return `<span class="pass-mark">${esc(play.kind)}</span>`;
   const cards=[];
   play.cards.forEach((card,i)=>{
     const effective=play.ranks[i]??card.rank, effectiveSuit=play.suits?.[i]||card.suit;
@@ -268,14 +314,28 @@ function seatPlayCards(play,g){
     return `<span class="seat-play-card ${['H','D'].includes(c.suit)||c.rank===17?'red':''}" title="${ranks[c.rank]}${suits[c.suit]||'○'}${changed?' → '+effectiveLabel:''}"><b>${ranks[c.rank]}${c.count>1?`<em>×${c.count}</em>`:''}</b><small>${suits[c.suit]||'○'}${changed?'→'+effectiveLabel:''}</small></span>`;
   }).join('')}</div>`;
 }
-function tableHistory(g,summary){
-  const wide=globalThis.matchMedia?.('(min-width: 721px)').matches;
+function tableHistory(g,summary,replay=false){
+  const wide=replay&&globalThis.matchMedia?.('(min-width: 1000px) and (min-height: 540px)').matches;
   return `<details class="table-archive" data-table-panel="history" ${wide?'open':''}><summary>牌桌动态</summary><div class="table-log"><div class="match-meta">${summary}</div><div class="log-entries">${g.log.map(text=>`<div class="log-entry">${esc(text)}</div>`).join('')}</div><button class="text-button" data-action="rules">玩法手册</button></div></details>`;
+}
+function visibleCard(c){
+  const changed=c.effective!==undefined&&c.effective!==c.rank;
+  return `<span class="${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]||''}${changed?'→'+ranks[c.effective]:''}</span>`;
+}
+function seatRevealedHand(r,g,seat){
+  if(g.phase==='over')return '';
+  const hands=(g.publicHands||[]).filter(h=>h.owner===seat);
+  if(!hands.length)return '';
+  const name=esc(r.players[seat].name),id=(r.replay?'replay':'table')+'-revealed-'+seat;
+  const cards=hands.flatMap(h=>h.cards);
+  return `<button class="seat-reveal" data-reveal-hand="${id}" aria-haspopup="dialog" aria-label="查看${name}的全部明牌"><small>明牌</small><span class="reveal-strip">${cards.slice(0,12).map(visibleCard).join('')}</span><b>${cards.length>12?'…':'›'}</b></button>
+    <dialog class="reveal-sheet" id="${id}" aria-label="${name}的明牌"><header><strong>${name} · 明牌</strong><button class="icon-button" data-close-revealed aria-label="关闭明牌">×</button></header>
+    ${hands.map((h,i)=>`<div>${hands.length>1?'手牌 '+(i?'B':'A')+' · ':''}${h.cards.length} 张<div class="public-hand-cards">${h.cards.map(visibleCard).join('')}</div></div>`).join('')}</dialog>`;
 }
 function publicHandsPanel(r,g){
   const hands=g.publicHands||[];
-  if(g.phase==='over'||!hands.length)return '';
-  return `<details class="public-hands${r.spectator?' spectator-hands':''}" data-table-panel="public" ${r.spectator?'open':''}><summary>${r.spectator?'全员手牌':'明牌 · '+new Set(hands.map(h=>h.owner)).size+' 人'}</summary><div class="public-hand-grid">${hands.map(h=>`<section><strong>${esc(r.players[h.owner].name)}${hands.filter(other=>other.owner===h.owner).length>1?' · '+(hands.find(other=>other.owner===h.owner)===h?'A':'B'):''} <small>${h.cards.length} 张</small></strong><div class="public-hand-cards">${h.cards.map(c=>`<span class="${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]||''}${c.effective!==undefined&&c.effective!==c.rank?'→'+ranks[c.effective]:''}</span>`).join('')}</div></section>`).join('')}</div></details>`;
+  if(!r.spectator||g.phase==='over'||!hands.length)return '';
+  return `<details class="public-hands spectator-hands" data-table-panel="public" open><summary>全员手牌</summary><div class="public-hand-grid">${hands.map(h=>`<section><strong>${esc(r.players[h.owner].name)}${hands.filter(other=>other.owner===h.owner).length>1?' · '+(hands.find(other=>other.owner===h.owner)===h?'A':'B'):''} <small>${h.cards.length} 张</small></strong><div class="public-hand-cards">${h.cards.map(visibleCard).join('')}</div></section>`).join('')}</div></details>`;
 }
 function showAuth(tab='login') {
   authTab=tab;
@@ -303,12 +363,13 @@ function $$(s){return [...document.querySelectorAll(s)];}
 async function gameAction(action,extra={}){if(!state.room)return;return await mutation('action',{action,revision:state.room.revision,...extra});}
 function wildRank(value){return typeof value==='object'?value?.rank:value;}
 function wildcardPayload(){
-  const wildIds=new Set((state.room?.game?.hand||[]).filter(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild')).map(c=>c.id));
+  const cards=(state.room?.game?.hand||[]).filter(c=>selected.has(c.id));
+  const wildIds=new Set(cards.filter(c=>c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild')&&(!state.room?.game?.conveyor||conveyorDouble?.id!==c.id)).map(c=>c.id));
   if(!wildIds.size)return undefined;
   const map=Object.fromEntries(Object.entries(wildcardMap).filter(([id])=>wildIds.has(id)));
   const declaration=Object.keys(map).length?map:undefined;
-  if(selected.size===1){
-    const c=state.room?.game?.hand.find(c=>selected.has(c.id));
+  if(cards.every(c=>c.rank===14)&&(!state.room?.game?.conveyor||!conveyorDouble||!selected.has(conveyorDouble.id))){
+    const c=cards.length===1?cards[0]:null;
     if(c?.rank===14&&c.suit==='S')return wildRank(declaration?.[c.id])===18?18:undefined;
   }
   return declaration;
@@ -369,7 +430,9 @@ function updateActionFeedback(r,g,canAct,canUrgent){
   if(output.textContent!==summary)output.textContent=summary;
 }
 function showWildcard(){
-  const wild=state.room?.game?.hand.filter(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild'))||[];
+  const fresh=state.room?.game?.hand.filter(c=>selected.has(c.id))||[];
+  const wild=fresh.filter(c=>c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild')&&(!state.room?.game?.conveyor||c.id!==conveyorDouble?.id));
+  if(fresh.length>1&&fresh.every(card=>card.rank===14)&&!(state.room?.mode==='conveyor'&&conveyorDouble&&selected.has(conveyorDouble.id))){toast('全是 A 时按原点数和花色出牌。');return;}
   const conveyor=state.room?.mode==='conveyor', label=state.room?.game?.conveyor?.skill==='wild'?'A':'黑桃 A';
   const single=selected.size===1;
   if(!wild.length||single&&(!conveyor||!wildRanks().includes(18))){toast('单张 A 按原点数和花色出牌；配牌请再选一张。');return;}
@@ -391,13 +454,14 @@ function selectionUpdate(){
  $$('.hand .card').forEach(b=>{b.classList.toggle('selected',selected.has(b.dataset.card));b.setAttribute('aria-pressed',selected.has(b.dataset.card));});
  const returned=$('[data-action="tribute-return"]');if(returned)returned.disabled=selected.size!==1||state.room.audioWaiting;
  const g=state.room.game,r=state.room,canAct=(!g.priorityClock||g.priorityClock.seat===r.seat&&(!g.conveyor||g.priorityClock.actor===g.conveyor.actor))&&(!!g.response||g.turn===r.seat&&(!g.conveyor||g.conveyor.turnActor===g.conveyor.actor));
- const pass=$('[data-action="pass"]');if(pass)pass.disabled=!!r.audioWaiting||r.players[r.seat].autoplay||!canAct||!g.response&&(!g.last||g.lastSeat===(g.conveyor?g.conveyor.actor:r.seat));
+ const pass=$('[data-action="pass"]');if(pass)pass.disabled=!!r.audioWaiting||r.players[r.seat].autoplay||!canAct||!g.response&&((!g.last||g.lastSeat===(g.conveyor?g.conveyor.actor:r.seat))&&!g.conveyor?.resources?.ban);
  const canUrgent=g.conveyor&&!g.conveyor.waiting&&!g.conveyor.resources?.ban&&urgentSelected();
- const btn=$('[data-action="play"]');if(btn)btn.disabled=(!canUrgent&&(!canAct||!!g.conveyor?.resources?.ban||g.conveyor?.mustScavenge||!!g.priority&&r.players.filter(p=>!p.bot).length===1&&!g.priority.pending.includes(r.seat)))||r.audioWaiting||r.players[r.seat].autoplay||!selected.size;
+ const btn=$('[data-action="play"]');if(btn)btn.disabled=(!canUrgent&&(!canAct||g.conveyor?.directPending&&!g.response||!!g.conveyor?.resources?.ban||g.conveyor?.mustScavenge||!!g.priority&&r.players.filter(p=>!p.bot).length===1&&!g.priority.pending.includes(r.seat)))||r.audioWaiting||r.players[r.seat].autoplay||!selected.size;
  const hint=$('[data-action="hint"]');if(hint)hint.disabled=!!g.conveyor?.mustScavenge;
  const wildcardButton=$('[data-action="declare-wild"]');
  if(wildcardButton){
-   wildcardButton.hidden=!(selected.size>1||g.conveyor&&wildRanks().includes(18))||!g.hand.some(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild'));
+   const hasOther=g.hand.some(c=>selected.has(c.id)&&(c.rank!==14||g.conveyor&&c.id===conveyorDouble?.id));
+   wildcardButton.hidden=!(hasOther||selected.size===1&&g.conveyor&&wildRanks().includes(18))||!g.hand.some(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild')&&(!g.conveyor||c.id!==conveyorDouble?.id));
    const declared=wildcardPayload();
    for(const card of $$('.hand [data-card]')){
      const match=g.hand.find(c=>c.id===card.dataset.card&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild'));
@@ -407,6 +471,14 @@ function selectionUpdate(){
    }
  }
  const splitButton=$('[data-action="cv-double"]');
+ if(g.conveyor?.skill==='double'){
+   for(const card of $$('.hand [data-card]')){
+     delete card.dataset.splitDeclaration;
+     if(card.dataset.card===conveyorDouble?.id&&selected.has(conveyorDouble.id)){
+       card.dataset.splitDeclaration='→ '+conveyorDouble.ranks.map((rank,i)=>ranks[rank]+suits[conveyorDouble.suits[i]]).join(' ');
+     }
+   }
+ }
  if(splitButton)splitButton.hidden=!g.hand.some(c=>selected.has(c.id)&&[13,14,15,g.main].includes(c.rank));
  if($('.action-feedback'))updateActionFeedback(r,g,canAct,canUrgent);
 }
@@ -454,9 +526,15 @@ document.addEventListener('click',async e=>{
  case 'open-single':navigate('single');if(!state.user)showAuth();break;
  case 'choose-mode':requireUser(()=>showCreate(b.dataset.mode));break;
  case 'home':if(state.room){toast('请先离开当前房间再返回主菜单。');break;}closeModal();navigate('home');break;
+ case 'checkin':{
+   const result=await mutation('checkin');
+   if(result)toast('签到获得 '+result.checkin.reward+' 积分，已连续 '+result.checkin.streak+' 天。');
+   break;
+ }
  case 'settings':case 'settings-api':settingsTab=action==='settings-api'?'api':'account';if(state.room)showSettingsModal();else navigate('settings');break;
  case 'settings-tab':settingsTab=b.dataset.tab;if(state.room)showSettingsModal();else{renderedKey='';render();}break;
  case 'lobby':if(state.room)toast('当前仍在房间中。请离开房间后返回主菜单。');else {closeModal();navigate('home');}break;
+ case 'seat-profile':await openPlayerProfile(state.room,Number(b.dataset.playerSeat));break;
  case 'table-tools':showModal('table-tools',`<h2 class="modal-title">牌桌操作</h2><div class="table-tool-list">${showHandButton(state.room,state.room.game)}<button class="secondary" data-action="rules">玩法手册</button><button class="secondary" data-action="settings">设置</button></div>`);break;
  case 'autoplay':if(await mutation('autoplay',{enabled:!state.room.players[state.room.seat].autoplay})){selected.clear();wildcardMap={};renderedKey='';render();}break;
  case 'match':requireUser(async()=>{await mutation('match',{mode:b.dataset.mode});});break;
@@ -506,9 +584,26 @@ document.addEventListener('click',async e=>{
  }
  }catch(error){toast(error.message);}
 });
+function openRevealedHand(sheet){
+ if(!sheet)return;
+ if(!sheet.open)sheet.showModal();
+ const anchor=sheet.previousElementSibling.getBoundingClientRect();
+ const width=sheet.offsetWidth,height=sheet.offsetHeight;
+ const left=Math.min(Math.max(8,anchor.left),window.innerWidth-width-8);
+ const top=anchor.bottom+height+12<=window.innerHeight?anchor.bottom+4:Math.max(8,anchor.top-height-4);
+ sheet.style.left=left+'px';sheet.style.top=top+'px';
+}
+window.addEventListener('resize',()=>openRevealedHand($('.reveal-sheet[open]')));
+// Replay handles ordinary table clicks inside its own dialog.
+document.addEventListener('click',e=>{
+ const button=e.target.closest('[data-reveal-hand],[data-close-revealed]');
+ if(!button)return;
+ if(button.hasAttribute('data-close-revealed'))button.closest('dialog').close();
+ else openRevealedHand(document.getElementById(button.dataset.revealHand));
+},true);
 document.addEventListener('input',e=>{const key=e.target.dataset.volume;if(key){gameAudio.setVolume(key,e.target.value/100);$('#volume-'+key).textContent=e.target.value+'%';}});
 document.addEventListener('keydown',e=>{
- if(e.repeat||modal.open||$('#playtest-replay-dialog')?.open||e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
+ if(e.repeat||modal.open||$('#seat-profile')?.open||(e.key==='Enter'&&e.target.closest('button[data-player-seat]'))||$('.reveal-sheet[open]')||(e.key==='Enter'&&e.target.closest('[data-reveal-hand]'))||$('#playtest-replay-dialog')?.open||e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
  const action=e.key==='Enter'?(state.room?.game?.phase==='tribute'?'tribute-return':'play'):e.key==='Escape'?'deselect':null;
  if(!action)return;const button=$(`[data-action="${action}"]`);
  if(button&&!button.disabled){e.preventDefault();button.click();}
@@ -517,6 +612,7 @@ document.addEventListener('change',e=>{
  if(e.target.name==='botCount'){const field=$('[data-ai-type]',e.target.form);if(field)field.hidden=e.target.value==='0';}
 });
 document.addEventListener('submit',async e=>{
+ if(e.target.method==='dialog')return;
  e.preventDefault();const f=e.target;
  if(f.id==='join-form'){const code=$('#join-code').value;requireUser(async()=>{await mutation('join',{code,...(screen==='single'?{single:true}:{})});});return;}
  const error=$('.form-error',f);const submit=$('button[type=submit]',f);if(submit)submit.disabled=true;

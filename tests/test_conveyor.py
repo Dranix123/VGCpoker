@@ -79,7 +79,7 @@ class ConveyorRules(unittest.TestCase):
     def test_stars_requires_ordering_and_counts_each_active_identity(self):
         g=self.game('stars','twins','twins','anchor')
         c=self.table(g,[[4,5],[7,8,9],[10],[11,12],[13],[14]])
-        c.free_lead()
+        c.play_number=1;c.free_lead()
         self.assertEqual(len(c.pending[0]['cards']),6)
         with self.assertRaisesRegex(RuleError,'当前选择'):
             g.action(0,'play',[c.hands[0][0]['id']])
@@ -152,7 +152,7 @@ class ConveyorRules(unittest.TestCase):
 
     def test_shadow_suppresses_target_skills_until_skipped_action_ends(self):
         g=self.game('shadow','leap','balance','ascend');c=self.table(g,[[4,5],[7],[8],[9]])
-        c.resources[0]['covered']=1;c.free_lead()
+        c.play_number=1;c.resources[0]['covered']=1;c.free_lead()
         self.assertEqual(c.resources[1]['skillBan'],1);self.assertEqual(c.resources[3]['skillBan'],1)
         self.assertFalse(c.skill(1,'leap'));self.assertEqual(c.effective_rank(1,7),7)
         c.turn=1;g.action(1,'pass')
@@ -162,7 +162,7 @@ class ConveyorRules(unittest.TestCase):
 
     def test_shadow_stacks_each_disable_but_deduplicates_targets_per_trigger(self):
         g=self.game('shadow','balance','shadow','pursuit');c=self.table(g,[[4,5],[7],[8],[9]])
-        c.resources[0]['covered']=3;c.free_lead()
+        c.play_number=1;c.resources[0]['covered']=3;c.free_lead()
         self.assertEqual((c.resources[3]['skillBan'],c.resources[3]['ban']),(1,1))
         c.turn=2;c.resources[2]['covered']=3;c.free_lead()
         self.assertEqual((c.resources[3]['skillBan'],c.resources[3]['ban']),(2,2))
@@ -209,20 +209,18 @@ class ConveyorRules(unittest.TestCase):
 
     def test_judgment_marks_stack_and_consume_once_per_judgment(self):
         g=self.game('trade');c=self.table(g,[[18,18,18,8],[7],[8],[9]])
-        for effect in ('judge-boost','judge-boost','judge-color'):
+        for effect in ('judge-boost',)*3:
             g.action(0,'urgent',[c.hands[0][0]['id']],effect=effect)
-        self.assertEqual(c.judge(0,dict(rank=17,suit='J')),(35,None,'红色'))
-        self.assertEqual(c.judge(0,dict(rank=16,suit='J')),(25,None,'黑色'))
-        self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(8,'S','黑色'))
+        self.assertEqual(c.judge(0,dict(rank=17,suit='J')),(40,None,'红色'))
+        self.assertEqual(c.judge(0,dict(rank=16,suit='J')),(30,None,'黑色'))
+        self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(13,'S','黑色'))
         self.assertEqual(c.judge(0,dict(rank=8,suit='C')),(8,'C','黑色'))
 
     def test_delta_and_urgent_judgments_keep_distinct_color_and_suit(self):
         g=self.game('trade')
         c=self.table(g,[[4,9],[7],[8],[11]])
-        c.resources[0]['judgeColor']=1
         self.assertEqual(c.judge(0,dict(rank=8,suit='T')),(8,'T','紫色'))
         self.assertEqual(c.judge(0,dict(rank=18,suit='U')),(2,None,None))
-        self.assertEqual(c.resources[0]['judgeColor'],1)
         c.offer(0,'deal','献祭',maximum=1)
         c.pile[0]['rank'],c.pile[0]['suit']=17,'J'
         g.action(0,'choice',effect='judge')
@@ -234,7 +232,7 @@ class ConveyorRules(unittest.TestCase):
         c.resources[1]['marks']=1;c.resources[1]['markCards']=[c.hands[1].pop()]
         c.resources[2]['money']=2;c.resources[3]['money']=3
         c.zones[2]=[c.hands[2].pop()]
-        c.free_lead();self.assertEqual(c.pending[0]['kind'],'redemption')
+        c.play_number=1;c.free_lead();self.assertEqual(c.pending[0]['kind'],'redemption')
         self.assertEqual(c.pending[0]['maximum'],2)
         self.assertFalse(c.zones[2]);self.assertFalse(c.resources[1]['marks'])
         self.conservation(g)
@@ -245,7 +243,7 @@ class ConveyorRules(unittest.TestCase):
         g=self.game('encourage');c=self.table(g,[[4,5,6],[7],[8],[9]])
         c.enter_turn();c.gain(0,1);self.assertEqual(c.resources[0]['inspire'],0)
         c.gain(0,3);self.assertEqual(c.resources[0]['inspire'],3)
-        c.free_lead();self.assertEqual(c.pending[0]['kind'],'inspire')
+        c.play_number=1;c.free_lead();self.assertEqual(c.pending[0]['kind'],'inspire')
         g.action(0,'choice',[c.hands[0][0]['id']])
         self.assertEqual(c.resources[0]['inspire'],2)
         c.turn=1;c.enter_turn();c.turn=0;c.resources[0]['turns']+=1;c.enter_turn()
@@ -820,7 +818,7 @@ class ConveyorRules(unittest.TestCase):
 
     def test_duel_simultaneous_reveal_and_short_hands_keep_smallest(self):
         g=self.game('duel');c=self.table(g,[[13,4],[5,6],[7,8],[9,10]])
-        c.free_lead();g.action(0,'choice',value=True)
+        c.play_number=1;c.free_lead();g.action(0,'choice',value=True)
         for owner in range(4):g.action(owner,'choice',[c.hands[owner][0]['id']])
         self.assertTrue(any('死斗：' in s for s in c.log))
         while c.pending and c.phase!='over':
@@ -942,7 +940,7 @@ class ConveyorRules(unittest.TestCase):
 
     def test_finish_returns_suspended_reveal_cards(self):
         g=self.game('stars');c=self.table(g,[[4],[7],[8],[9]])
-        c.free_lead();before=len(c.pile)+len(c.pending[0]['cards'])
+        c.play_number=1;c.free_lead();before=len(c.pile)+len(c.pending[0]['cards'])
         c.hands[0]=[];c.finish(0)
         self.assertEqual(len(c.pile),before);self.assertEqual(c.pending,[])
 
@@ -953,6 +951,116 @@ class ConveyorRules(unittest.TestCase):
         g.action(2,'cross',[card['id'] for card in c.hands[2][:2]])
         self.assertEqual(len(c.hands[2]),1)
         self.assertEqual(c.resources[2]['shield'],2)
+        self.conservation(g)
+
+    def test_opening_lead_does_not_trigger_shadow_or_other_lead_skills(self):
+        for skill in ('shadow', 'stars', 'duel'):
+            with self.subTest(skill=skill):
+                c = self.table(self.game(skill,'money','money','money'), [[4,5],[7],[8],[9]])
+                c.settle()
+                self.assertEqual(c.pending, [])
+                self.assertFalse(any(r['ban'] or r['skillBan'] for r in c.resources))
+                self.assertFalse(any('自由牌权' in line for line in c.log))
+
+    def test_off_turn_press_and_hook_draw_for_every_other_active_actor(self):
+        for kind, starter, actor_cards, actor in (
+            ('press', [6,6], [15,9], 2),
+            ('hook', [6], [6,9], 1),
+            ('dead', [6,6], [6,6,6,9], 2),
+        ):
+            with self.subTest(kind=kind):
+                hands = [starter+[8], [10,11], [12,13], [6,6,14]]
+                hands[actor] = actor_cards
+                g = self.game(*['anchor']*4)
+                c = self.table(g,hands)
+                g.action(0,'play',[card['id'] for card in c.hands[0][:len(starter)]])
+                if kind == 'press':
+                    g.action(3,'dot',[c.hands[3][0]['id']])
+                    with self.assertRaises(RuleError):
+                        c.validate_play(2,[dict(id=str(i),rank=9,suit='H') for i in range(4)],'play')
+                if kind == 'hook':
+                    g.action(3,'cross',[card['id'] for card in c.hands[3][:2]])
+                before = [r['turns'] for r in c.resources]
+                g.action(actor,kind,[card['id'] for card in c.hands[actor][:-1]])
+                self.assertEqual(c.turn,actor)
+                self.assertIsNone(c.last)
+                self.assertEqual(c.seat_plays[actor]['special'],kind)
+                self.assertEqual([r['turns'] for r in c.resources],[n+1 for n in before])
+                self.conservation(g)
+
+    def test_finishing_with_press_keeps_the_play_and_deals_to_survivors(self):
+        g = self.game(*['anchor']*4)
+        c = self.table(g,[[6,6,8],[10],[15],[6,13]])
+        g.action(0,'play',[card['id'] for card in c.hands[0][:2]])
+        g.action(3,'dot',[c.hands[3][0]['id']])
+        before = len(c.pile)
+        g.action(2,'press',[c.hands[2][0]['id']])
+        self.assertEqual(c.finished,[2])
+        self.assertEqual(c.seat_plays[2]['kind'],'压')
+        self.assertEqual(len(c.pile),before-3)
+        self.assertEqual(c.turn,1)
+        self.conservation(g)
+
+    def test_hook_keeps_recross_window_and_only_draws_full_ring_on_closure(self):
+        g = self.game(*['anchor']*4)
+        c = self.table(g,[[6,6,6,8],[11],[6,9],[6,6,12]])
+        c.interactive = True
+        g.action(0,'play',[c.hands[0][0]['id']])
+        g.action(3,'auto',[card['id'] for card in c.hands[3][:2]])
+        g.action(2,'auto',[c.hands[2][0]['id']])
+        self.assertIn(0,c.priority['bots'])
+        self.assertEqual(c.seat_plays[2]['kind'],'勾')
+        g.action(0,'priority-decline')
+        self.assertIsNone(c.last)
+        self.assertEqual([r['turns'] for r in c.resources],[4,3,3,4])
+        self.conservation(g)
+
+    def test_original_spade_a_only_and_all_aces_are_natural(self):
+        g = self.game('leap','wild','anchor','anchor')
+        c = self.table(g,[[(12,'S'),(14,'S'),7],[(14,'H'),(14,'C'),9],[8],[9]])
+        a, b, seven = [card['id'] for card in c.hands[0]]
+        with self.assertRaises(RuleError):
+            g.preview_play(0,[a,seven],{a:9})
+        self.assertEqual(g.preview_play(0,[b,seven],{b:9}),'对子')
+        c.turn = 1
+        ids = [card['id'] for card in c.hands[1][:2]]
+        self.assertEqual(g.preview_play(1,ids),'对子')
+        with self.assertRaises(RuleError):
+            g.preview_play(1,ids,{card_id:9 for card_id in ids})
+
+    def test_redirect_replaces_urgent_only_in_initial_deal(self):
+        g=self.game('redirect','anchor','anchor','anchor')
+        c=self.table(g,[[7],[8],[9],[10]])
+        c.pile[0].update(rank=18,suit='U')
+        c.pile[2].update(rank=18,suit='U')
+        self.assertNotEqual(c.gain(0,1,initial=True)[0]['rank'],18)
+        self.assertEqual(c.discard[-1]['rank'],18)
+        self.assertEqual(c.gain(0,1)[0]['rank'],18)
+        self.conservation(g)
+
+    def test_ascend_used_twos_never_return_in_rotation(self):
+        g=self.game('ascend','anchor','anchor','anchor')
+        c=self.table(g,[[15,6],[8],[9],[18,10]])
+        used=c.hands[0][0]
+        g.action(0,'skill',[used['id']])
+        g.action(3,'urgent',[c.hands[3][0]['id']],effect='rotate')
+        self.assertIn(used,c.destroyed)
+        self.assertNotIn(used,c.pile)
+        self.conservation(g)
+
+    def test_duel_discards_three_at_once_including_random_tied_cards(self):
+        g=self.game('duel','anchor','anchor','anchor')
+        c=self.table(g,[[17,4],[5,3,15,15,15],[7,8],[9,10]])
+        c.play_number=1
+        c.free_lead()
+        g.action(0,'choice',value=True)
+        tied=c.hands[1][2:]
+        for owner in range(4):
+            g.action(owner,'choice',[c.hands[owner][0]['id']])
+        self.assertEqual(len(c.hands[1]),1)
+        self.assertIn(c.hands[1][0],tied)
+        self.assertEqual(len([card for card in tied if card in c.discard]),2)
+        self.assertFalse(c.pending)
         self.conservation(g)
 
     def test_dead_dot_draws_before_automatic_passes_and_then_grants_free_lead(self):
@@ -1022,7 +1130,7 @@ class ConveyorRules(unittest.TestCase):
 
     def test_invalid_choice_rolls_back_everything(self):
         g=self.game('stars');c=self.table(g,[[4],[7],[8],[9]])
-        c.free_lead();before=copy.deepcopy(c.__dict__)
+        c.play_number=1;c.free_lead();before=copy.deepcopy(c.__dict__)
         with self.assertRaises(RuleError):g.action(0,'choice',['invalid'])
         self.assertEqual(g.core.pile,before['pile']);self.assertEqual(g.core.pending,before['pending'])
 
@@ -1125,7 +1233,7 @@ class ConveyorRules(unittest.TestCase):
         self.assertIsNone(c.priority)
         self.assertTrue(any(move['action']=='dot' for move in g.candidates(1)))
         g.action(1,'auto',[drawn['id']])
-        self.assertEqual(c.last['special'],'dot')
+        self.assertEqual(c.seat_plays[1]['kind'],'死点')
         self.assertEqual(c.turn,1)
 
     def test_empty_pile_early_empty_turn_advances_without_stalling(self):

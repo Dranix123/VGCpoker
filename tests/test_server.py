@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+from datetime import date, timedelta
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
@@ -46,6 +47,45 @@ class ServerIntegration(unittest.TestCase):
 
     def setUp(self):
         server.ROOMS.clear();server.WATCHING.clear()
+
+    def test_checkin_once_daily_doubles_from_day_seven_and_resets_after_gap(self):
+        local_day = date(2026,11,26)
+        client = self.clients[0]
+        uid = self.users[0]['id']
+        initial = self.request(client,'state')[1]['user']['points']
+        total = 0
+        try:
+            for offset, expected_streak in enumerate([1,2,3,4,5,6,7,8,0,1]):
+                with patch.object(server,'checkin_day',return_value=local_day+timedelta(days=offset)), patch.object(server.secrets,'randbelow',return_value=20):
+                    if expected_streak == 0:
+                        self.assertEqual(self.request(client,'state')[1]['checkin']['streak'],8)
+                        continue
+                    points = 60 if expected_streak >= 7 else 30
+                    total += points
+                    expected = dict(checked=True,streak=expected_streak,reward=points)
+                    for _ in range(2):
+                        self.assertEqual(self.request(client,'checkin',{}) ,(200,{'checkin':expected}))
+                    status = self.request(client,'state')[1]
+                    self.assertEqual(status['checkin'],expected)
+                    self.assertEqual(status['user']['points'],initial+total)
+        finally:
+            with server.db() as connection:
+                connection.execute('DELETE FROM daily_checkins WHERE user_id=?',(uid,))
+                connection.execute('UPDATE users SET points=? WHERE id=?',(initial,uid))
+
+    def test_player_profile_is_visible_to_room_members_and_spectators(self):
+        host, peer, viewer, outsider = self.clients
+        _, created = self.request(host, 'create', {'mode': 'basic', 'options': {'allowSpectators': True}})
+        code = {'code': created['room']['code']}
+        self.request(peer, 'join', code)
+        self.request(viewer, 'watch', code)
+        path = 'leaderboard?roomPlayer=' + str(self.users[1]['id'])
+        for client in (host, peer, viewer):
+            status, data = self.request(client, path)
+            self.assertEqual(status, 200)
+            self.assertEqual(data['players'], [self.request(peer, 'state')[1]['user']])
+        self.assertEqual(self.request(outsider, path)[0], 404)
+        self.assertEqual(self.request(host, 'leaderboard?roomPlayer=' + str(self.users[3]['id']))[0], 404)
 
     def test_usage_tracks_start_completion_and_abandonment(self):
         client=self.clients[0]
@@ -376,6 +416,25 @@ class ServerIntegration(unittest.TestCase):
             server.perform_game_action(room,0,{'action':'pass','actor':0})
         room['priorityClock']['expires']=0;server.update_priority_clock(room)
         self.assertFalse(g.core.priority)
+
+    def test_buy_narrates_public_card_without_a_private_draw_voice(self):
+        from conveyor import ConveyorGame
+        room=server.ROOMS[self.new_room('basic',4)]
+        for player, skill in zip(room['players'], ('money','anchor','anchor','anchor')):
+            player['skill']=skill
+        g=ConveyorGame('conveyor',room['players'])
+        room.update(mode='conveyor',game=g)
+        c=g.core
+        c.phase='play'; c.pending=[]; c.turn=0
+        card=dict(id='public-buy',rank=9,suit='D')
+        c.discard.append(card)
+        c.resources[0]['money']=4
+        c.offer(0,'buy','聚宝',cards=[card])
+        server.perform_game_action(room,0,{'action':'choice','ids':[card['id']]})
+        for user in self.users:
+            items=server.room_view(room,user['id'])['audioEvent']['items']
+            self.assertTrue(any('买入方片9' in item.get('text','') for item in items))
+            self.assertFalse(any(item.get('voice','').startswith('cv-deal') for item in items))
 
     def test_draw_voice_is_visible_only_to_recipient(self):
         code=self.new_room('basic',4);room=server.ROOMS[code]

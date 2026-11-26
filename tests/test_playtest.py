@@ -190,6 +190,7 @@ class Playtest(unittest.TestCase):
             body = json.loads(request.data)
             self.assertEqual(body['thinking']['type'], 'disabled')
             self.assertEqual(body['response_format']['type'], 'json_object')
+            self.assertIn('json', body['messages'][0]['content'].lower())
             DeepSeek('test-secret', 'deepseek-v4-pro', thinking=True).choose({'moves': ['a','b']}, 2)
             thinking=json.loads(opener.call_args.args[0].data)
             self.assertEqual(thinking['model'],'deepseek-v4-pro')
@@ -232,6 +233,21 @@ class Playtest(unittest.TestCase):
         for context in model.contexts:
             self.assertEqual(sum(c['count'] for c in context['players'] if c['actor'] == context['actor']), len(context['hand']))
             self.assertTrue(all('hand' not in p for p in context['players']))
+
+    def test_invalid_api_request_does_not_repeat_for_the_rest_of_the_run(self):
+        class InvalidRequest:
+            model = 'deepseek-flash'
+
+            def choose(self, context, count):
+                raise HTTPError('http://unused', 400, 'Bad Request', {}, None)
+
+        config = run_config({'mode': 'landlord', 'maxModelCalls': 5}, True)
+        with TemporaryDirectory() as temp:
+            summary = {}
+            play_batch('test', Path(temp), config, InvalidRequest(), summary.update)
+        self.assertEqual(summary['status'], 'completed')
+        self.assertEqual((summary['calls'], summary['fallbacks']), (1, 1))
+        self.assertEqual(summary['modelDisabledReason'], 'http_400')
 
     def test_cancellation_stops_after_current_model_request(self):
         cancelled = threading.Event()
