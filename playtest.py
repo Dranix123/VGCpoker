@@ -232,7 +232,7 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                                 summary['fallbacks'] += 1
                                 source = 'fallback'
                             else:
-                                move, source = decision, 'deepseek'
+                                move, source = decision, 'deepseek' if api['attempts'] else 'forced'
                             api['milliseconds'] = sum(a['milliseconds'] for a in api['attempts'])
                     try:
                         apply_move(game, core, seat, actor, move)

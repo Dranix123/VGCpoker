@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from playtest import DeepSeek, PlaytestService, play_batch, run_config, serve
 from playtest_replay import load_replay, read, record, replay_path, restore_legacy
-from game_ai import alternatives, decision_packet, model_context, model_payload, request_decision, select_model_move
+from game_ai import alternatives, decision_packet, model_context, model_payload, request_decision, select_model_move, model_shortlist
 from engine import RuleError
 
 
@@ -116,7 +116,7 @@ class Playtest(unittest.TestCase):
         from test_engine import cards, table
         game = table('landlord')
         game.turn = 0
-        game.hands[0] = cards([4,5,6,7,8,9], prefix='hold')
+        game.hands[0] = cards([4,5,6,7,8,12], prefix='hold')
         options = alternatives(game, game, 0, game.bot_action(0))
         packets = []
         def choose(packet, count):
@@ -133,6 +133,26 @@ class Playtest(unittest.TestCase):
         self.assertEqual(report['usage'],{'prompt_tokens':17,'prompt_cache_hit_tokens':3})
         self.assertEqual(memory['plan'],'保留牌权')
         self.assertEqual(len(game.hands[0]),6)
+
+    def test_api_shortlist_limits_repetition_and_can_finish_locally(self):
+        from test_engine import cards, table
+        game = table('landlord')
+        game.turn = 0
+        game.hands[0] = cards([4,4,5,5,6,6,7,7,8,9,10,11,12,13,14,15],prefix='own')
+        fallback = game.bot_action(0)
+        moves = alternatives(game, game, 0, fallback)
+        short = model_shortlist(game, 0, moves)
+        self.assertGreater(len(moves),14)
+        self.assertLessEqual(len(short),14)
+        self.assertEqual(short[0],fallback)
+        self.assertEqual({m['action'] for m in short},{m['action'] for m in moves})
+        game.hands[0] = cards([4,5,6,7,8],prefix='own')
+        moves = alternatives(game, game, 0, game.bot_action(0))
+        with patch('urllib.request.urlopen', side_effect=AssertionError('无需请求模型')):
+            move, api, memory = request_decision(game, game, 0, 0, moves, None, DeepSeek('test','test').choose)
+        self.assertEqual(move['label'],'顺子')
+        self.assertEqual(api['attempts'],[])
+        self.assertIsNone(memory)
 
     def test_opening_control_and_immediate_exit(self):
         from test_engine import cards, table
