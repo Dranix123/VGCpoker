@@ -90,6 +90,33 @@ class Playtest(unittest.TestCase):
         self.assertEqual(select_model_move(game, 0, 0, moves, repair), run)
         self.assertEqual(len(game.hands[0]), 6)
 
+    def test_one_play_remainders_use_physical_wildcards_and_conveyor_skills(self):
+        from test_engine import cards, table
+        from test_conveyor import ConveyorRules
+        for mode in ('basic','standard','trio'):
+            game = table(mode)
+            game.hands[0] = cards([12,6,7,9,10]) + cards([14],'S','ace')
+            single = dict(action='play',ids=['c0'],label='单张')
+            after = model_context(game,game,0,[single])['moves'][0]['afterPlay']
+            self.assertEqual(after.get('onePlayShape'), None if mode=='basic' else '顺子')
+            self.assertEqual(game.lead_shape(0, cards([14,14],'S')), '对子')
+        fixture = ConveyorRules()
+        for skill, ranks, shape in (
+                ('wild',[12,6,7,9,10,(14,'D')],'顺子'),
+                ('leap',[12,4,4,4,14,14],'4A4'),
+                ('formation',[12,4,4,14],'4A4'),
+                ('ascend',[12,7,8,10,11,(13,'S')],None)):
+            with self.subTest(skill=skill):
+                game = fixture.game(skill,'anchor','anchor','anchor')
+                core = fixture.table(game,[ranks,[8,9],[7,9],[9]])
+                core.turn = 3
+                first = core.hands[0][0]['id']
+                move = dict(action='play',ids=[first],label='单张')
+                after = model_context(game,core,0,[move])['moves'][0]['afterPlay']
+                self.assertEqual(after.get('onePlayShape'),shape)
+                self.assertEqual(core.turn,3)
+                self.assertEqual(len(core.hands[0]),len(ranks))
+
     def test_actor_memory_updates_hand_and_no_events_lost_across_compaction(self):
         from test_engine import table, cards
         game = table('landlord')
@@ -133,6 +160,104 @@ class Playtest(unittest.TestCase):
         self.assertEqual(report['usage'],{'prompt_tokens':17,'prompt_cache_hit_tokens':3})
         self.assertEqual(memory['plan'],'保留牌权')
         self.assertEqual(len(game.hands[0]),6)
+
+    def test_deepseek_reuses_exact_message_prefix_then_compacts(self):
+        from test_engine import cards, table
+
+        game = table('landlord')
+        game.turn = 0
+        game.hands[0] = cards([4,5,6,10,12,14],prefix='private')
+        sent = []
+        def choose(packet,count):
+            sent.append(model_payload('deepseek-flash',packet,False)['messages'])
+            return 0, {'prompt_cache_hit_tokens':31,'prompt_cache_miss_tokens':19}
+        memory = None
+        options = alternatives(game,game,0,game.bot_action(0))
+        for i in range(5):
+            _,report,memory = request_decision(
+                game,game,0,0,options,memory,choose,reuse_history=True)
+            self.assertEqual(report['usage']['prompt_cache_hit_tokens'],31)
+            self.assertEqual(len(sent[-1]),(2,4,6,8,2)[i])
+            current = json.loads(sent[i][-1]['content'])
+            if i in (1,2,3):
+                self.assertEqual(sent[i][:len(sent[i-1])],sent[i-1])
+                self.assertNotIn('base',current)
+                self.assertEqual(current['moves'], '同上')
+            else:
+                self.assertIn('base',current)
+                self.assertIsInstance(current['moves'],list)
+                self.assertFalse(current['updates'])
+        changed, _ = decision_packet(game,game,0,list(reversed(options)),memory,(),True)
+        self.assertIsInstance(changed['moves'],list)
+        other,_ = decision_packet(game,game,1,[],memory,(),True)
+        self.assertNotIn('_history',other)
+        self.assertNotIn('private',json.dumps(other))
+
+    def test_landlord_cash_unanswered_lead_before_last_single(self):
+        from test_engine import table, cards
+        for ranks, label in (([3,16,17],'王炸'), ([3,17],'单张'), ([3,7,7],'对子')):
+            with self.subTest(ranks=ranks):
+                g = table('landlord')
+                g.landlord = g.turn = 0
+                g.hands = [cards(ranks,prefix='own'), cards([4],prefix='b'), cards([5],prefix='c')]
+                bot = g.bot_action(0)
+                self.assertEqual(bot['label'],label)
+                self.assertNotIn('own0',bot['ids'])
+                moves = alternatives(g,g,0,bot)
+                move, report, _ = request_decision(g,g,0,0,moves,None,
+                    lambda *_: self.fail('可证明走完时无需请求模型'))
+                self.assertEqual(move['ids'],bot['ids'])
+                self.assertFalse(report['attempts'])
+                g.action(0,**move)
+                for s in (2,1):
+                    g.action(s,**g.bot_action(s))
+                g.action(0,**g.bot_action(0))
+                self.assertEqual(g.winner,[0])
+
+    def test_landlord_unseen_rocket_prevents_a_certain_exit(self):
+        from test_engine import table, cards
+        g = table('landlord')
+        g.landlord = g.turn = 0
+        g.hands = [cards([4]*4+[3],prefix='own'),cards([5,6],prefix='b'),cards([7,8],prefix='c')]
+        bomb = next(m for m in g.candidates(0) if m['label']=='炸弹')
+        self.assertIsNone(g.landlord_two_play_exit(0,[bomb]))
+        g.ai_older_rounds.append(json.dumps([{'cards':cards([16],prefix='played')}]))
+        self.assertEqual(g.landlord_two_play_exit(0,[bomb]),bomb)
+
+    def test_conveyor_finishing_skill_respects_refill_and_zone(self):
+        from test_conveyor import ConveyorRules
+        from game_ai import model_immediate_finish
+        fixture = ConveyorRules()
+        game = fixture.game('ascend','anchor','anchor','anchor')
+        core = fixture.table(game,[[15],[7,8],[9,10],[11,12]])
+        move = dict(action='skill',ids=[core.hands[0][0]['id']])
+        core.resources[0]['turnStart'] = 1
+        self.assertIsNone(model_immediate_finish(core,0,[move]))
+        core.resources[0]['turnStart'] = 2
+        core.zones[0] = [core.pile.pop()]
+        self.assertIsNone(model_immediate_finish(core,0,[move]))
+        core.zones[0].clear()
+        self.assertEqual(model_immediate_finish(core,0,[move]),move)
+        game.action(0,actor=0,**move)
+        self.assertIn(0,core.finished)
+
+    def test_model_compares_the_cost_of_dismantling_a_formation(self):
+        from test_engine import cards, table
+
+        game = table('basic')
+        game.interactive = True
+        game.players[1]['bot'] = True
+        game.turn = 2
+        game.hands[1] = cards([4,4,7,9,14],prefix='bot')
+        game.hands[2] = cards([4,8,9,11],prefix='leader')
+        game.action(2,'play',['leader0'])
+        fallback = game.bot_action(1)
+        moves = alternatives(game,game,1,fallback)
+        self.assertEqual(moves[0]['action'],'priority-decline')
+        packet,_ = decision_packet(game,game,1,moves,None,())
+        cross = next(i for i,m in enumerate(moves) if m.get('special')=='cross')
+        self.assertIn('拆顶级组合',packet['moves'][cross][-1])
+        self.assertEqual(select_model_move(game,1,1,moves,cross)['special'],'cross')
 
     def test_api_shortlist_limits_repetition_and_can_finish_locally(self):
         from test_engine import cards, table

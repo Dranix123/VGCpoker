@@ -309,16 +309,17 @@ def model_move(config, g, seat, fallback, memory=None, active=lambda: True, show
     if len(moves) == 1:
         return fallback, {'attempts': []}, None
 
+    deepseek = urllib.parse.urlsplit(config['endpoint']).hostname == 'api.deepseek.com'
+
     def choose(packet, count):
         endpoint = validate_endpoint(config['endpoint'])
         if not endpoint.endswith('/chat/completions'): endpoint += '/chat/completions'
-        deepseek = urllib.parse.urlsplit(endpoint).hostname == 'api.deepseek.com'
         payload = model_payload(config['model'], packet, thinking=False if deepseek else None)
         req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config['key']})
         with urllib.request.build_opener(NoRedirect).open(req, timeout=12) as response:
             return read_model_reply(response, count)
 
-    move, api, next_memory = request_decision(g, core, seat, actor, moves, memory, choose, active=active, shown=shown)
+    move, api, next_memory = request_decision(g, core, seat, actor, moves, memory, choose, active=active, shown=shown, reuse_history=deepseek)
     if move and g.mode == 'conveyor':
         move = {**move, 'actor':actor}
     return move or fallback, api, next_memory
@@ -343,7 +344,7 @@ def tick_bot(code, seat, version, snapshot, config, match_id=None, fallback=None
         move, api, memory = model_move(config, snapshot, seat, fallback, memories.get(actor), active, shown)
         with LOCK:
             for attempt in api['attempts']:
-                STATS.ai(config.get('model', 'unknown'), 'error' in attempt, attempt['milliseconds'] / 1000)
+                STATS.ai(config.get('model', 'unknown'), 'error' in attempt, attempt['milliseconds'] / 1000, attempt.get('usage'))
             if not active(): return
             try:
                 perform_game_action(room, seat, move)

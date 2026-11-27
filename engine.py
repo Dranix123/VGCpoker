@@ -853,6 +853,92 @@ class Game:
                 if given: output.append({'action': 'urgent', 'ids': [wild[0]['id'], given['id']], 'target': targets[0], 'wildcard': {wild[0]['id']: 18}, 'label': '黑桃A代急牌', 'power': 1, 'value': 0, 'n': 2})
         return sorted(output, key=lambda x: (x['power'], -x['n'], x['value']))
 
+    def play_damage(self, hand, move):
+        """Value formations lost by spending these cards in a different shape."""
+        used = set(move.get('ids', ()))
+        left = [c for c in hand if c['id'] not in used]
+        if not left or not used:
+            return {}
+        old = Counter(c.get('effective', c['rank']) for c in hand)
+        new = Counter(c.get('effective', c['rank']) for c in left)
+        damage = {}
+        label = move.get('label')
+        if self.mode != 'landlord' and self.pattern and label != '4A4':
+            body, wing = self.pattern
+            before = Counter(c['rank'] for c in hand)
+            after = Counter(c['rank'] for c in left)
+            minimum = 1 if self.mode == 'basic' else 2
+            size = min(before[wing], before[body] - 1)
+            if size >= minimum and min(after[wing], after[body] - 1) < size:
+                damage['拆顶级组合'] = 13
+        bomb_size = 3 if self.mode == 'basic' else 4
+        if label not in ('炸弹', '4A4') and any(
+                count >= bomb_size and new[rank] < count for rank, count in old.items() if 3 <= printed_rank(rank) <= 15):
+            damage['拆同点炸弹'] = 10
+        has_rocket = (old[16] and old[17]) if self.mode == 'landlord' else old[16] + old[17] >= 2
+        rocket_survives = (new[16] and new[17]) if self.mode == 'landlord' else new[16] + new[17] >= 2
+        if has_rocket and not rocket_survives and label != '王炸':
+            damage['拆王炸'] = 10
+        if label not in ('顺子', '连对') and '飞机' not in (label or ''):
+            old_ranks = Counter(map(printed_rank, old.elements()))
+            new_ranks = Counter(map(printed_rank, new.elements()))
+            for width, amount, name in ((2 if self.mode == 'basic' else 3, 2, '拆连对'),
+                                        (3 if self.mode == 'basic' else 5, 1, '拆顺子')):
+                if any(all(old_ranks[r] >= amount for r in run) and
+                       any(new_ranks[r] < amount for r in run)
+                       for run in (range(start, start + width) for start in range(3, 16 - width))):
+                    damage[name] = 4
+        return damage
+
+    def allied_seats(self, seat, other):
+        owners = getattr(self, 'owners', None)
+        if owners is not None:
+            return owners[seat] == owners[other]
+        if self.mode == 'landlord':
+            return seat != self.landlord and other != self.landlord
+        return self.mode in ('basic', 'standard') and other % 2 == seat % 2
+
+    def can_soon_finish(self, seat):
+        if seat in self.finished or not 0 < len(self.hands[seat]) <= 2:
+            return False
+        resources = getattr(self, 'resources', None)
+        return resources is None or (resources[seat]['turns'] >= 2 and not resources[seat]['ban'] and not self.zones[seat])
+
+    def lead_shape(self, seat, cards):
+        """A legal shape for the remaining physical cards if we regain the lead."""
+        if not cards or any(c['rank'] == 18 for c in cards):
+            return None
+        combo = classify([c['rank'] for c in cards], self.mode, self.main, pattern=self.pattern)
+        if combo:
+            return combo['kind']
+        if self.mode in ('standard', 'trio') and any(c['rank'] == 14 and c['suit'] == 'S' for c in cards):
+            combos = interpretations(cards, self.mode, self.main, pattern=self.pattern)
+            if combos:
+                return combos[0]['kind']
+        return None
+
+    def priorities_worth_taking(self, seat, moves):
+        hand = self.visible_hand(seat)
+        conveyor = hasattr(self, 'owners')
+        danger = any(other != seat and not self.allied_seats(seat, other) and self.can_soon_finish(other)
+                     for other in range(len(self.players)))
+        teammate_leads = self.last_seat is not None and self.allied_seats(seat, self.last_seat)
+        team_can_finish = teammate_leads and self.can_soon_finish(self.last_seat)
+        def gain(move):
+            used = set(move['ids'])
+            rest = [c for c in hand if c['id'] not in used]
+            zone_empty = not conveyor or not self.zones[seat]
+            if not rest and zone_empty and (not conveyor or self.resources[seat]['turns'] >= 2):
+                return 100
+            exit_route = 0 < len(rest) <= 12 and zone_empty and self.lead_shape(seat, rest)
+            gains_lead = move['action'] in ('hook', 'dead', 'dead4') or move.get('label') == '死点'
+            # Compare contesting with leaving the lead as it stands.
+            urgency = (13 if danger else 0) - (9 if team_can_finish else 3 if teammate_leads else 0)
+            penalty = sum(self.play_damage(hand, move).values())
+            return len(used) * 2 + (3 if gains_lead else 0) + urgency + (12 if exit_route else 0) - penalty
+        evaluated = [(gain(move), move) for move in moves]
+        return [move for score, move in sorted(evaluated, key=lambda item: item[0], reverse=True) if score > 0]
+
     def opening_reserves(self, seat, moves):
         """Ordinary opening leads that retain a ready 4A4 for regaining control."""
         if self.play_number or self.last or self.mode == 'landlord' or self.phase != 'play' or seat != self.turn:
@@ -870,8 +956,8 @@ class Game:
                 return []
         if resources is None or resources[seat]['turns'] >= 1:
             for used in controls:
-                left = [c.get('effective', c['rank']) for c in hand if c['id'] not in used]
-                if not left or classifications(left, self.mode, self.main, self.pattern):
+                left = [c for c in hand if c['id'] not in used]
+                if not left or self.lead_shape(seat, left):
                     return []
         return [i for i, m in enumerate(moves) if m['action'] in ('play', 'auto') and not m.get('power')
                 and any(used.isdisjoint(m['ids']) for used in controls)]
@@ -881,6 +967,45 @@ class Game:
         urgent = sum(c['rank'] == 18 for c in remaining)
         return urgent <= 1 or len(remaining) - urgent >= urgent - 1
 
+    def landlord_two_play_exit(self, seat, moves, allow_contested=False):
+        """Prefer a provable two-play finish using only our hand and public information."""
+        if self.mode != 'landlord' or self.phase != 'play' or seat != self.turn:
+            return None
+        hand = self.hands[seat]
+        exits = []
+        for move in moves:
+            if move['action'] != 'play' or not all(k in move for k in ('label', 'n', 'value', 'power')):
+                continue
+            used = set(move['ids'])
+            left = [c['rank'] for c in hand if c['id'] not in used]
+            if used and classify(left, 'landlord'):
+                exits.append(move)
+        if not exits:
+            return None
+        unseen = Counter({**dict.fromkeys(RANKS, 4), 16: 1, 17: 1})
+        unseen.subtract(c['rank'] for c in hand)
+        for trick in itertools.chain(map(json.loads, self.ai_older_rounds), self.ai_recent_rounds, [self.ai_current_round]):
+            for event in trick:
+                if isinstance(event, dict):
+                    unseen.subtract(c['rank'] for c in event['cards'])
+        largest = max((len(h) for s, h in enumerate(self.hands) if s != seat), default=0)
+        rocket = largest >= 2 and unseen[16] > 0 and unseen[17] > 0
+        bombs = [rank for rank in RANKS if largest >= 4 and unseen[rank] >= 4]
+        for move in exits:
+            kind, value = move['label'], move['value']
+            if kind == '王炸':
+                return move
+            if rocket or any(kind != '炸弹' or rank > value for rank in bombs):
+                continue
+            if kind == '炸弹' or move['n'] > largest:
+                return move
+            multiplicity = {'单张': 1, '对子': 2, '三张': 3, '三带一': 3, '三带一对': 3}.get(kind)
+            if multiplicity and not any(rank > value and n >= multiplicity for rank, n in unseen.items()):
+                return move
+        if allow_contested:
+            return min(exits, key=lambda m: (m['power'], -m['n'], m['value']))
+        return None
+
     def bot_action(self, seat):
         if self.priority:
             if self.priority_paused(): return None
@@ -888,8 +1013,9 @@ class Game:
             controlled = seat in self.priority['bots'] and not pending or seat in pending and self.players[seat].get('autoplay') and not any(not self.players[s].get('autoplay') for s in pending)
             if controlled:
                 moves = [m for m in self.priority_moves(seat) if self.keeps_urgent_playable(seat, m)]
+                moves = self.priorities_worth_taking(seat, moves)
                 if not moves: return {'action': 'priority-decline'}
-                move = min(moves, key=lambda m: (len(self.hands[seat]) != m['n'], m['power'], -m['n'], m['value']))
+                move = moves[0]
                 return {'action': 'priority-play', 'special': move['action'], 'ids': move['ids'], **({'wildcard': move['wildcard']} if 'wildcard' in move else {})}
             if self.solo(): return None
         if self.phase == 'tribute':
@@ -928,7 +1054,7 @@ class Game:
             moves = [m for m in moves if m['action'] not in PRIORITY_ACTIONS]
         hand = self.hands[seat]
         def allied(other):
-            return other != seat and ((self.mode == 'landlord' and seat != self.landlord and other != self.landlord) or self.mode in ('standard', 'basic') and other % 2 == seat % 2)
+            return other != seat and self.allied_seats(seat, other)
         opponents = [s for s in range(len(self.players)) if s != seat and s not in self.finished and not allied(s)]
         danger = min((len(self.hands[s]) for s in opponents), default=99)
         responding = self.last is not None and self.last_seat != seat
@@ -943,18 +1069,13 @@ class Game:
         if not moves: return {'action': 'pass'}
         for move in moves:
             if len(move['ids']) == len(hand): return move
-        opening = self.opening_reserves(seat, moves)
-        if opening:
-            moves = [moves[i] for i in opening]
-        if self.mode == 'landlord' and not responding:
-            # If the whole hand partitions into two legal plays, preserve that exit.
-            exits = []
-            for move in moves:
-                used = set(move['ids'])
-                remaining = [c for c in hand if c['id'] not in used]
-                if interpretations(remaining, self.mode, self.main, pattern=self.pattern): exits.append(move)
-            if exits: return min(exits, key=lambda m: (m['power'], -m['n'], m['value']))
+        if self.mode == 'landlord':
+            exit_move = self.landlord_two_play_exit(seat, moves, allow_contested=not responding)
+            if exit_move:
+                return exit_move
+        reserve_openers = {tuple(moves[i]['ids']) for i in self.opening_reserves(seat, moves)}
         safe_teammate = responding and allied(self.last_seat) and not self.last.get('direct') and not (danger <= self.last['n'] <= 2 and self.last['value'] < 15)
+        visible = self.visible_hand(seat)
         minimum_bomb = 3 if self.mode == 'basic' else 4
         counts = Counter(c['rank'] for c in hand)
         costs = {}
@@ -966,10 +1087,11 @@ class Game:
             # future plays rather than simply maximizing cards shed this turn.
             for order in ((3, 2, 1), (1, 2, 3)):
                 pool = Counter(dict(key)); turns = pool.pop(18, 0)
-                if self.mode != 'landlord':
-                    a = pool[14]; four = pool[4]
-                    if a >= (1 if self.mode == 'basic' else 2) and four > a and four >= (2 if self.mode == 'basic' else 3):
-                        pool[14] = pool[4] = 0; turns += 1
+                if self.mode != 'landlord' and self.pattern:
+                    body, wing = self.pattern
+                    count = min(pool[wing], pool[body] - 1)
+                    if count >= (1 if self.mode == 'basic' else 2):
+                        pool[wing] -= count; pool[body] -= count + 1; turns += 1
                 for multiple in order:
                     minimum = (3 if self.mode == 'basic' else 5) if multiple == 1 else (2 if self.mode == 'basic' else 3) if multiple == 2 else 2
                     for start in range(3, 15):
@@ -1002,11 +1124,13 @@ class Game:
         def score(move):
             ids = set(move['ids']); chosen = [c for c in hand if c['id'] in ids]
             remaining = [c for c in hand if c['id'] not in ids]
-            value = hand_cost(remaining) * 8
+            value = hand_cost(remaining) * 8 + sum(self.play_damage(visible, move).values())
+            if reserve_openers and tuple(move['ids']) not in reserve_openers:
+                value += 10
             used = Counter(c['rank'] for c in chosen)
             for rank, number in used.items():
                 if 0 < number < counts[rank]:
-                    value += 12 if counts[rank] >= minimum_bomb else 3 if counts[rank] >= 2 else 0
+                    value += 3 if counts[rank] >= 2 else 0
             controls = sum(strength(c['rank'], self.main, self.mode) >= 15 for c in chosen)
             value += controls * (1 if danger <= 2 else 4)
             value += sum(c['rank'] == 14 and c['suit'] == 'S' for c in chosen) * 3

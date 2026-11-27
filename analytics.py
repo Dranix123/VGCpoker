@@ -28,6 +28,10 @@ class Analytics:
                     requests INTEGER NOT NULL, failures INTEGER NOT NULL, seconds REAL NOT NULL,
                     PRIMARY KEY(day,model));
             ''')
+            columns = {row[1] for row in c.execute('PRAGMA table_info(usage_ai)')}
+            for column in ('cache_hits', 'cache_misses'):
+                if column not in columns:
+                    c.execute(f'ALTER TABLE usage_ai ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
             c.execute("INSERT OR IGNORE INTO usage_meta VALUES('since',?)", (now,))
             c.execute("UPDATE usage_matches SET ended=?,status='interrupted',reason='restart' WHERE status='running'", (now,))
 
@@ -58,12 +62,17 @@ class Analytics:
             c.execute("UPDATE usage_matches SET ended=?,status=?,reason=? WHERE id=? AND status='running'",
                       (time.time(), status, reason, room['matchId']))
 
-    def ai(self, model, failed, seconds):
+    def ai(self, model, failed, seconds, usage=None):
         day = datetime.fromtimestamp(time.time(), TZ).date().isoformat()
+        usage = usage or {}
+        hits = usage.get('prompt_cache_hit_tokens', 0)
+        misses = usage.get('prompt_cache_miss_tokens', 0)
         with self.connect() as c:
-            c.execute('''INSERT INTO usage_ai VALUES(?,?,1,?,?) ON CONFLICT(day,model)
-                DO UPDATE SET requests=requests+1,failures=failures+excluded.failures,seconds=seconds+excluded.seconds''',
-                      (day, model, int(failed), seconds))
+            c.execute('''INSERT INTO usage_ai(day,model,requests,failures,seconds,cache_hits,cache_misses)
+                VALUES(?,?,1,?,?,?,?) ON CONFLICT(day,model) DO UPDATE SET
+                requests=requests+1,failures=failures+excluded.failures,seconds=seconds+excluded.seconds,
+                cache_hits=cache_hits+excluded.cache_hits,cache_misses=cache_misses+excluded.cache_misses''',
+                      (day, model, int(failed), seconds, hits, misses))
 
     def report(self, rooms):
         now = time.time()
@@ -108,7 +117,8 @@ class Analytics:
             daily_signups = dict(c.execute("SELECT date(created,'unixepoch','+8 hours'),COUNT(*) FROM users WHERE created>=? GROUP BY 1", ((today-timedelta(days=29)).timestamp(),)))
             historical = c.execute('SELECT COUNT(*) FROM results WHERE id NOT IN (SELECT id FROM usage_matches)').fetchone()[0]
             ai = dict(c.execute('''SELECT COALESCE(SUM(requests),0) AS requests,
-                COALESCE(SUM(failures),0) AS failures,COALESCE(SUM(seconds),0) AS seconds
+                COALESCE(SUM(failures),0) AS failures,COALESCE(SUM(seconds),0) AS seconds,
+                COALESCE(SUM(cache_hits),0) AS cache_hits,COALESCE(SUM(cache_misses),0) AS cache_misses
                 FROM usage_ai WHERE day=?''', (days[-1],)).fetchone())
         keys = {(r['mode'],r['variant'],r['channel']) for r in rows}
         for mode in ('landlord','basic','standard','trio'):

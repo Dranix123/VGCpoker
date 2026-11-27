@@ -222,7 +222,7 @@ def play_batch(run, directory, config, model, save, cancelled=None):
                             decision, api, memory = request_decision(
                                 game, core, seat, actor, options, memories.get(actor), model.choose,
                                 attempts=min(3, config['maxModelCalls'] - summary['calls']),
-                                active=lambda: not cancelled or not cancelled.is_set())
+                                active=lambda: not cancelled or not cancelled.is_set(), reuse_history=isinstance(model, DeepSeek))
                             summary['calls'] += len(api['attempts'])
                             for key, count in api['usage'].items():
                                 summary['tokens'][key] = summary['tokens'].get(key, 0) + count

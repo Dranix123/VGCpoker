@@ -283,10 +283,14 @@ class ConveyorRound(Game):
         if seat not in self.finished and self.phase != 'over':
             self.pending.append(dict(seat=seat, kind=kind, title=title, **data))
 
+    def finishing_turn(self, seat):
+        resource = self.resources[seat]
+        return min(resource['turns'], resource['turnStart']) >= 2
+
     def finish(self, seat):
         if self.phase == 'over' or self.defer_finish or self.hands[seat] or self.zones[seat] or seat in self.finished: return
         # Pending choices resolve after turns advances; the third turn must actually have started.
-        if min(self.resources[seat]['turns'], self.resources[seat]['turnStart']) < 2:
+        if not self.finishing_turn(seat):
             self.gain(seat, 1, end=True)
             self.resources[seat]['earlyRefill'] = True
             return
@@ -390,6 +394,20 @@ class ConveyorRound(Game):
         if profile is not None and self.skill(getattr(self, '_validating_seat', self.turn), 'formless'):
             return sum(n for _, n in profile)
         return profile
+
+    def lead_shape(self, seat, cards):
+        # Hand size can change effective ranks. Evaluate with that remainder and
+        # with free lead, preserving the current round's options and play state.
+        probe = copy.copy(self)
+        probe.hands = self.hands[:]
+        probe.hands[seat] = cards
+        probe.options = self.options.copy()
+        probe.turn, probe.last, probe.priority = seat, None, None
+        probe.direct_passes, probe.extra_args = [], {}
+        try:
+            return probe.validate_play(seat, cards)[0]['kind']
+        except RuleError:
+            return None
 
     def candidates(self, seat):
         if self.phase != 'play' or seat in self.finished or self.resources[seat]['ban']: return []
@@ -1319,6 +1337,12 @@ class ConveyorRound(Game):
             hand = self.hands[seat]
             key = self.active_skill(seat)
             normal_moves = self.candidates(seat)
+            if self.finishing_turn(seat) and not self.zones[seat] and not self.priority and not self.direct_passes:
+                finish = next((m for m in normal_moves if len(m['ids']) == len(hand)), None)
+                if finish:
+                    return finish
+                if key == 'ascend' and hand and all(c['rank'] == 15 for c in hand):
+                    return dict(action='skill', ids=[c['id'] for c in hand])
             if key == 'seven':
                 marks = self.resources[seat].get('marks', 0)
                 storable = [c for c in hand if c['rank'] in (3, 4, 5, 6)][:7-marks]
@@ -1356,9 +1380,9 @@ class ConveyorRound(Game):
         if self.priority:
             group = 'bots' if self.players[seat].get('bot') else 'pending'
             if seat in self.priority[group] and (not self.priority['pending'] or group == 'pending' and self.players[seat].get('autoplay')):
-                moves = self.priority_moves(seat)
+                moves = self.priorities_worth_taking(seat, self.priority_moves(seat))
                 if moves:
-                    best = min(moves, key=lambda m: (m['power'], -m['n'], m['value']))
+                    best = moves[0]
                     return {**best, 'action':'auto'}
                 return dict(action='priority-decline')
         if self.direct_passes and seat == self.turn: return None
@@ -1366,13 +1390,18 @@ class ConveyorRound(Game):
         moves = self.candidates(seat)
         if not moves: return dict(action='pass')
         counts = Counter(c['rank'] for c in self.hands[seat])
+        visible = self.visible_hand(seat)
+        reserve_openers = {tuple(moves[i]['ids']) for i in self.opening_reserves(seat, moves)}
         def cost(move):
             left = [c for c in self.hands[seat] if c['id'] not in move['ids']]
             remaining = Counter(c['rank'] for c in left)
             split = sum(2 for r, n in remaining.items() if n < counts[r])
-            return (bool(left or self.zones[seat]), len(remaining) * 6 + split + move['power'] * .6 + move['value'] * .08 - move['n'])
-        opening = self.opening_reserves(seat, moves)
-        return min((moves[i] for i in opening), key=cost) if opening else min(moves, key=cost)
+            damage = sum(self.play_damage(visible, move).values())
+            if reserve_openers and tuple(move['ids']) not in reserve_openers:
+                damage += 10
+            finished = not left and not self.zones[seat] and self.finishing_turn(seat)
+            return (not finished, len(remaining) * 6 + split + damage + move['power'] * .6 + move['value'] * .08 - move['n'])
+        return min(moves, key=cost)
 
 class ConveyorGame:
     """Translate four account seats to independent internal actors (twins = two)."""

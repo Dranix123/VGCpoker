@@ -84,11 +84,12 @@ class UsageStatistics(unittest.TestCase):
         with self.connect() as c:self.assertEqual(c.execute('SELECT reason FROM usage_matches').fetchone()[0],'restart')
 
     def test_model_call_health_and_signup_counts(self):
-        self.stats.ai('model',False,1);self.stats.ai('model',True,3)
+        self.stats.ai('model',False,1,{'prompt_cache_hit_tokens':31,'prompt_cache_miss_tokens':19})
+        self.stats.ai('model',True,3)
         with self.connect() as c:
             c.execute('INSERT INTO users VALUES(1,?)',(self.now,));c.execute('INSERT INTO users VALUES(2,?)',(self.now-86400,))
         report=self.stats.report([])
-        self.assertEqual(report['ai'],{'requests':2,'failures':1,'seconds':4})
+        self.assertEqual(report['ai'],{'requests':2,'failures':1,'seconds':4,'cache_hits':31,'cache_misses':19})
         self.assertEqual((report['users'],report['new_users']),(2,1))
         self.assertEqual(report['days'][-1]['signups'],1)
 

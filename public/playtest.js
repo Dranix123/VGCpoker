@@ -76,11 +76,16 @@ function mountPlaytest(root){
       if(['failed','interrupted'].includes(task.status)&&task.currentMatch&&!matches.some(m=>m.match===task.currentMatch)){
         matches.push({match:task.currentMatch,status:task.status,steps:task.currentStep||0});
       }
+      const hit=task.tokens?.prompt_cache_hit_tokens;
+      const miss=task.tokens?.prompt_cache_miss_tokens;
+      const cache=Number.isFinite(hit)&&Number.isFinite(miss)&&hit+miss>0
+        ? `<p class="muted">输入缓存命中 ${(100*hit/(hit+miss)).toFixed(1)}% · ${hit} 命中 · ${miss} 未命中 tokens</p>` : '';
       const results=matches.map(m=>`<li><span>第 ${m.match} 局 · ${m.winner?.length?m.winner.map(seat=>(seat+1)+' 号').join('、')+'获胜':esc(playtestStatuses[m.status]||m.status)} · ${m.steps} 步</span><button class="secondary" type="button" data-replay-match="${m.match}" aria-label="回放第 ${m.match} 局">回放</button></li>`).join('');
       progress.innerHTML=`<div class="playtest-task-title"><strong>${esc(names[task.config?.mode]||task.config?.mode)}</strong><span>${esc(status)}</span></div>
         <progress value="${completed}" max="${count}" aria-label="已完成局数"></progress>
         <p>${completed} / ${count} 局${detail?' · '+detail:''}</p>
         <p class="muted">${task.model?esc(task.model)+' · '+(task.thinking?'思考开启':'思考关闭'):'规则 AI'} · 请求 ${task.calls||0} 次 · 回退 ${task.fallbacks||0} 次${task.tokens?.total_tokens?' · '+task.tokens.total_tokens+' tokens':''}</p>
+        ${cache}
         ${task.modelDisabledReason?`<p class="form-error">DeepSeek 请求失败（${esc(task.modelDisabledReason.replace('http_', 'HTTP '))}），余下行动使用规则 AI。</p>`:''}
         ${task.modelBudgetReached?'<p class="muted">已用完指定的模型调用次数。</p>':''}
         ${task.error?`<p class="form-error">${esc(task.error.reason||task.error.type)}</p>`:''}

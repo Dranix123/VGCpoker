@@ -208,6 +208,37 @@ class Rules(unittest.TestCase):
                 self.assertEqual(g.last['special'],'cross' if cross else 'play');self.assertEqual(g.last['ranks'],[5,5] if cross else [8])
                 self.assertIsNone(g.view(0)['response'])
 
+    def test_rules_ai_weighs_breaking_formations_against_priority_gain(self):
+        for mode, lead, original, expected in (
+            ('basic', 4, [4,4,7,9,14], '拆顶级组合'),
+            ('standard', 5, [5,5,5,5,8,11,13], '拆同点炸弹'),
+            ('basic', 5, [5,5,6,7,9,13], '拆顺子'),
+            ('basic', 5, [5,5,6,6,9,13], '拆连对'),
+        ):
+            with self.subTest(mode=mode, lead=lead, expected=expected):
+                g = table(mode)
+                g.interactive = True
+                g.players[1]['bot'] = True
+                g.turn = 2
+                g.hands[1] = cards(original,prefix='bot')
+                g.hands[2] = cards([lead,8,9,11],prefix='leader')
+                g.action(2,'play',['leader0'])
+                cross = next(m for m in g.priority_moves(1) if m['action']=='cross')
+                self.assertIn(expected,g.play_damage(g.visible_hand(1),cross))
+                self.assertEqual(g.bot_action(1),{'action':'priority-decline'})
+                g.action(1,'priority-decline')
+                self.assertNotEqual(g.bot_action(1)['action'],'cross')
+        for hand, leader in (([4,4,7,9,14],[4,8]), ([4,4,14,14],[4,8,9,11]),
+                             ([4,4,4,4,14],[4,8,9,11])):
+            g = table('basic')
+            g.interactive = True
+            g.players[1]['bot'] = True
+            g.turn = 2
+            g.hands[1] = cards(hand,prefix='bot')
+            g.hands[2] = cards(leader,prefix='leader')
+            g.action(2,'play',['leader0'])
+            self.assertEqual(g.bot_action(1)['special'],'cross')
+
     def test_solo_priority_does_not_pause_when_human_is_normal_next(self):
         g=table('basic');g.interactive=True;g.turn=1
         for seat in (1,2,3):g.players[seat]['bot']=True
