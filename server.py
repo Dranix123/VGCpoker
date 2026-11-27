@@ -250,7 +250,10 @@ def perform_game_action(room, seat, move):
         if g.phase == 'over' and old_phase != 'over' and not any(i.get('effect') == 'result' for i in items): items.append({'effect':'result'})
     queue_audio(room, items)
 
-CHAT_PHRASES = ('悲', '你能秒我？', '给阿姨倒一杯卡布奇诺')
+CHAT_PHRASES = (
+    '悲', '你能秒我？', '你可以来点核', '爽！爽爽爽！', 'どうぞ。',
+    '白居易！', '那我就跑了。', '急了。', '脑子不清醒？',
+)
 
 def matchable(room, mode=None):
     return (room['code'] != RESERVED_ROOM and not room.get('single') and not room['options'].get('_alternate')

@@ -61,7 +61,7 @@ test('single-player priority renders at the responder instead of the next seat',
 test('autoplay shows badges and cancellation while removing manual play controls',()=>{
  for(const enabled of [false,true]){
   const players=Array.from({length:4},(_,i)=>({id:i+1,name:String(i),connected:true,autoplay:i===0&&enabled}));
-  const r={seat:0,capacity:4,players,rated:true,bubbles:{0:'悲',1:'你能秒我？',2:'给阿姨倒一杯卡布奇诺',3:'悲'}};
+  const r={seat:0,capacity:4,players,rated:true,bubbles:{0:'悲',1:'你能秒我？',2:'你可以来点核',3:'どうぞ。'}};
   const g={mode:'basic',phase:'play',turn:0,finished:[],urgentLast:[],counts:[2,2,2,2],hand:[],scores:[0,0],log:[]};
   const context={state:{user:{id:1}},esc:String,ranks:{},suits:{},selected:new Set(),roomHeading:()=>'',card:()=>'',r,g};vm.createContext(context);
   const html=vm.runInContext(source.slice(source.indexOf('function table('),source.indexOf('function showAuth('))+'\ntable(r,g);',context);

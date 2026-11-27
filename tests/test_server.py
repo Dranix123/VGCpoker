@@ -791,7 +791,12 @@ class ServerIntegration(unittest.TestCase):
         _, data = self.request(first, 'start', {})
         revision = data['room']['revision']
         event = data['room']['audioEvent']
-        for text in server.CHAT_PHRASES:
+        presets = [
+            '悲', '你能秒我？', '你可以来点核', '爽！爽爽爽！', 'どうぞ。',
+            '白居易！', '那我就跑了。', '急了。', '脑子不清醒？',
+        ]
+        self.assertEqual(self.request(first, 'state')[1]['features']['chatPhrases'], presets)
+        for text in presets:
             server.ROOMS[code].pop('bubbles', None)
             status, data = self.request(first, 'chat', {'text': text})
             self.assertEqual(status, 200)
@@ -800,7 +805,7 @@ class ServerIntegration(unittest.TestCase):
             self.assertEqual(data['room']['audioEvent'], event)
             self.assertEqual(self.request(second, 'state')[1]['room']['bubbles'], {'0': text})
         self.assertEqual(self.request(first, 'chat', {'text': '悲'})[0], 400)
-        for text in ('任意文本', '<script>alert(1)</script>', None, ['悲']):
+        for text in ('给阿姨倒一杯卡布奇诺', '任意文本', '<script>alert(1)</script>', None, ['悲']):
             self.assertEqual(self.request(first, 'chat', {'text': text})[0], 400)
         with patch('server.time.time', return_value=__import__('time').time() + 7):
             self.assertEqual(self.request(second, 'state')[1]['room']['bubbles'], {})
