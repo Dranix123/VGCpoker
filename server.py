@@ -135,13 +135,18 @@ def leave_room(room, uid):
 
 def audio_waiting(room):
     event = room.get('audioEvent')
-    if not event: return False
+    if not event or time.monotonic() >= event['expires']: return False
     active = {p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled') and time.time() - p.get('seen', 0) < 15}
     return bool((set(event['listeners']) & active) - set(event['acknowledged']))
 
 def queue_audio(room, items):
     room['audioSequence'] = room.get('audioSequence', 0) + 1
-    room['audioEvent'] = {'id': room['audioSequence'], 'items': items, 'listeners': [p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled')], 'acknowledged': []}
+    # A suspended browser or a stalled audio request must not lock the table.
+    animation_cards = sum(item.get('count', 0) for item in items if 'dealTo' in item and not item.get('voice'))
+    timeout = 12 + len(items) + animation_cards * .12
+    room['audioEvent'] = {'id': room['audioSequence'], 'items': items,
+                          'listeners': [p['id'] for p in room['players'] if not p.get('bot') and p.get('audioEnabled')],
+                          'acknowledged': [], 'expires': time.monotonic() + timeout}
     g = room.get('game')
     if room.get('priorityClock') and (audio_waiting(room) or g and g.mode == 'conveyor' and g.core.pending):
         room['priorityClock'].setdefault('pausedAt', time.time())
@@ -268,6 +273,12 @@ def room_view(room, uid):
         watching = spectator and room['options'].get('allowSpectators') and not room.get('single')
         game['publicHands'] = core.public_hands(None if watching else shown)
         game['confirmTurn'] = confirmation_seat(room)
+        if not spectator and g.priority_paused():
+            actor = next(s for s in core.priority['pending']
+                         if s != core.turn and not core.players[s].get('autoplay'))
+            game['priorityResponder'] = core.owners[actor] if g.mode == 'conveyor' else actor
+            if g.mode == 'conveyor':
+                game['priorityResponseActor'] = actor
         if game['phase'] == 'setup':
             game['confirmationSeats'] = sorted({core.owners[s] if g.mode == 'conveyor' else s for s in core.confirmation_seats()})
         clock = room.get('priorityClock')

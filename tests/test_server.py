@@ -323,6 +323,54 @@ class ServerIntegration(unittest.TestCase):
         self.assertEqual(self.request(self.clients[0],'resign',{})[0],200)
         self.assertEqual(room['game'].phase,'over')
 
+    def test_missing_audio_ack_does_not_block_solo_ai_opening(self):
+        from test_engine import cards
+
+        client = self.clients[0]
+        headers = {'X-Poker-Audio':'1'}
+        self.request(client,'create',{'mode':'basic','single':True},headers)
+        for _ in range(3): self.request(client,'bot',{})
+        self.request(client,'start',{},headers)
+        room = server.room_of(self.users[0]['id'])
+        game = room['game']
+        game.phase = 'setup'
+        game.hands = [cards([5,6],prefix=str(seat)) for seat in range(4)]
+        game.hands[3][0].update(rank=3,suit='S')
+        for _ in range(2):
+            with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
+                with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+            self.assertTrue(server.audio_waiting(room))
+            room['audioEvent']['expires'] = 0
+        with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+        self.assertEqual(game.phase,'play')
+        self.assertEqual(game.turn,3)
+        self.assertEqual(game.reveals,[3])
+
+    def test_conveyor_solo_priority_identifies_human_and_resumes_after_decline(self):
+        from test_conveyor import ConveyorRules
+
+        fixture = ConveyorRules()
+        game = fixture.game(*['anchor'] * 4)
+        core = fixture.table(game,[[5,8,9], [6,10,12], [7,11,13], [5,5,14]])
+        for seat, player in enumerate(game.players):
+            player['bot'] = seat != 0
+        core.interactive = True
+        core.turn = 3
+        game.action(3,'play',[c['id'] for c in core.hands[3] if c['rank']==5])
+        self.assertEqual(core.turn,2)
+        room = dict(code='fixture-priority', mode='conveyor', game=game, single=True, matchId='test',
+                    players=game.players, options={}, revision=1, host=game.players[0]['id'])
+        server.ROOMS[room['code']] = room
+        view = server.room_view(room,game.players[0]['id'])['game']
+        self.assertEqual(view['priorityResponder'],0)
+        self.assertEqual(view['priorityResponseActor'],0)
+        self.assertEqual(view['response']['moves'][0]['action'],'dot')
+        server.perform_game_action(room,0,{'action':'pass','actor':0})
+        with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+        self.assertNotEqual(core.turn,2)
+
     def test_audio_ack_from_previous_match_cannot_release_current_event(self):
         code=self.new_room('basic',4);room=server.ROOMS[code];room['matchId']='current'
         server.queue_audio(room,[{'voice':'deal'}]);event=room['audioEvent']

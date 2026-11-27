@@ -47,6 +47,17 @@ test('current player keeps their previous play underneath the in-seat status',()
     assert.ok(html.includes('旧出牌'));
   }
 });
+test('single-player priority renders at the responder instead of the next seat',()=>{
+  const start=source.indexOf('const playStatus=');
+  const expression=source.slice(start,source.indexOf('    return',start));
+  for(const s of [0,2]){
+    const context={g:{phase:'play',turn:2,priorityResponder:0},s,played:null,playNumber:1};
+    vm.createContext(context);
+    const html=vm.runInContext(expression+'\nplayedCards',context);
+    assert.equal(html.includes('优先管牌'),s===0);
+    assert.ok(!html.includes('出牌中...'));
+  }
+});
 test('autoplay shows badges and cancellation while removing manual play controls',()=>{
  for(const enabled of [false,true]){
   const players=Array.from({length:4},(_,i)=>({id:i+1,name:String(i),connected:true,autoplay:i===0&&enabled}));
