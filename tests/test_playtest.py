@@ -432,6 +432,7 @@ class Playtest(unittest.TestCase):
             {'driver': 'rules', 'mode': 'landlord', 'skills': ['twins']},
             {'driver': 'rules', 'skills': ['twins', None, None, None], 'options': {'skillDlc': []}},
             {'driver': 'rules', 'skills': ['scavenge'] * 4},
+            {'driver': 'rules', 'skills': ['scavenge', 'redirect', 'scavenge', 'redirect']},
             {'driver': 'rules', 'options': {'firstOutEndsRound': 'yes'}},
             {'driver': 'rules', 'maxSteps': True},
         ):

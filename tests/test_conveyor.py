@@ -73,8 +73,9 @@ class ConveyorRules(unittest.TestCase):
             self.conservation(g)
 
     def test_all_scavenge_cannot_start_without_a_legal_opener(self):
-        with self.assertRaisesRegex(RuleError, '首出'):
-            self.game(*(['scavenge']*4))
+        for skills in (['scavenge']*4,['redirect','scavenge','redirect','scavenge']):
+            with self.subTest(skills=skills), self.assertRaisesRegex(RuleError, '首出'):
+                self.game(*skills)
 
     def test_stars_requires_ordering_and_counts_each_active_identity(self):
         g=self.game('stars','twins','twins','anchor')
@@ -638,11 +639,35 @@ class ConveyorRules(unittest.TestCase):
         with self.assertRaises(RuleError):g.action(0,'skill',effect='release',ranks=[7]*7)
         self.assertEqual(c.resources[0]['marks'],7)
 
-    def test_scavenge_cannot_be_random_first_player(self):
-        g=self.game('scavenge');c=g.core;c.first=None;c.pending=[];c.drafted=set(range(4))
-        for hand in c.hands: hand[:] = [card for card in hand if not (card['rank']==3 and card['suit']=='S')]
-        with patch('engine.random.randrange',return_value=0):c.draft_ready()
-        self.assertEqual(c.phase,'play');self.assertNotEqual(c.turn,0)
+    def test_keep_one_skills_cannot_reveal_or_open(self):
+        g=self.game('redirect','anchor','anchor','scavenge')
+        c=self.table(g,[[(3,'S')],[7,8],[8,9],[(3,'S')]])
+        c.phase='setup'
+        for seat in (0,3):
+            self.assertFalse(c.can_reveal(seat))
+            with self.assertRaises(RuleError):g.action(seat,'reveal')
+        with patch('conveyor.random.choice',side_effect=lambda seats:seats[0]) as choose:
+            c.finish_setup()
+        choose.assert_called_once_with([1,2])
+        self.assertEqual(c.turn,1)
+        with self.assertRaisesRegex(RuleError,'不能首出'):
+            c.validate_play(0,c.hands[0])
+        g.action(1,'play',[c.hands[1][0]['id']])
+        self.assertEqual(c.turn,0)
+        self.assertTrue(c.candidates(0))
+
+    def test_opening_advances_past_keep_one_seats_if_starter_uses_a_skip_skill(self):
+        g=self.game('balance','anchor','scavenge','redirect')
+        c=self.table(g,[[7,9],[8,10],[11],[13]])
+        g.action(0,'skill',[c.hands[0][0]['id']])
+        self.assertEqual(c.play_number,0)
+        self.assertEqual(c.turn,1)
+        self.assertEqual([c.resources[s]['turns'] for s in (2,3)],[2,2])
+
+    def test_inherited_opening_advances_past_consecutive_keep_one_seats(self):
+        players=self.game('redirect','anchor','anchor','scavenge').players
+        g=ConveyorGame('conveyor',players,{'skillDlc':[1,3]},previous={'first':0})
+        self.assertEqual(g.core.first,2)
 
     def test_scavenge_remains_optional_later_without_end_draw(self):
         g=self.game('balance','scavenge');c=self.table(g,[[4,6],[7,10],[8],[9]])
@@ -733,9 +758,18 @@ class ConveyorRules(unittest.TestCase):
         for skill in ('extra','gather','redirect','request','trade'):
             with self.subTest(skill=skill):
                 g=self.game(skill);c=self.table(g,[[4,6],[7,9,10],[8],[9]])
+                if skill=='redirect':
+                    c=self.table(g,[[7,9],[7,9,10],[8],[4,9]])
+                    c.turn=3
+                    g.action(3,'auto',[c.hands[3][0]['id']])
+                    g.action(2,'pass')
+                    g.action(1,'pass')
                 g.action(0,'auto',[c.hands[0][0]['id']])
                 self.assertEqual(c.pending[0]['kind'],'deal')
-                if skill=='redirect':g.action(0,'choice',effect='redirect',target=1);self.assertEqual(len(c.hands[1]),4)
+                if skill=='redirect':
+                    count=len(c.hands[1])
+                    g.action(0,'choice',effect='redirect',target=1)
+                    self.assertEqual(len(c.hands[1]),count+1)
                 elif skill=='request':
                     g.action(0,'choice',effect='request');self.assertEqual(c.pending[0]['kind'],'give')
                 else:g.action(0,'choice',value=3 if skill in ('extra','gather') else 1)
@@ -928,11 +962,16 @@ class ConveyorRules(unittest.TestCase):
         self.assertEqual(c.turn,0);self.assertIsNone(c.last)
         g.action(0,'auto',[c.hands[0][0]['id']])
 
-    def test_spade_ace_can_be_used_as_urgent_with_chosen_effect(self):
+    def test_spade_ace_cannot_be_used_as_urgent_with_chosen_effect(self):
+        from game_ai import urgent_moves
         g=self.game();c=self.table(g,[[(14,'S'),4],[7],[8],[9]])
-        id=c.hands[0][0]['id'];g.action(0,'urgent',[id],wildcard={id:18},effect='shield')
-        self.assertEqual(c.resources[0]['shield'],3)
-        self.assertEqual(c.pile[-1]['id'],id)
+        card_id=c.hands[0][0]['id']
+        for action in ('auto','urgent'):
+            with self.assertRaises(RuleError):
+                g.action(0,action,[card_id],wildcard={card_id:18},effect='shield')
+        self.assertEqual(c.resources[0]['shield'],0)
+        self.assertEqual(list(urgent_moves(c,0,True)),[])
+        self.assertEqual(c.hands[0][0]['id'],card_id)
 
     def test_filtering_also_applies_to_gifts_and_rotation(self):
         g=self.game('gift','clean');c=self.table(g,[[4,9],[7],[8],[10]])

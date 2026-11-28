@@ -124,6 +124,17 @@ test('rps offers actions only to eligible players who have not submitted',()=>{
  }
 });
 
+test('conveyor shows the shared opening timer and keeps the local profile under the board',()=>{
+ const html=table(false,false,{phase:'setup',reveals:[],ready:[],openingFirst:null,openingClock:{remaining:7}},
+  {confirmationActors:[0],revealActors:[]});
+ const board=html.slice(html.indexOf('<section class="board"'),html.indexOf('</section>'));
+ assert.match(board,/<p class="opening-clock">7 秒<\/p>/);
+ assert.doesNotMatch(board,/data-player-seat="0"/);
+ assert.match(html,/data-own-seat="0"/);
+ assert.match(html,/data-action="reveal"/);
+ assert.doesNotMatch(html,/确认开始/);
+});
+
 test('an eligible player sees the tie result beside the next rps choice',()=>{
  const html=table(false,false,{phase:'rps',reveals:[0,1],ready:[],log:['猜拳平局，请重出。']});
  assert.ok(html.includes('class="rps-feedback"'));

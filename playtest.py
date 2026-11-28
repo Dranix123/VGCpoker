@@ -18,7 +18,7 @@ from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from conveyor import ConveyorGame
-from conveyor_skills import SKILLS, available
+from conveyor_skills import SKILLS, available, can_open
 from engine import Game, MODES, RuleError
 from playtest_replay import record, replay_path, spectator_view
 from game_ai import (alternatives, bot_turn_order, model_payload,
@@ -80,7 +80,7 @@ def run_config(body, model_enabled):
         enabled = {s['id'] for s in available(options)}
         if not enabled or any(s is not None and s not in enabled for s in skills):
             raise ValueError('指定的技能未启用，或没有开放的技能。')
-        if all(s == 'scavenge' for s in skills) or enabled == {'scavenge'}:
+        if not any(map(can_open, enabled)) or all(s is not None and not can_open(s) for s in skills):
             raise ValueError('至少需要一名可以首出的玩家。')
     elif 'skills' in body:
         raise ValueError('只有传送带可以指定技能。')
@@ -108,9 +108,9 @@ def start_match(config, previous):
         pool = [s['id'] for s in available(options)]
         for player, skill in zip(players, config['skills']):
             player['skill'] = skill or secrets.choice(pool)
-        if all(p['skill'] == 'scavenge' for p in players):
+        if not any(can_open(p['skill']) for p in players):
             random_seat = config['skills'].index(None)
-            players[random_seat]['skill'] = secrets.choice([s for s in pool if s != 'scavenge'])
+            players[random_seat]['skill'] = secrets.choice([s for s in pool if can_open(s)])
         game = ConveyorGame(mode, players, options, previous, interactive=True)
         return game, game.core
     game = Game(mode, players, options, previous, interactive=True)

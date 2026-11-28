@@ -38,7 +38,7 @@ test('advanced rules use unchecked opt-out controls in supported modes',()=>{
 });
 test('current player keeps their previous play underneath the in-seat status',()=>{
   const start=source.indexOf('const playStatus=');
-  const expression=source.slice(start,source.indexOf('    return',start));
+  const expression=source.slice(start,source.indexOf('    const own=',start));
   for(const turn of [0,1]){
     const context={g:{phase:'play',turn},s:0,played:{kind:'旧出牌',order:1},playNumber:1,seatPlayCards:play=>play.kind};
     vm.createContext(context);
@@ -49,7 +49,7 @@ test('current player keeps their previous play underneath the in-seat status',()
 });
 test('single-player priority renders at the responder instead of the next seat',()=>{
   const start=source.indexOf('const playStatus=');
-  const expression=source.slice(start,source.indexOf('    return',start));
+  const expression=source.slice(start,source.indexOf('    const own=',start));
   for(const s of [0,2]){
     const context={g:{phase:'play',turn:2,priorityResponder:0},s,played:null,playNumber:1};
     vm.createContext(context);
@@ -70,6 +70,9 @@ test('autoplay shows badges and cancellation while removing manual play controls
   assert.equal(html.includes('data-action="play"'),!enabled);
   assert.ok(html.includes('data-action="autoplay"'));
   assert.equal((html.match(/class="speech-bubble"/g)||[]).length,4);
+  const board=html.slice(html.indexOf('<section class="board"'),html.indexOf('</section>'));
+  assert.doesNotMatch(board,/data-player-seat="0"/);
+  assert.match(html,/<div class="own-player[^"]*" data-own-seat="0">.*data-player-seat="0"/);
   for(let seat=0;seat<4;seat++)assert.ok(html.includes(`aria-label="${seat}的发言"`));
   assert.ok(!html.includes('table-chat'));
  }
@@ -108,6 +111,7 @@ test('spectator table opens all-hand panel without action controls',()=>{
   assert.ok(!html.includes('data-action="play"'));
   assert.ok(!html.includes('data-action="autoplay"'));
   assert.ok(!html.includes(' · 你'));
+  assert.ok(!html.includes('data-own-seat'));
   if(phase==='play'){
    assert.match(html,/data-table-panel="public" open><summary>全员手牌/);
    for(const rank of [4,5,6,7])assert.ok(html.includes(rank+'♠'));

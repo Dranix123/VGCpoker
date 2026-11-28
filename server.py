@@ -3,6 +3,7 @@ import copy
 import hashlib
 import http.cookies
 import json
+import math
 import os
 import re
 import secrets
@@ -19,7 +20,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from engine import Game, RuleError, MODES, LABELS, printed_rank
 from conveyor import ConveyorGame
-from conveyor_skills import SKILLS, available as conveyor_skills
+from conveyor_skills import SKILLS, available as conveyor_skills, can_open
 from analytics import Analytics
 from admin import start_admin
 from playtest_web import WebPlaytest, initialize_access, set_access
@@ -151,15 +152,30 @@ def queue_audio(room, items):
     if room.get('priorityClock') and (audio_waiting(room) or g and g.mode == 'conveyor' and g.core.pending):
         room['priorityClock'].setdefault('pausedAt', time.time())
 
-def confirmation_seat(room):
+OPENING_ACTIONS = {'setup': {'reveal', 'promote', 'confirm'}, 'rps': {'rps'}}
+
+def update_opening_clock(room):
     g = room.get('game')
-    if not g or g.phase != 'setup': return None
+    if not g or g.phase not in OPENING_ACTIONS:
+        room.pop('openingClock', None)
+        return
     core = g.core if g.mode == 'conveyor' else g
-    pending = [s for s in core.confirmation_seats() if s not in core.rps]
-    start = core.first or 0
-    if g.mode == 'conveyor': start = core.owners[start]
-    if g.mode == 'conveyor': pending = [core.owners[s] for s in pending]
-    return min(pending, key=lambda s: (start - s) % len(room['players']), default=None)
+    key = (room.get('matchId'), g.phase, core.rps_round)
+    clock = room.get('openingClock')
+    now = time.monotonic()
+    if not clock or clock['key'] != key:
+        clock = room['openingClock'] = dict(key=key, expires=None)
+    if clock['expires'] is None and not audio_waiting(room):
+        clock['expires'] = now + 10
+    if clock['expires'] is not None and now >= clock['expires']:
+        old_phase = g.phase
+        g.expire_opening()
+        room['revision'] += 1
+        if old_phase == 'setup':
+            items = room.pop('openingVoices', [])
+            if items: queue_audio(room, items)
+        return update_opening_clock(room)
+    return clock
 
 def update_priority_clock(room, expire=True):
     g = room.get('game')
@@ -197,7 +213,16 @@ def perform_game_action(room, seat, move):
     if move['action'] == 'reaction-decline':
         g.action(seat, **move)
         return
-    if g.phase == 'setup' and move['action'] in ('confirm','reveal','promote') and confirmation_seat(room) != seat: raise RuleError('请等待逆时针轮到你确认。')
+    action = move['action']
+    if action in OPENING_ACTIONS.get(g.phase, ()):
+        g.action(seat, **move)
+        if action in ('reveal', 'promote'):
+            items = room.setdefault('openingVoices', [])
+            items.append({'voice': action})
+            if action == 'promote': items.append({'voice': '单张-' + str(move['rank'])})
+        return
+    core = g.core if g.mode == 'conveyor' else g
+    previous_plays = core.seat_plays[:]
     previous = g.last_voice_play; old_phase = g.phase
     reported = set(g.reported) if g.mode != 'conveyor' else set()
     g.action(seat, **move)
@@ -211,23 +236,23 @@ def perform_game_action(room, seat, move):
         if len(g.core.drafted) == len(room['players']) and not audio_waiting(room):
             queue_audio(room, [{'voice': 'cv-keep'}])
         return
-    action = move['action']; items = []
-    labels = {'pass': 'pass', 'priority-decline': 'pass', 'bid': 'bid-' + str(move.get('value', 0)), 'reveal': 'reveal', 'confirm': 'confirm', 'rps': 'rps', 'promote': 'promote', 'urgent': 'urgent', 'auto': 'urgent', 'tribute-pick': 'tribute-pick', 'tribute-return': 'tribute-return'}
+    items = []
+    silent_requests = ('pass', 'priority-decline')
+    labels = {'bid': 'bid-' + str(move.get('value', 0)), 'urgent': 'urgent', 'auto': 'urgent', 'tribute-pick': 'tribute-pick', 'tribute-return': 'tribute-return'}
     if g.last_voice_play is not previous:
         play = g.last_voice_play; kind = play['kind']
         key = kind + '-' + str(printed_rank(play['ranks'][0])) if kind in ('单张', '对子') else kind
         if kind == '死点': key = '点'
         if '张飞机' in kind: key = '飞机带对' if kind.endswith('对') else '飞机带单' if '带' in kind else '飞机'
         items += [{'effect': 'play'}, {'voice': key}]
-    else:
+    elif action not in silent_requests:
         items.append({'voice': labels.get(action, action)})
-        if action == 'promote': items.append({'voice': '单张-' + str(move['rank'])})
     if g.phase == 'over' and old_phase != 'over': items.append({'effect': 'result'})
     if room.get('mode') == 'conveyor':
         reports = getattr(g.core, 'action_reports', [])
         played = g.last_voice_play is not previous
         actor = move.get('actor', g.actor(seat))
-        if not played:
+        if not played and action not in silent_requests:
             key = 'cv-urgent-' + move.get('effect', 'discard') if action == 'urgent' else 'cv-skill-' + g.core.skills[actor] if action == 'skill' else 'cv-choice' if action == 'choice' else labels.get(action, 'cv-action')
             if key in ('cv-urgent-silence', 'cv-urgent-judge-boost'): key = 'cv-action'
             items = [{'voice': key}]
@@ -248,7 +273,9 @@ def perform_game_action(room, seat, move):
             items.append({'dealTo':g.core.owners[target], 'count':count})
             items.append({'voice':'cv-deal-' + str(count) if count <= 30 else 'cv-deal', 'recipient':room['players'][g.core.owners[target]]['id'], 'dealTo':g.core.owners[target], 'count':count})
         if g.phase == 'over' and old_phase != 'over' and not any(i.get('effect') == 'result' for i in items): items.append({'effect':'result'})
-    queue_audio(room, items)
+    items.extend({'voice': 'pass'} for before, after in zip(previous_plays, core.seat_plays)
+                 if after is not before and after and after.get('passed'))
+    if items: queue_audio(room, items)
 
 CHAT_PHRASES = (
     '悲', '你能秒我？', '你可以来点核', '爽！爽爽爽！', 'どうぞ。',
@@ -267,6 +294,7 @@ def match_counts():
 def room_view(room, uid):
     seat = next((i for i, p in enumerate(room['players']) if p['id'] == uid and not p.get('departed')), None)
     spectator = seat is None
+    opening = update_opening_clock(room)
     if room.get('game'): update_priority_clock(room, expire=False)
     game = room['game'].view(seat) if room.get('game') else None
     if game:
@@ -275,7 +303,10 @@ def room_view(room, uid):
         shown = room.get('shownSeats', ()) if room.get('shownMatch') == room.get('matchId') else ()
         watching = spectator and room['options'].get('allowSpectators') and not room.get('single')
         game['publicHands'] = core.public_hands(None if watching else shown)
-        game['confirmTurn'] = confirmation_seat(room)
+        if opening:
+            expires = opening['expires']
+            game['openingClock'] = {'round':opening['key'][2], 'waiting':expires is None,
+                                    'remaining':10 if expires is None else max(0, math.ceil(expires - time.monotonic()))}
         if not spectator and g.priority_paused():
             actor = next(s for s in core.priority['pending']
                          if s != core.turn and not core.players[s].get('autoplay'))
@@ -327,7 +358,7 @@ def model_move(config, g, seat, fallback, memory=None, active=lambda: True, show
         move = {**move, 'actor':actor}
     return move or fallback, api, next_memory
 
-def tick_bot(code, seat, version, snapshot, config, match_id=None, fallback=None):
+def tick_bot(code, seat, version, snapshot, config, match_id=None, fallback=None, opening_key=None):
     try:
         fallback = fallback if fallback is not None else snapshot.bot_action(seat)
         if not fallback: return
@@ -337,6 +368,10 @@ def tick_bot(code, seat, version, snapshot, config, match_id=None, fallback=None
                 room = ROOMS.get(code)
                 if not room or match_id is not None and room.get('matchId') != match_id: return False
                 if room.get('modelConfig', {}) != config: return False
+                if opening_key:
+                    clock = update_opening_clock(room)
+                    return (clock and clock['key'] == opening_key
+                            and room['game'].bot_action(seat) is not None)
                 return (opening_keep(room.get('game'), fallback['action']) or
                         room['revision'] == version and not audio_waiting(room))
         with LOCK:
@@ -356,7 +391,7 @@ def tick_bot(code, seat, version, snapshot, config, match_id=None, fallback=None
                 persist_result(room)
             except RuleError: pass
     finally:
-        with LOCK: BOT_BUSY.discard(code)
+        with LOCK: BOT_BUSY.discard((code, opening_key, seat) if opening_key else code)
 
 def update_autoplay(room):
     g = room.get('game')
@@ -391,10 +426,12 @@ def bot_loop():
             for room in list(ROOMS.values()):
                 g = room.get('game')
                 if not g or g.phase == 'over': continue
+                opening = update_opening_clock(room)
+                opening_key = opening['key'] if opening else None
                 update_autoplay(room)
                 update_priority_clock(room)
                 selecting = g.mode == 'conveyor' and g.phase == 'draft' and not g.core.pending
-                if room['code'] in BOT_BUSY or not selecting and audio_waiting(room): continue
+                if not opening_key and room['code'] in BOT_BUSY or not selecting and audio_waiting(room): continue
                 clock = room.get('priorityClock') if not (g.mode == 'conveyor' and g.core.pending) else None
                 if clock and not room['players'][clock['seat']].get('autoplay'): continue
                 if g.priority_paused(): continue
@@ -410,12 +447,13 @@ def bot_loop():
                     p = room['players'][seat]
                     if clock and clock['seat'] != seat: continue
                     if not (p.get('bot') or p.get('autoplay')): continue
-                    if g.phase == 'setup' and confirmation_seat(room) != seat: continue
+                    job = (room['code'], opening_key, seat) if opening_key else room['code']
+                    if job in BOT_BUSY: continue
                     move = g.bot_action(seat)
                     if not move: continue
                     if config and p.get('bot') and p.get('model'):
-                        BOT_BUSY.add(room['code'])
-                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId'], move), daemon=True).start()
+                        BOT_BUSY.add(job)
+                        threading.Thread(target=tick_bot, args=(room['code'], seat, room['revision'], copy.deepcopy(g), config.copy(), room['matchId'], move, opening_key), daemon=True).start()
                     else:
                         try:
                             perform_game_action(room, seat, move)
@@ -461,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
                 user = self.session()
                 if path == '/api/health': return self.respond({'ok': True, 'port': self.server.server_port})
                 if path == '/api/state':
-                    if not user: return self.respond({'user': None, 'room': None, 'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES}})
+                    if not user: return self.respond({'user': None, 'room': None, 'matchCounts': match_counts(), 'features': {'wildUrgent': False, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES}})
                     if self.headers.get('X-Poker-Audio') != '0': STATS.activity(user['id'])
                     room = room_of(user['id'])
                     if room:
@@ -475,7 +513,7 @@ class Handler(BaseHTTPRequestHandler):
                         if not room: WATCHING.pop(user['id'], None)
                     with db() as c:
                         checkin = checkin_status(c.execute('SELECT * FROM daily_checkins WHERE user_id=?', (user['id'],)).fetchone(), checkin_day())
-                    return self.respond({'checkin': checkin, 'matchCounts': match_counts(), 'features': {'wildUrgent': True, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES, 'playtest': bool(user['can_playtest'])}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
+                    return self.respond({'checkin': checkin, 'matchCounts': match_counts(), 'features': {'wildUrgent': False, 'conveyorSkills': list(SKILLS.values()), 'chatPhrases': CHAT_PHRASES, 'playtest': bool(user['can_playtest'])}, 'user': user_view(user), 'room': room_view(room, user['id']) if room else None, 'preferences': {'configured': user['id'] in MODEL_CONFIG, **{k: v for k, v in MODEL_CONFIG.get(user['id'], {}).items() if k != 'key'}}})
                 if not user: return self.respond({'error': '请先登录。'}, 401)
                 if path == '/api/leaderboard':
                     target = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get('roomPlayer')
@@ -655,7 +693,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(groups, list) or any(type(n) is not int or n not in (1, 2, 3, 4, 5) for n in groups): raise RuleError('技能 DLC 选项无效。')
                 if not isinstance(disabled, list) or any(k not in SKILLS for k in disabled): raise RuleError('禁用技能选项无效。')
                 options['skillDlc'] = list(set(groups)); options['disabledSkills'] = list(set(disabled))
-                if not conveyor_skills(options): raise RuleError('传送带至少需要开放一个技能。')
+                if not any(can_open(skill['id']) for skill in conveyor_skills(options)):
+                    raise RuleError('传送带至少需要开放一个可以首出的技能。')
             if reserved: options = {'advancedHui': True, 'advancedDead': False, 'dlc': False, 'tribute': False, '_alternate': True}
             room = {'code': code, 'mode': mode, 'host': uid, 'players': [{'id': uid, 'name': user['username'], 'seen': time.time(), 'connected': True, 'audioEnabled': self.headers.get('X-Poker-Audio') == '1'}], 'options': options, 'game': None, 'revision': 1}
             if b.get('single') is True: room['single'] = True
@@ -665,7 +704,7 @@ class Handler(BaseHTTPRequestHandler):
             if single:
                 room['single'] = True
                 for number in range(1, 4): room['players'].append({'id': 'bot-' + secrets.token_hex(4), 'name': str(number) + '号', 'bot': True, 'model': False, 'connected': True})
-                room['game'] = Game('standard', room['players'], options, interactive=True)
+                room['game'] = Game('standard', room['players'], {**options, '_timedOpening':True}, interactive=True)
                 room['game'].finish_setup()
                 room.pop('idleWait', None)
                 room.pop('modelSessions', None)
@@ -774,6 +813,7 @@ class Handler(BaseHTTPRequestHandler):
                 for p in room['players']:
                     if p.get('departed'): p.update(id='bot-' + secrets.token_hex(4), bot=True, model=False)
                 prev = room.get('game')
+                game_options = {**room['options'], '_timedOpening':True}
                 previous = {'first': next((s for s in prev.finished if s not in getattr(prev, 'urgent_last', [])), 0), 'main': prev.next_main, 'scores': prev.scores, 'captured': prev.captured} if prev and prev.mode != 'landlord' else None
                 if prev and prev.round_complete: previous = {'first': None, 'main': 3, 'scores': [0] * (4 if prev.mode == 'conveyor' else 2), 'captured': []}
                 if room['mode'] == 'conveyor':
@@ -782,16 +822,17 @@ class Handler(BaseHTTPRequestHandler):
                     for p in room['players']:
                         if p.get('bot'):
                             p['skill'] = p.get('botSkill') or secrets.choice(choices)
-                    if all(p.get('skill') == 'scavenge' for p in room['players']):
+                    if not any(can_open(p['skill']) for p in room['players']):
                         bot = next((p for p in room['players'] if p.get('bot') and not p.get('botSkill')), None)
-                        starters = [key for key in choices if key != 'scavenge']
+                        starters = [key for key in choices if can_open(key)]
                         if bot and starters: bot['skill'] = secrets.choice(starters)
-                    room['game'] = ConveyorGame(room['mode'], room['players'], room['options'], previous, interactive=True)
+                    room['game'] = ConveyorGame(room['mode'], room['players'], game_options, previous, interactive=True)
                 else:
-                    room['game'] = Game(room['mode'], room['players'], room['options'], previous, interactive=True)
+                    room['game'] = Game(room['mode'], room['players'], game_options, previous, interactive=True)
                     room['game'].finish_setup()
                 room.pop('idleWait', None)
                 room.pop('modelSessions', None)
+                room.pop('openingVoices', None)
                 room['settled'] = False; room['matchId'] = secrets.token_hex(16)
                 STATS.start(room)
                 queue_audio(room, [{'effect': 'deal'}, {'voice': 'deal'}])
@@ -805,7 +846,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/action':
                 if room['players'][seat].get('autoplay'): raise RuleError('请先取消托管。')
                 if not room['game']: raise RuleError('对局尚未开始。')
-                if drafting and 'matchId' in b:
+                opening = update_opening_clock(room)
+                if 'openingRound' in b:
+                    if not opening or opening['key'] != (b.get('matchId'), b.get('openingPhase'), b['openingRound']) or b.get('action') not in OPENING_ACTIONS[opening['key'][1]]:
+                        raise RuleError('本轮开局操作已结束。')
+                elif drafting and 'matchId' in b:
                     if b['matchId'] != room['matchId']: raise RuleError('对局已更新，请重新选牌。')
                 elif b.get('revision') != room['revision']:
                     raise RuleError('牌桌已变化，请按最新局面出牌。')

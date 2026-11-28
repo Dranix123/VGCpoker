@@ -62,10 +62,28 @@ function conveyorTable(r,g){
  const available=controlled&&g.phase==='play'&&!c.waiting&&!g.finished.includes(me);
  const positions=['bottom','left','top','right'];
  const waitingActor=c.waitingActor??(c.waiting?c.actors.find(a=>a.name===c.waiting)?.id:null);
- const actingSeat=waitingActor!=null?c.actors.find(a=>a.id===waitingActor)?.owner:g.phase==='setup'?g.confirmTurn:g.phase==='play'?(g.priorityClock?.seat??g.priorityResponder??g.turn):null;
+ const actingSeat=waitingActor!=null?c.actors.find(a=>a.id===waitingActor)?.owner:g.phase==='play'?(g.priorityClock?.seat??g.priorityResponder??g.turn):null;
+ let ownProfile='';
  const board=r.players.map((p,s)=>{
   const actors=c.actors.filter(a=>a.owner===s),place=g.finished.indexOf(s),skill=conveyorSkill(actors[0]?.skill??p.skill);
-  return `<div class="seat ${positions[(s-me+4)%4]} ${actingSeat===s?'turn':''}"><div class="seat-portrait">${playerAvatar(p,s)}<small class="seat-role">等级 ${ranks[(g.scores[s]||0)+3]}</small></div><div><div class="seat-meta">${place>=0?'第 '+(place+1)+' 名 · 已走完':actors.map(a=>a.count+(actors.length>1?' 张（'+(actors.indexOf(a)===0?'A':'B')+'）':' 张')).join(' / ')}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}</div>${skill?`<button type="button" class="text-button seat-skill" data-action="cv-skill-info" data-skill="${esc(skill.id)}" aria-label="查看 ${esc(p.name)} 的技能：${esc(skill.name)}">${esc(skill.name)}</button>`:''}${actors.map((a,i)=>conveyorResources(a,actors.length>1?i===0?'A':'B':'')).join('')}${seatRevealedHand(r,g,s)}</div><div class="seat-play conveyor-seat-plays">${actors.map(a=>`<div class="actor-play ${a.play?.order===g.playNumber?'latest':'older'}">${waitingActor===a.id?'<div class="playing">选择中...</div>':g.phase==='draft'?a===actors[0]?(a.drafted?'<div class="seat-play-label">已选牌</div>':'<div class="playing">选牌中...</div>'):'':['setup','rps'].includes(g.phase)?`<div class="opening-display">${a.confirmed?`<div class="seat-play-label">${g.phase==='rps'?'已出拳':'已确认'}</div>`:c.actors.find(x=>(g.phase==='setup'?x.owner===g.confirmTurn&&(c.confirmationActors?.includes(x.id)??true):g.reveals.includes(x.owner))&&!x.confirmed)?.id===a.id?`<div class="playing">${g.phase==='rps'?'等待出拳...':'等待确认...'}</div>`:''}${g.reveals.includes(s)&&actors[0].id===a.id?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:g.phase==='play'&&g.priorityClock?.actor===a.id?`<div class="playing priority-clock" role="status">${r.replay?'优先管牌':g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`:g.phase==='play'&&g.priorityResponseActor===a.id?'<div class="playing priority-clock" role="status">优先管牌</div>':g.phase==='play'&&!g.priorityClock&&g.priorityResponseActor==null&&c.turnActor===a.id&&!c.waiting&&!c.directPending?'<div class="playing">出牌中...</div>':''}${g.phase!=='setup'&&g.phase!=='draft'&&g.phase!=='rps'&&a.play?seatPlayCards(a.play,g):''}</div>`).join('')}</div>${r.bubbles?.[s]?`<div class="speech-bubble">${esc(r.bubbles[s])}</div>`:''}</div>`;
+  const local=!r.spectator&&!r.replay&&s===r.seat, turn=actingSeat===s;
+  const portrait=`<div class="seat-portrait">${playerAvatar(p,s)}<small class="seat-role">等级 ${ranks[(g.scores[s]||0)+3]}</small></div>`;
+  const details=`<div><div class="seat-meta">${place>=0?'第 '+(place+1)+' 名 · 已走完':actors.map((a,i)=>a.count+(actors.length>1?' 张（'+(i===0?'A':'B')+'）':' 张')).join(' / ')}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${p.connected===false?' · 离线':''}</div>${skill?`<button type="button" class="text-button seat-skill" data-action="cv-skill-info" data-skill="${esc(skill.id)}" aria-label="查看 ${esc(p.name)} 的技能：${esc(skill.name)}">${esc(skill.name)}</button>`:''}${actors.map((a,i)=>conveyorResources(a,actors.length>1?i===0?'A':'B':'')).join('')}</div>`;
+  if(local)ownProfile=`<div class="own-player ${turn?'turn':''}" data-own-seat="${s}">${portrait}${details}</div>`;
+  const plays=actors.map((a,i)=>{
+   let content='';
+   if(waitingActor===a.id)content='<div class="playing">选择中...</div>';
+   else if(g.phase==='draft'&&i===0)content=a.drafted?'<div class="seat-play-label">已选牌</div>':'<div class="playing">选牌中...</div>';
+   else if(['setup','rps'].includes(g.phase))content=openingDisplay(g,c.revealActors?.includes(a.id)??(i===0&&g.reveals.includes(s)),a.confirmed);
+   else if(g.phase==='play'){
+    if(g.priorityClock?.actor===a.id)content=`<div class="playing priority-clock" role="status">${r.replay?'优先管牌':g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`;
+    else if(g.priorityResponseActor===a.id)content='<div class="playing priority-clock" role="status">优先管牌</div>';
+    else if(!g.priorityClock&&g.priorityResponseActor==null&&c.turnActor===a.id&&!c.waiting&&!c.directPending)content='<div class="playing">出牌中...</div>';
+   }
+   if(!['setup','draft','rps'].includes(g.phase)&&a.play)content+=seatPlayCards(a.play,g);
+   return `<div class="actor-play ${a.play?.order===g.playNumber?'latest':'older'}">${content}</div>`;
+  }).join('');
+  return `<div class="seat ${positions[(s-me+4)%4]} ${local?'own-seat':''} ${turn?'turn':''}">${local?'':portrait+details}<div>${seatRevealedHand(r,g,s)}</div><div class="seat-play conveyor-seat-plays">${plays}</div>${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
  }).join('');
  let center='',openingActions='';
  const pile=`<div class="draw-pile" aria-label="牌堆 ${c.pile} 张"><span class="pile-back">VGC</span><strong>${c.pile} 张</strong></div>`;
@@ -74,8 +92,15 @@ function conveyorTable(r,g){
   center=c.waiting?'<div class="table-prompt">开局技能确认</div>':
    `<div class="table-prompt">开局选牌</div><p role="status">已确认 ${ready} / ${r.players.length} 人${!r.spectator&&c.drafted?' · 等待其他玩家':''}</p>`;
  }
- if(g.phase==='setup'){center='<div class="table-prompt">开局亮牌</div>';if(g.confirmationSeats?.includes(me)??true)openingActions=`<div class="phase-actions conveyor-opening-actions">${!r.spectator&&c.skill!=='scavenge'&&g.openingFirst===null&&g.hand.some(x=>x.rank===3&&x.suit==='S')?'<button class="secondary" data-action="reveal">亮黑桃 3</button>':''}${!r.spectator?`<button class="primary" data-action="cv-confirm" ${g.ready.includes(me)?'disabled':''}>${g.ready.includes(me)?'已确认':'确认开始'}</button>`:''}</div>`}
- if(g.phase==='rps'){center='<div class="table-prompt">猜拳定先手</div>';openingActions=!r.spectator&&g.reveals.includes(me)&&!g.ready.includes(me)?'<div class="phase-actions conveyor-opening-actions">'+[['rock','石头'],['paper','布'],['scissors','剪刀']].map(([v,t])=>`<button class="secondary" data-action="rps" data-value="${v}">${t}</button>`).join('')+'</div>':`<p class="opening-wait">${g.ready.includes(me)?'已出拳，等待其他玩家':'亮牌玩家正在猜拳'}</p>`;const report=[...g.log].reverse().find(text=>text.startsWith('猜拳平局')||text.startsWith('猜拳胜者'));if(report&&g.reveals.includes(me)&&!g.ready.includes(me))openingActions=`<p class="rps-feedback" role="status">${esc(report)}</p>`+openingActions;}
+ if(g.phase==='setup'){
+  center='<div class="table-prompt">开局亮牌</div>'+openingCountdown(g);
+  if(!r.spectator&&g.openingFirst===null&&c.confirmationActors?.includes(c.actor)&&!c.revealActors?.includes(c.actor))
+   openingActions='<div class="phase-actions opening-actions"><button class="secondary" data-action="reveal">亮黑桃 3</button></div>';
+ }
+ if(g.phase==='rps'){
+  center='<div class="table-prompt">猜拳定先手</div>'+openingCountdown(g);
+  openingActions=rpsActions(r,g,c.revealActors?.includes(c.actor)??g.reveals.includes(me),actor?.confirmed??g.ready.includes(me));
+ }
  const order=[...g.finished,...r.players.map((_,seat)=>seat).filter(seat=>!g.finished.includes(seat))];
  const standings=g.phase==='over'&&g.winner.length?`<table class="conveyor-standings"><thead><tr><th>名次</th><th>玩家</th><th>等级</th></tr></thead><tbody>${order.map((seat,index)=>`<tr><td>${r.options?.firstOutEndsRound&&index>0?'未走完':index+1}</td><td>${esc(r.players[seat].name)}</td><td>${ranks[g.scores[seat]+3]}${c.gradeChanges?.[seat]?'（+'+c.gradeChanges[seat]+'）':'（不变）'}</td></tr>`).join('')}</tbody></table>`:'';
  const result=g.phase==='over'?`<section class="result-banner"><h2>${r.spectator||!g.winner.length?'本局结束':g.winner.includes(me)?'胜利':'失败'}</h2><p>${g.winner.length?g.winner.map(s=>esc(r.players[s].name)).join('、')+' 获胜 · '+(g.roundComplete?'本轮结束 · 下一轮主牌 ':'下一局主牌 ')+ranks[g.nextMain]:'等级不变'}</p>${standings}<div class="settlement-hands">${c.actors.filter(a=>c.remainingActorHands?.[a.id]?.length).map(a=>{const cards=c.remainingActorHands[a.id];return `<section class="settlement-hand"><h3>${esc(a.name)} <small>剩余 ${cards.length} 张</small></h3><div class="settlement-cards">${cards.length?cards.map(x=>`<span class="settlement-card ${['H','D'].includes(x.suit)||x.rank===17?'red':''}">${ranks[x.rank]}${suits[x.suit]}</span>`).join(''):'<span class="muted">已出完</span>'}</div></section>`;}).join('')}</div></section>`:'';
@@ -88,7 +113,7 @@ function conveyorTable(r,g){
  const focusButtons=focus.length>1&&g.phase!=='draft'?`<div class="hand-identities" aria-label="切换手牌">${focus.map((a,i)=>`<button class="${a.id===c.actor?'primary':'secondary'}" data-action="cv-focus" data-actor="${a.id}" aria-pressed="${a.id===c.actor}">手牌 ${i===0?'A':'B'} · ${a.count}${g.phase==='play'&&a.id===c.turnActor?' · 出牌':''}</button>`).join('')}</div>`:'';
  const draft=g.phase==='draft'&&!c.drafted?`<div class="draft-controls"><span>${c.skill==='twins'?'选择给手牌 A 的 '+c.keep+' 张，其余给 B':'请选择 '+c.keep+' 张保留'}</span><button class="primary" data-action="cv-keep" ${!controlled?'disabled':''}>确认保留 ${c.keep} 张</button></div>`:'';
  const zones=`${c.zone.length?`<details class="conveyor-zone" data-table-panel="zone"><summary>展示区 · ${c.zone.length} 张未出牌</summary><div>${c.zone.map(x=>`<button class="secondary" data-action="cv-retrieve" data-id="${esc(x.id)}">${ranks[x.rank]}${suits[x.suit]}</button>`).join('')}</div></details>`:''}${c.boundHands.map(h=>`<details data-table-panel="bound-${esc(h.seat??h.name)}"><summary>绑定手牌 · ${esc(h.name)}</summary>${h.cards.map(x=>`${ranks[x.rank]}${suits[x.suit]}${x.effective!==undefined&&x.effective!==x.rank?'→'+(x.effective===g.main?'主':'')+ranks[x.effective]:''}`).join(' ')}${h.zone?.length?`<p>未出展示区：${h.zone.map(x=>`${ranks[x.rank]}${suits[x.suit]}`).join(' ')}</p>`:''}</details>`).join('')}`;
- const hand=r.spectator?'':`<section class="hand-area"><div class="hand-top"><strong>${g.finished.includes(me)?'已走完':own.autoplay?'托管中':`手牌 <span class="muted">/ ${g.hand.length} 张</span>`}</strong><div class="hand-tools">${skillButton}${handTools(r)}</div></div>${focusButtons}${openingActions}<div class="hand ${g.hand.length>23?'dense':''}">${g.hand.map(x=>card(x,controlled&&g.phase!=='over'&&(g.phase!=='draft'||!c.drafted),g)).join('')}</div>${available?actionDock(options):''}${draft}${zones}</section>`;
+ const hand=r.spectator?'':`<section class="hand-area"><div class="hand-top">${ownProfile}<div class="hand-tools">${skillButton}${handTools(r)}</div></div>${focusButtons}${openingActions}<div class="hand ${g.hand.length>23?'dense':''}">${g.hand.map(x=>card(x,controlled&&g.phase!=='over'&&(g.phase!=='draft'||!c.drafted),g)).join('')}</div>${available?actionDock(options):''}${draft}${zones}</section>`;
  return roomHeading(r,true,history)+`<div class="table-layout conveyor-table"><section class="board" data-table="${esc(tableKey(r))}">${board}<div class="table-center">${pile}${center}</div></section>${r.replay?history:''}</div>${q&&!own?.autoplay&&!conveyorHandChoices.has(q.kind)?conveyorChoice(q,c):''}${hand}${q&&!own?.autoplay&&conveyorHandChoices.has(q.kind)?conveyorChoice(q,c):''}${publicHandsPanel(r,g)}${r.replay?result:''}`;
 }
 function skillOptions(name, legend, choices, {value=choices.find(choice=>!choice[2])?.[0], className='', hidden=false}={}){
@@ -142,7 +167,7 @@ async function conveyorPlay(){
  const g=state.room.game,c=g.conveyor;
  if(urgentSelected()){
   if(c.waiting||c.resources?.ban){toast(c.waiting?'请先完成当前选择。':'禁手期间不能使用急牌。');return;}
-  const wild=wildcardPayload(),urgentIds=g.hand.filter(x=>selected.has(x.id)&&((x.effective??x.rank)===18||x.rank===14&&(x.suit==='S'||c.skill==='wild')&&(typeof wild==='object'?wildRank(wild[x.id])===18:wild===18))).map(x=>x.id);
+  const urgentIds=g.hand.filter(x=>selected.has(x.id)&&(x.effective??x.rank)===18).map(x=>x.id);
   if(urgentIds.length!==1){toast('每次选择一张急牌。');return;}
   const uses=g.hand.find(x=>x.id===urgentIds[0]).urgentUses||0,forced=uses>=3;
   const effects=[
@@ -180,7 +205,6 @@ document.addEventListener('click',async e=>{
  if(action==='cv-skill-select'){if(await mutation('skill',{skill:b.dataset.skill}))closeModal();}
  if(action==='cv-keep'){if(await gameAction('keep',{ids:[...selected],actor:c.actor,matchId:state.room.matchId})){resetConveyorSelection();renderedKey='';render();}}
  if(action==='cv-focus'){await gameAction('focus',{actor:Number(b.dataset.actor)});resetConveyorSelection();}
- if(action==='cv-confirm')await gameAction('confirm',{actor:c.actor});
  if(action==='cv-choice-original'){conveyorChosen=c.choice.cards.map(x=>x.id);$('#cv-choice-form').requestSubmit();}
  if(action==='cv-choice-card'){const id=b.dataset.id;conveyorChosen=conveyorChosen.includes(id)?conveyorChosen.filter(i=>i!==id):[...conveyorChosen,id];renderedKey='';render();}
  if(action==='cv-skill-card'){const id=b.dataset.id;selected.has(id)?selected.delete(id):selected.add(id);b.classList.toggle('chosen',selected.has(id));b.setAttribute('aria-pressed',selected.has(id));$('.skill-picked-count').textContent='当前选中 '+selected.size+' 张牌。';if(c.skill==='balance')$('#cv-skill-form button[type=submit], #cv-skill-form button.primary').textContent='换 '+selected.size+' 张并结束行动';selectionUpdate();}
@@ -241,7 +265,7 @@ document.addEventListener('submit',async e=>{
   action='choice';args.ids=c.choice.cards?conveyorChosen:[...selected];
   if(f.elements.value)args.value=c.choice.kind==='duel-start'?f.elements.value.value==='1':Number(f.elements.value.value);
  }
- if(f.id==='cv-urgent-form'){action='urgent';args.ids=[...f.querySelectorAll('[name=urgentIds]')].map(x=>x.value);if(f.elements.effect.value==='discard')args.ids.push(...[...f.querySelectorAll('[name=discardIds]:checked')].map(x=>x.value));args.direction=f.elements.direction.value;const wild=wildcardPayload();if(wild!==undefined)args.wildcard=typeof wild==='object'?Object.fromEntries(Object.entries(wild).filter(([id])=>args.ids.includes(id))):wild;}
+ if(f.id==='cv-urgent-form'){action='urgent';args.ids=[...f.querySelectorAll('[name=urgentIds]')].map(x=>x.value);if(f.elements.effect.value==='discard')args.ids.push(...[...f.querySelectorAll('[name=discardIds]:checked')].map(x=>x.value));args.direction=f.elements.direction.value;}
  if(f.elements.target&&f.elements.target.value!=='')args.target=Number(f.elements.target.value);
  if(f.elements.effect)args.effect=f.elements.effect.value;
  if(f.elements.suit)args.suit=f.elements.suit.value;

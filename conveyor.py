@@ -9,7 +9,7 @@ import random
 from collections import Counter
 from typing import NamedTuple, Optional
 from engine import Game, RuleError, LABELS, RANKS, PLAIN_RANK_OFFSET, PRIORITY_ACTIONS, deck, strength, printed_rank, classifications, wildcard_rank, valid_wildcard
-from conveyor_skills import SKILLS, available
+from conveyor_skills import SKILLS, available, can_open
 from game_ai import reaction_move, rule_choice, skill_moves
 
 SPECIALS = ('cross', 'hook', 'dot', 'press', 'dead', 'dead4')
@@ -79,7 +79,8 @@ class ConveyorRound(Game):
             for s in order:
                 if index < self.deal_counts[s]: self.gain(s, 1, initial=True)
         self.initial_counts = [len(h) for h in self.hands]
-        if self.first is not None and self.skill(self.first, 'scavenge'): self.first = self.next_seat(self.first)
+        if self.first is not None:
+            self.first = self.next_opening_seat(self.first)
         self.announce('请选择开局保留的牌。')
 
     def announce(self, text):
@@ -97,6 +98,14 @@ class ConveyorRound(Game):
 
     def active(self):
         return [s for s in range(len(self.players)) if s not in self.finished]
+
+    def next_opening_seat(self, start):
+        index = self.turn_order.index(start)
+        seats = self.turn_order[index:] + self.turn_order[:index]
+        return next((seat for seat in seats if seat not in self.finished and can_open(self.skills[seat])), None)
+
+    def random_opening_seat(self):
+        return random.choice([seat for seat in self.active() if can_open(self.skills[seat])])
 
     def skill(self, seat, key):
         return self.skills[seat] == key and not self.resources[seat].get('skillBan', 0)
@@ -308,7 +317,7 @@ class ConveyorRound(Game):
         self.announce(self.name(seat) + '完成出牌，第%d名。' % len(self.complete_owners))
         active_owners = [o for o in range(4) if o not in self.complete_owners]
         first_out_ends_round = self.options.get('firstOutEndsRound', False)
-        if first_out_ends_round or len(active_owners) <= 1:
+        if first_out_ends_round or len(active_owners) <= 1 or not self.play_number and self.next_opening_seat(self.turn) is None:
             first = self.complete_owners[0]
             self.winner = [s for s, owner in enumerate(self.owners) if owner == first]
             self.round_complete = first_out_ends_round or self.main == 14
@@ -343,6 +352,8 @@ class ConveyorRound(Game):
     def validate_play(self, seat, cards, action='play', wildcard=None):
         if self.direct_passes and action == 'play':
             raise RuleError('请先完成特殊出牌的响应和摸牌。')
+        if not self.play_number and not can_open(self.skills[seat]):
+            raise RuleError('开局只保留一张牌的技能不能首出。')
         self._validating_seat = seat
         transformed = self.transformed(seat, cards, self.extra_args)
         if any(c['rank'] == 18 for c in transformed): raise RuleError('急牌请单独选择效果使用。')
@@ -581,7 +592,10 @@ class ConveyorRound(Game):
             if not self.priority['pending'] and not self.priority['bots']: self.priority = None
 
     def enter_turn(self):
-        if self.phase != 'play' or self.start_turn == (self.turn, self.resources[self.turn]['turns']): return
+        if self.phase != 'play': return
+        if not self.play_number and not can_open(self.skills[self.turn]):
+            self.turn = self.next_opening_seat(self.turn)
+        if self.start_turn == (self.turn, self.resources[self.turn]['turns']): return
         self.start_turn = (self.turn, self.resources[self.turn]['turns'])
         seat = self.turn
         self.start_effects[seat] = self.turn_effects(seat)
@@ -820,23 +834,16 @@ class ConveyorRound(Game):
             return
         if action == 'promote': raise RuleError('传送带不使用升变。')
         if self.phase in ('setup', 'rps'):
-            if action == 'reveal' and self.skill(seat, 'scavenge'): raise RuleError('顺手牵羊不能作为首位出牌者。')
             super().action(seat, action, ids, **args)
-            if self.phase == 'play':
-                while self.skill(self.turn, 'scavenge'): self.turn = self.next_seat(self.turn)
-                self.free_lead(); self.enter_turn()
+            self.enter_opening_play()
             return
         if action == 'skill':
             if self.resources[seat]['ban']: raise RuleError('禁手期间不能使用技能。')
             self.use_skill(seat, ids, **args)
             return
         if self.phase != 'play': raise RuleError('尚未开始出牌。')
-        if action == 'auto':
-            declaration = args.get('wildcard')
-            def urgent_card(card):
-                assigned = wildcard_rank(declaration.get(card['id'], 14)) if isinstance(declaration, dict) else declaration
-                return self.effective_rank(seat, card['rank']) == 18 or card['rank'] == 14 and (card['suit'] == 'S' or self.skill(seat, 'wild')) and assigned == 18
-            if any(urgent_card(c) for c in self.select(seat, ids)): action = 'urgent'
+        if action == 'auto' and any(self.effective_rank(seat, c['rank']) == 18 for c in self.select(seat, ids)):
+            action = 'urgent'
         if action == 'urgent':
             if self.resources[seat]['ban']: raise RuleError('禁手期间不能使用急牌。')
             if seat != self.turn: self.ai_reactions[seat] = self.reaction_key()
@@ -931,23 +938,27 @@ class ConveyorRound(Game):
             self.initial_counts = [len(h) for h in self.hands]
             self.announce('选牌完成。')
             self.finish_setup()
-            if self.phase == 'play':
-                while self.skill(self.turn, 'scavenge'): self.turn = self.next_seat(self.turn)
-                self.free_lead(); self.enter_turn()
+            self.enter_opening_play()
+
+    def enter_opening_play(self):
+        if self.phase == 'play':
+            self.free_lead(); self.enter_turn()
+
+    def expire_opening(self):
+        self.action_reports = []; self.action_gains = []
+        super().expire_opening()
+        self.enter_opening_play()
 
     def can_reveal(self, seat):
-        return not self.skill(seat, 'scavenge') and super().can_reveal(seat)
+        return can_open(self.skills[seat]) and super().can_reveal(seat)
 
     def confirmation_seats(self):
         return [s for s in self.active() if self.can_reveal(s)] if self.phase == 'setup' else []
 
     def urgent(self, seat, ids, **args):
         chosen = self.select(seat, ids)
-        wildcard = args.get('wildcard')
-        eligible = {c['id'] for c in chosen if c['rank'] == 14 and (c['suit'] == 'S' or self.skill(seat, 'wild'))}
-        if isinstance(wildcard, dict) and (not set(wildcard) <= eligible or any(not valid_wildcard(v, urgent=True) for v in wildcard.values())): raise RuleError('赖子指定无效。')
-        if self.skill(seat, 'wild') and any((wildcard_rank(wildcard.get(i)) if isinstance(wildcard, dict) else wildcard) == 18 for i in eligible): raise RuleError('千变不能代替急牌。')
-        urgent = [c for c in chosen if self.effective_rank(seat, c['rank']) == 18 or c['id'] in eligible and (wildcard_rank(wildcard.get(c['id'])) if isinstance(wildcard, dict) else wildcard) == 18]
+        if args.get('wildcard') is not None: raise RuleError('使用急牌时无需指定赖子。')
+        urgent = [c for c in chosen if self.effective_rank(seat, c['rank']) == 18]
         effect = args.get('effect')
         labels = {'draw':'加牌','discard':'弃牌','ban':'禁手','shield':'免发牌','maximum':'弃最大牌','silence':'封禁技能','judge-boost':'判定点数与花色强化','rotate':'轮换并销毁'}
         if len(urgent) != 1 or effect not in labels: raise RuleError('选择一张急牌并选择效果。')
@@ -1412,7 +1423,7 @@ class ConveyorGame:
         choices = {s['id'] for s in available(self.options)}
         chosen = [p.get('skill') for p in players]
         if any(s not in choices for s in chosen): raise RuleError('每位玩家须选择一个已启用的技能。')
-        if all(s == 'scavenge' for s in chosen): raise RuleError('顺手牵羊不能首出，请至少一名玩家选择其他技能。')
+        if not any(map(can_open, chosen)): raise RuleError('至少一名玩家须选择可以首出的技能。')
         actors = []
         for owner, p in enumerate(players):
             actors.append({**p, 'owner':owner})
@@ -1458,8 +1469,10 @@ class ConveyorGame:
             return requested
         if self.core.pending and self.core.pending[0]['seat'] in candidates: return self.core.pending[0]['seat']
         if self.core.phase == 'setup':
-            eligible = self.core.confirmation_seats()
+            eligible = [s for s in self.core.confirmation_seats() if s not in self.core.reveals]
             return next((s for s in candidates if s in eligible), self.focus[seat])
+        if self.core.phase == 'rps':
+            return next((s for s in candidates if s in self.core.reveals and s not in self.core.rps), self.focus[seat])
         if self.core.turn in candidates: return self.core.turn
         return self.focus[seat]
 
@@ -1481,6 +1494,11 @@ class ConveyorGame:
             self.core.__dict__ = state
             if isinstance(e, RuleError): raise
             raise RuleError('技能参数无效，请重新选择。') from e
+
+    def expire_opening(self):
+        self.core.expire_opening()
+        if self.phase == 'play':
+            self.focus[self.core.owners[self.core.turn]] = self.core.turn
 
     def candidates(self, seat):
         actor = self.actor(seat, self.focus[seat])
@@ -1518,7 +1536,7 @@ class ConveyorGame:
 
     def view(self, seat):
         self.sync_players()
-        actor = self.actor(seat, None if self.core.phase == 'setup' else self.focus[seat]) if seat is not None else None
+        actor = self.actor(seat, None if self.core.phase in ('setup', 'rps') else self.focus[seat]) if seat is not None else None
         if seat is not None and self.core.pending and self.core.owners[self.core.pending[0]['seat']] == seat: actor = self.core.pending[0]['seat']
         if seat is not None and self.core.priority and actor not in self.core.priority['pending']:
             actor = next((s for s in self.core.priority['pending'] if self.core.owners[s] == seat), actor)
@@ -1534,7 +1552,7 @@ class ConveyorGame:
         if view['response']: view['response']['key'] = str(actor) + '/' + str(view['response']['key'])
         q = c.pending[0] if c.pending else None
         own_q = q if q and seat is not None and c.owners[q['seat']] == seat else None
-        view['conveyor'] = dict(gradeChanges=[c.scores[owner] - c.initial_scores[owner] for owner in range(4)], actor=actor, turnActor=c.turn, confirmationActors=c.confirmation_seats(), skill=c.skills[actor] if actor is not None else None,
+        view['conveyor'] = dict(gradeChanges=[c.scores[owner] - c.initial_scores[owner] for owner in range(4)], actor=actor, turnActor=c.turn, confirmationActors=c.confirmation_seats(), revealActors=c.reveals, skill=c.skills[actor] if actor is not None else None,
             pile=len(c.pile), discard=len(c.discard), directPending=bool(c.direct_passes), drafted=actor in c.drafted if actor is not None else False,
             keep=min(c.keep_counts[actor] // 2 if c.skill(actor, 'twins') else c.keep_counts[actor], len(c.hands[actor])) if actor is not None else 0,
             zone=copy.deepcopy(c.zones[actor]) if actor is not None else [],

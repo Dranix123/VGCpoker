@@ -4,11 +4,51 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const names = {conveyor:'传送带',landlord:'斗地主',standard:'4A4A4',trio:'4A4A4 · 三人',basic:'4A4 · 基础'};
 const ranks = {3:'3',4:'4',5:'5',6:'6',7:'7',8:'8',9:'9',10:'10',11:'J',12:'Q',13:'K',14:'A',15:'2',16:'小王',17:'大王',18:'急'};
 for(let n=3;n<=15;n++)ranks[n+20]=ranks[n];
-const wildRanks = () => [...Array.from({length:13},(_,i)=>i+3), ...(state.features?.wildUrgent&&!(state.room?.mode==='conveyor'&&state.room.game?.conveyor?.skill==='wild')?[18]:[])];
+const wildRanks = () => Array.from({length:13},(_,i)=>i+3);
 const suits = {S:'♠',H:'♥',C:'♣',D:'♦',T:'Δ',J:'✦',U:'↗'};
 let state = {user:null,room:null}, selected = new Set(), wildcardMap = {}, hintIndex = 0, hintMoves = [], renderedKey = '', lastPhase = '', busy = false, authTab = 'login', createMode = 'landlord', modalKind = '';
 let mutationSequence=0;
 let responseKey='', pollTimer, toastTimer, screen='home', settingsTab='account', connectionLost=false;
+let partyMode=false, partyTable, partyPlayNumber=0, partyBurst;
+try {partyMode=localStorage.getItem('vgc-party-mode')==='1';} catch {}
+
+function observePartyPlay(room){
+  const game=room?.game, table=game?tableKey(room):null;
+  const playNumber=game?.playNumber??0;
+  if(table!==partyTable){
+    partyTable=table;partyPlayNumber=playNumber;
+    partyBurst?.remove();
+    return;
+  }
+  if(playNumber<=partyPlayNumber)return;
+  partyPlayNumber=playNumber;
+  if(!partyMode||document.hidden||window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+  const board=$('#view .board')||$('#view .result-stage');
+  if(!board)return;
+  partyBurst?.remove();
+  const burst=document.createElement('div'), rect=board.getBoundingClientRect();
+  partyBurst=burst;
+  burst.className='party-burst';
+  burst.setAttribute('aria-hidden','true');
+  Object.assign(burst.style,{left:rect.left+'px',top:rect.top+'px',width:rect.width+'px',height:rect.height+'px'});
+  const colors=['#f3ba50','#e96a93','#55c6bf','#a394f5','#ed804e'];
+  const spread=Math.min(rect.width*.42,rect.height*.8,235);
+  for(let i=0;i<24;i++){
+    const piece=document.createElement('i');
+    const angle=i*2*Math.PI/24, distance=spread*(.5+Math.random()*.5);
+    const x=Math.cos(angle)*distance, y=Math.sin(angle)*distance;
+    piece.style.backgroundColor=colors[i%colors.length];
+    burst.append(piece);
+    piece.animate([
+      {transform:'translate(0,0)',opacity:0,offset:0},
+      {opacity:1,offset:.15},
+      {transform:`translate(${x}px,${y}px) rotate(${i*41}deg)`,opacity:.9,offset:.65},
+      {transform:`translate(${x}px,${y+34}px) rotate(${i*52}deg)`,opacity:0,offset:1}
+    ],{duration:680,easing:'cubic-bezier(.15,.72,.36,1)',fill:'both'});
+  }
+  document.body.append(burst);
+  setTimeout(()=>burst.remove(),700);
+}
 const modal = $('#modal');
 function toast(message) { $('#toast').textContent = message; $('#toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3500); }
 async function api(path, body) {
@@ -126,7 +166,6 @@ function render() {
     if(message)hand.insertAdjacentHTML('afterbegin',`<p class="action-status" role="status">${message}</p>`);
   }
   if(r?.mode==='conveyor')conveyorAfterRender();
-  if(g?.phase==='setup'&&g.confirmTurn!==r.seat)$$('[data-action]').filter(b=>['confirm','reveal','promote','cv-confirm'].includes(b.dataset.action)).forEach(b=>b.disabled=true);
   if(g?.priorityClock&&g.priorityClock.seat!==r.seat)$$('[data-action]').filter(b=>b.dataset.action==='pass'||b.dataset.action==='play'&&!g.conveyor).forEach(b=>b.disabled=true);
   if(r?.audioWaiting){
     const actions=new Set(['start','play','pass','bid','reveal','confirm','promote','rps','tribute-pick','tribute-return','gift-player']);
@@ -146,6 +185,7 @@ function render() {
   }
   if(g && lastPhase!==g.phase){if(!lastPhase||lastPhase==='over'||['play','over'].includes(g.phase))window.scrollTo({top:0,behavior:'instant'});if(g.phase==='over'){clearTimeout(toastTimer);$('#toast').classList.remove('show');}if(lastPhase==='rps'&&g.phase==='play')toast('猜拳获胜：'+r.players[g.turn].name+'，先出牌。');hintMoves=[];hintIndex=0;lastPhase=g.phase;}
   if(!g)lastPhase='';
+  observePartyPlay(r);
   gameAudio.observe(r);
 
 }
@@ -164,10 +204,11 @@ function flowScreen(){
 }
 function settingsScreen(){
  const u=state.user, pref=state.preferences||{};
- const tabs=[['account','账号信息'],['audio','声音'],['api','模型 API'],['archive','积分与战绩']];
+ const tabs=[['account','账号信息'],['audio','声音'],['effects','特效'],['api','模型 API'],['archive','积分与战绩']];
  if(u&&state.features?.playtest)tabs.push(['playtest','自动对局']);
  let content='';
  if(settingsTab==='audio')content=`<h2>声音</h2><div class="audio-controls">${[['effects','音效'],['music','音乐'],['voice','语音']].map(([key,label])=>`<label><span>${label}<output id="volume-${key}">${Math.round(gameAudio.volumes[key]*100)}%</output></span><input type="range" min="0" max="100" value="${Math.round(gameAudio.volumes[key]*100)}" data-volume="${key}" aria-label="${label}音量"></label>`).join('')}</div><div class="phase-actions"><button class="secondary" data-action="preview-effect">试听音效</button><button class="secondary" data-action="preview-voice">试听语音</button></div>`;
+ else if(settingsTab==='effects')content=`<h2>特效</h2><label class="party-setting"><input type="checkbox" data-party-mode ${partyMode?'checked':''}>派对狂欢</label><p class="modal-desc">每次成功出牌时，在牌桌上撒彩纸。</p>`;
  else if(!u)content='<h2>请先登录</h2><p class="modal-desc">登录后管理账号、保存模型 API 和查看战绩。</p><button class="primary" data-action="auth">登录 / 注册 →</button>';
  else if(settingsTab==='account')content=`<h2>账号信息</h2><p class="modal-desc">${esc(u.rank)} · ${u.points} 积分 · ${u.games} 场真人对局</p><form class="form" id="account-form"><label>玩家昵称<input name="name" value="${esc(u.name)}" required minlength="2" maxlength="18" autocomplete="username"></label><label>当前密码<input name="currentPassword" type="password" required autocomplete="current-password" placeholder="保存信息时验证身份"></label><label>新密码<input name="newPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="留空表示保留当前密码"></label><p class="form-note">修改密码后，其他设备的登录会话将退出。</p><p class="form-error"></p><button class="primary" type="submit">保存账号信息 →</button></form><div class="divider"></div><button class="text-button" data-action="logout">退出账号 ↗</button>`;
  else if(settingsTab==='api')content=`<h2>模型 API</h2><p class="modal-desc">${pref.configured?'已配置 · 密钥已保存到本次服务的内存中':'兼容 Chat Completions 的 HTTPS API。'}</p><form class="form" id="api-settings-form"><label>API 基础地址<input name="endpoint" type="url" required value="${esc(pref.endpoint||'')}" placeholder="https://api.example.com/v1"></label><label>模型名称<input name="model" required maxlength="100" value="${esc(pref.model||'')}" placeholder="模型 ID"></label><label>API 密钥<input name="key" type="password" ${pref.configured?'':'required'} autocomplete="off" placeholder="${pref.configured?'密钥已保存；留空表示不更换':'输入你的 API Key'}"></label><p class="form-note">模型只看到自己的手牌与公开局面。无效回答或请求失败时使用规则 AI。密钥不会返回浏览器或写入数据库，服务重启后需要重新配置。模型提供商可能按请求收费。</p><p class="form-error"></p><button class="primary" type="submit">保存模型配置 →</button></form>${pref.configured?'<div class="divider"></div><button class="text-button" data-action="clear-api">清除 API 配置 ↗</button>':''}`;
@@ -190,6 +231,7 @@ function waiting(r) {
 function table(r,g) {
   if(r.mode==='conveyor')return conveyorTable(r,g);
   const me=r.seat??0;
+  let ownProfile='';
   const positions=r.capacity===3?['bottom','left','right']:['bottom','left','top','right'];
   const seats=r.players.map((p,s)=>{
     const relative=(s-me+r.capacity)%r.capacity;
@@ -198,20 +240,24 @@ function table(r,g) {
     const played=g.seatPlays?.[s]||(!g.seatPlays&&g.lastSeat===s?{...g.last,order:1}:null);
     const playNumber=g.playNumber??1;
     const playStatus=g.phase==='play'&&g.priorityClock?.seat===s?`<div class="playing priority-clock" role="status">${r.replay?'优先管牌':g.priorityClock.paused?'优先管牌 · 计时暂停':'优先管牌 '+g.priorityClock.remaining+' 秒'}</div>`:g.phase==='play'&&g.priorityResponder===s?'<div class="playing priority-clock" role="status">优先管牌</div>':g.phase==='play'&&!g.priorityClock&&g.priorityResponder==null&&g.turn===s?'<div class="playing" role="status">出牌中...</div>':'';
-    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play opening-display" role="status">${g.ready.includes(s)?`<div class="seat-play-label">${g.phase==='rps'?'已出拳':'已确认'}</div>`:(g.phase==='setup'?g.confirmTurn:g.reveals.find(i=>!g.ready.includes(i)))===s?`<div class="playing">${g.phase==='rps'?'等待出拳...':'等待确认...'}</div>`:''}${g.reveals.includes(s)?'<div class="seat-play-label">亮牌</div><div class="seat-play-cards"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':''}</div>`:played||playStatus?`<div class="seat-play ${played&&!played.passed&&played.order===playNumber?'latest':played&&!playStatus?'older':''}">${playStatus}${played?seatPlayCards(played,g):''}</div>`:'';
-    return `<div class="seat ${positions[relative]} ${(g.phase==='setup'?g.confirmTurn===s:['play','bid'].includes(g.phase)&&((g.priorityClock?.seat??g.priorityResponder??g.turn)===s))?'turn':''} ${finish>=0?'finished':''}"><div class="seat-portrait">${playerAvatar(p,s)}${role?`<small class="seat-role">${role}</small>`: ''}</div><div><div class="seat-meta">${g.urgentLast.includes(s)?'急牌末名':g.phase==='over'&&g.counts[s]>0?'剩 '+g.counts[s]+' 张':finish>=0?'第 '+(finish+1)+' 名':g.counts[s]+' 张牌'}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${!p.connected?' · 离线':''}</div>${seatRevealedHand(r,g,s)}</div>${playedCards}${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
+    const playedCards=['setup','rps'].includes(g.phase)?`<div class="seat-play opening-display">${openingDisplay(g,g.reveals.includes(s),g.ready.includes(s))}</div>`:played||playStatus?`<div class="seat-play ${played&&!played.passed&&played.order===playNumber?'latest':played&&!playStatus?'older':''}">${playStatus}${played?seatPlayCards(played,g):''}</div>`:'';
+    const own=!r.spectator&&!r.replay&&s===r.seat;
+    const turn=['play','bid'].includes(g.phase)&&(g.priorityClock?.seat??g.priorityResponder??g.turn)===s;
+    const portrait=`<div class="seat-portrait">${playerAvatar(p,s)}${role?`<small class="seat-role">${role}</small>`:''}</div>`;
+    const meta=`<div class="seat-meta">${g.urgentLast.includes(s)?'急牌末名':g.phase==='over'&&g.counts[s]>0?'剩 '+g.counts[s]+' 张':finish>=0?'第 '+(finish+1)+' 名':g.counts[s]+' 张牌'}${p.autoplay?'<span class="autoplay-status">托管中</span>':''}${!p.connected?' · 离线':''}</div>`;
+    if(own)ownProfile=`<div class="own-player ${turn?'turn':''}" data-own-seat="${s}">${portrait}${meta}</div>`;
+    return `<div class="seat ${positions[relative]} ${own?'own-seat':''} ${turn?'turn':''} ${finish>=0?'finished':''}">${own?'':portrait}<div>${own?'':meta}${seatRevealedHand(r,g,s)}</div>${playedCards}${r.bubbles?.[s]?`<div class="speech-bubble" role="status" aria-label="${esc(p.name)}的发言">${esc(r.bubbles[s])}</div>`:''}</div>`;
   }).join('');
   let center='',openingActions='';
   if(g.phase==='bid') center=`<div class="table-prompt">${g.turn===me?'轮到你叫分':esc(r.players[g.turn].name)+' 正在叫分'}</div><p class="table-sub">当前最高叫分 ${g.bid} · 三分直接成为地主</p>${g.turn===me?`<div class="phase-actions">${[0,1,2,3].map(n=>`<button class="${n===3?'primary':'secondary'}" data-action="bid" data-value="${n}" ${n&&n<=g.bid?'disabled':''}>${n?n+' 分':'不叫'}</button>`).join('')}</div>`:''}`;
   else if(g.phase==='setup') {
     const count={};g.hand.forEach(c=>count[c.rank]=(count[c.rank]||0)+1);
     const promotions=g.mode==='basic'?[]:Object.keys(count).filter(k=>Number(k)<16&&count[k]>=6);
-    center=`<div class="table-prompt">${g.openingFirst===null?'开局亮牌':g.mode==='basic'?'开局确认':'升变确认'}</div><p class="table-sub">${g.mode==='basic'?'':'六张同点可升变 · '}${g.openingFirst===null?'亮黑桃3争先手 · 无人亮牌则随机':esc(r.players[g.openingFirst].name)+'先出'}<br>已确认 ${g.ready.length}/${g.confirmationSeats?.length??r.capacity} 人</p>`;if(g.confirmationSeats?.includes(me)??true)openingActions=`<div class="phase-actions opening-actions">${g.openingFirst===null&&g.hand.some(c=>c.suit==='S'&&c.rank===3)&&!g.reveals.includes(me)?'<button class="secondary" data-action="reveal">亮黑桃 3</button>':''}${promotions.map(k=>`<button class="secondary" data-action="promote" data-rank="${k}">升变 ${ranks[k]}</button>`).join('')}<button class="primary" data-action="confirm" ${g.ready.includes(me)?'disabled':''}>${g.ready.includes(me)?'等待其他玩家':'确认开始'}</button></div>`;
+    center=`<div class="table-prompt">${g.openingFirst===null?'开局亮牌':'开局升变'}</div>${openingCountdown(g)}<p class="table-sub">${g.openingFirst===null?'无人亮牌则随机先手':esc(r.players[g.openingFirst].name)+'先出'}</p>`;
+    if(!r.spectator&&g.confirmationSeats?.includes(me))openingActions=`<div class="phase-actions opening-actions">${g.openingFirst===null&&g.hand.some(c=>c.suit==='S'&&c.rank===3)&&!g.reveals.includes(me)?'<button class="secondary" data-action="reveal">亮黑桃 3</button>':''}${promotions.map(k=>`<button class="secondary" data-action="promote" data-rank="${k}" ${Number(k)===g.promotions[me]?'disabled':''}>升变 ${ranks[k]}</button>`).join('')}</div>`;
   } else if(g.phase==='rps') {
-    center=`<div class="table-prompt">猜拳定先手</div><p class="table-sub">${g.reveals.map(s=>esc(r.players[s].name)).join('、')}争夺先手</p>`;
-    const rpsReport=[...g.log].reverse().find(text=>text.startsWith('猜拳平局')||text.startsWith('猜拳胜者'));
-    openingActions=g.reveals.includes(me)&&!g.ready.includes(me)?`<div class="phase-actions opening-actions">${[['rock','石头'],['scissors','剪刀'],['paper','布']].map(([v,n])=>`<button class="secondary" data-action="rps" data-value="${v}">${n}</button>`).join('')}</div>`:`<p class="opening-wait">${g.ready.includes(me)?'已出拳，等待其他玩家':'亮牌玩家正在猜拳'}</p>`;
-    if(rpsReport&&g.reveals.includes(me)&&!g.ready.includes(me))openingActions=`<p class="rps-feedback" role="status">${esc(rpsReport)}</p>`+openingActions;
+    center=`<div class="table-prompt">猜拳定先手</div>${openingCountdown(g)}`;
+    openingActions=rpsActions(r,g,g.reveals.includes(me),g.ready.includes(me));
   }
   else if(g.phase==='tribute') {
     const t=g.tribute, offer=t.offers.find(o=>o.recipient===me&&!o.returned), canChoose=t.stage==='choose'&&t.receivers.includes(me)&&!t.offers.some(o=>o.recipient===me);
@@ -221,7 +267,7 @@ function table(r,g) {
   }
   else if(g.phase==='play') center=g.mode==='landlord'&&!g.last&&g.bottom.length?`<div class="bottom-cards">${g.bottom.map(c=>`<span class="mini-card ${['H','D'].includes(c.suit)?'red':''}">${ranks[c.rank]}${suits[c.suit]}</span>`).join('')}</div>`:'';
   else center='<div class="table-prompt">本局已结束</div>';
-  if(r.spectator&&g.phase!=='over'&&!(r.replay&&g.phase==='play'))center=['bid','setup','rps','tribute'].includes(g.phase)?'<div class="table-prompt">'+({bid:'正在叫分',setup:'等待开局',rps:'猜拳中',tribute:'进贡中'})[g.phase]+'</div>':'';
+  if(r.spectator&&!['setup','rps','over'].includes(g.phase)&&!(r.replay&&g.phase==='play'))center=['bid','tribute'].includes(g.phase)?'<div class="table-prompt">'+({bid:'正在叫分',tribute:'进贡中'})[g.phase]+'</div>':'';
   const canPlay=!r.spectator&&g.phase==='play'&&!g.finished.includes(me)&&!r.players[me].autoplay;
   const canReturn=!r.spectator&&!r.players[me].autoplay&&g.phase==='tribute'&&g.tribute.stage==='return'&&g.tribute.offers.some(o=>o.recipient===me&&!o.returned);
   const remainingHands=g.remainingHands?`<div class="settlement-hands">${g.remainingHands.map((hand,s)=>`<section class="settlement-hand"><h3>${esc(r.players[s].name)} <small>剩余 ${hand.length} 张</small></h3><div class="settlement-cards">${hand.length?hand.map(c=>`<span class="settlement-card ${['H','D'].includes(c.suit)||c.rank===17?'red':''}">${ranks[c.rank]}${suits[c.suit]}</span>`).join(''):'<span class="muted">已出完</span>'}</div></section>`).join('')}</div>`:'';
@@ -230,7 +276,7 @@ function table(r,g) {
   const controls=canReturn
     ? `<div class="hand-controls"><button class="text-button" data-action="deselect">清空<span class="keyboard-shortcut"> · Esc</span></button><button class="primary" data-action="tribute-return" ${selected.size!==1?'disabled':''}>还牌<span class="keyboard-shortcut"> · Enter</span></button></div>`
     : canPlay?actionDock(options):'';
-  const handArea=r.spectator?'':`<section class="hand-area"><div class="hand-top"><strong>你的手牌 <span class="muted">/ ${g.hand.length} 张</span></strong><div class="hand-tools">${handTools(r)}</div></div>${openingActions}<div class="hand ${g.hand.length>23?'dense':''}">${g.hand.map(c=>card(c,canPlay||canReturn,g)).join('')}</div>${controls}</section>`;
+  const handArea=r.spectator?'':`<section class="hand-area"><div class="hand-top">${ownProfile}<div class="hand-tools">${handTools(r)}</div></div>${openingActions}<div class="hand ${g.hand.length>23?'dense':''}">${g.hand.map(c=>card(c,canPlay||canReturn,g)).join('')}</div>${controls}</section>`;
   const summary=g.mode==='landlord'?`地主叫分 <b>${g.bid}</b>`:g.mode==='trio'?'三人个人争先':`${r.spectator?'一队':'我方'} <b>${g.scores[me%2]}</b> · ${r.spectator?'二队':'对方'} <b>${g.scores[1-me%2]}</b>`;
   const history=tableHistory(g,`${summary}<br>${r.rated?'计入积分与段位':'练习 · 不计积分'}`,r.replay);
   if(result&&!r.replay)return roomHeading(r,true,history)+settlement(r,result);
@@ -238,6 +284,21 @@ function table(r,g) {
 }
 
 function showHandButton(r,g){return g.phase!=='over'?`<button class="secondary" data-action="show-hand" ${(g.publicHands||[]).some(h=>h.owner===r.seat)?'disabled':''}>${(g.publicHands||[]).some(h=>h.owner===r.seat)?'已明牌':'明牌'}</button>`:'';}
+function openingCountdown(g){
+  const clock=g.openingClock;
+  return clock?`<p class="opening-clock">${clock.waiting?'发牌或播报中':clock.remaining+' 秒'}</p>`:'';
+}
+function openingDisplay(g,revealed,submitted){
+  const state=g.phase==='rps'&&revealed?`<div class="seat-play-label">${submitted?'已出拳':'待出拳'}</div>`:'';
+  return state+(revealed?'<div class="seat-play-cards" aria-label="亮出黑桃 3"><span class="seat-play-card"><b>3</b><small>♠</small></span></div>':'');
+}
+function rpsActions(r,g,eligible,submitted){
+  if(r.spectator)return '';
+  if(!eligible||submitted)return `<p class="opening-wait">${submitted?'已出拳，等待其他玩家':'亮牌玩家正在猜拳'}</p>`;
+  const report=[...g.log].reverse().find(text=>text.startsWith('猜拳平局')||text.startsWith('猜拳胜者'));
+  const buttons=[['rock','石头'],['scissors','剪刀'],['paper','布']].map(([v,n])=>`<button class="secondary" data-action="rps" data-value="${v}">${n}</button>`).join('');
+  return (report?`<p class="rps-feedback" role="status">${esc(report)}</p>`:'')+`<div class="phase-actions opening-actions">${buttons}</div>`;
+}
 function roundActions(r){return `<nav class="round-actions" aria-label="本局结束操作">${!r.spectator?`<button class="primary" data-action="start" ${r.host!==state.user.id?'disabled':''}>${r.host===state.user.id?'再来一局 →':'等待房主开局'}</button>`:''}<button class="secondary" data-action="leave">回到主菜单</button></nav>`;}
 function settlement(r,result,options=''){
   return `<section class="result-stage" data-table="${esc(tableKey(r))}"><div class="score-sheet"><div class="score-scroll">${result}${options}</div>${roundActions(r)}</div></section>`;
@@ -300,7 +361,7 @@ function actionDock(options=''){
   </div>`;
 }
 function seatPlayCards(play,g){
-  if(play.passed)return `<span class="pass-mark">${esc(play.kind)}</span>`;
+  if(play.passed)return `<span class="pass-mark">${play.kind==='不出'?'不出':`不出（${esc(play.kind)}）`}</span>`;
   const cards=[];
   play.cards.forEach((card,i)=>{
     const effective=play.ranks[i]??card.rank, effectiveSuit=play.suits?.[i]||card.suit;
@@ -357,26 +418,27 @@ function showRules(){
 }
 function ruleText(type){
  $$('.switch-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.action==='rules-'+type));
- $('#rule-text').innerHTML=type==='classic'?`<h3>三人 · 一副牌</h3><p>每人 17 张，余下 3 张归地主。轮流叫 1–3 分，只能叫更高的分；叫 3 分立即成为地主。全部不叫时，本实现将最后叫分玩家设为 1 分地主。</p><h3>常见牌型</h3><p>单张、对子、三张、三带一、三带一对、顺子（至少 5 张，不含 2 和王）、连对（至少 3 对）、飞机及带单/带对、四带二、四带两对。飞机的翅膀不能包含机身点数；单翼允许同点。</p><p>相同牌型、相同张数比大小。四张同点炸弹压普通牌；一小王加一大王为最大王炸。点数 3 最小，2 大于 A，大王最大。</p><h3>胜负与积分</h3><p>地主先出完则地主胜，任一农民先出完则两位农民胜。全真人牌桌胜方每人 +24，负方每人 −24，最低 0；有 AI 不结算积分。</p>`:`<h3>标准版与变体</h3><p>标准版四人 110 张：两副牌和两张急牌。对座组队，主牌初始为 3，点数大于 2、小于小王。主牌可按原点数组成顺子、连对和飞机；2 和王不参与连续牌型。</p><p>三人 86 张：去掉两副牌的黑桃 3–K、两张小王和一张急牌，加入一张大王；每人独立争先。基础版四人 54 张：一副牌，三张起炸，顺子至少三张、连对至少两对，不允许任何带牌组合，仅额外支持勾、叉、4A4，同样亮黑桃 3 定先手，不使用升变。</p><p>Fieldlark DLC 额外加入黑桃 A ×5、Delta A ×2、Delta 2–K 各2张、大小王各1张、急牌×7，共额外40张。可在创建标准房间时选择。</p><h3>开局</h3><p>可展示至少六张原生同点牌进行升变，多人升变取自然点数最大的牌为主。选择亮黑桃 3 的玩家争夺先手，多人亮牌通过猜拳决出一人；都不亮时随机选择先手。只有能亮黑桃 3 或能升变的玩家需要确认。下一局由上一局最先出完者先发牌、先出牌。</p><h3>带牌</h3><p>标准版与三人版：N 张同点牌可带 1 至 N−2 个单位（N 至少为 3）。单位按单牌或对子计数；单牌附件按实际张数计算，允许混合单牌、对子及更多同点牌。例如五带三可带一单加一对，六带四可带两单加一对或一单加三张同点牌；全部对子也可按张数跟单牌附件。附件不能与主组同点。连续两组及以上同样张数的主体也可组成飞机：每组四张可带一或两个单位，每组五张可带一至三个单位，以此类推；各组带牌单位数及类型一致。相同主组张数、附件单位数与单位类型才可比大小。基础版不允许带牌。</p><h3>特殊出牌</h3><table><tr><th>出法</th><th>条件与效果</th></tr><tr><td>叉</td><td>两张同点，管同点单张；叉后只能勾，无人勾则叉牌者继续出牌。</td></tr><tr><td>勾</td><td>一张同点，管叉出的两张牌；勾后可用同点对子再叉，再用同点单牌勾；无人再叉则勾牌者自由出牌。</td></tr><tr><td>点</td><td>一张同点，管非勾叉对子。</td></tr><tr><td>死点</td><td>用同点单张点对 2 或对主牌，取得自由牌权。传送带中，死点者先抽牌，其余玩家自动不出并抽牌，然后由死点者领出。</td></tr><tr><td>压</td><td>普通点之后按出牌顺序响应。轮到自己时，可用一张 2、主牌或王压点，取得自由牌权。</td></tr><tr><td>死压</td><td>三张同点，管非勾叉对子，直接获牌权。进阶版可用四张同点截获死压牌权。</td></tr><tr><td>回</td><td>同花色单牌管小于 2 的非特殊单牌，每轮一次。进阶版要求相同牌型、张数，主体各点数组的花色构成逐组相同，带牌附件任意；不比较点数。王、2 和主不能作为回牌或被回牌的主体，附件只需符合带牌规则。</td></tr><tr><td>黑桃 A</td><td>可以作为普通 A 单出；组合中可代替任意非王牌，不能单张替代其他点数。自动配牌或手动指定替代点数${state.features?.wildUrgent?'；代急牌时出牌即可选择赠送目标。':'。'}</td></tr><tr><td>急牌</td><td>选一张急牌和一张非急牌，在自己的出牌回合赠给任一仍在场玩家，公开显示赠送牌的花色与点数；急牌弃掉，不占出牌次数，可继续正常出牌或使用急牌。仅剩一张急牌自动末名。</td></tr></table><h3>炸弹与 4A4A4</h3><p>四炸 &lt; 双王 &lt; 五炸 &lt; 六炸 &lt; 三王 &lt; 七炸 &lt; 八炸 &lt; 四王 &lt; 九炸 &lt; 十炸 &lt; 基础 4A4A4 &lt; 更大 4A4A4。炸弹压普通及点牌；叉只能用勾管，勾可以再叉再勾。更多同点炸弹继续按张数排列。</p><p>标准 4A4A4 至少三张 4 和两张 A，4 的数量必须多于 A；等级只计算能配齐的组合：至少三张 4、两张 A，使用全部 A 和比 A 多一张的 4 计级；额外的 4 可以一起出，但不升级，例如 44444AA 与 444AA 同级。基础版最低两张 4 和一张 A。</p><h3>优先管牌</h3><p>叉、勾、点、死压可在优先窗口直接响应。联机限时五秒；窗口结束后，只能按当前桌面继续出牌。</p><h3>进贡</h3><p>创建房间时可勾选启用，默认关闭。启用后，下一局发牌后，被抓住的玩家交出最大普通牌（急牌不参与）。抓一人时首位出完者收贡；抓两人时胜方对家各选一张贡牌。收贡者分别还任意一张手牌给对应进贡者，完成后才能开局。</p><h3>胜负、主牌与爆牌</h3><p>其他在场玩家都不出时，牌权持有者可任意领出合法牌型。四人局已出完者的最后一手无人管牌时，牌权交给其仍在场的对家。四人局首位出完者所在队获胜，其对家出完后剩 1 人升 1 级、剩 2 人升 2 级、无人剩余不升级；败队不升级。两队各自从 3 升至 A，超过 A 停在 A；以 A 为主获胜后本轮结束，下一轮两队归零、主牌回 3 并重新亮黑桃 3。轮内后续对局不再亮黑桃 3，下一局使用胜队的主牌。三人第一位出完者胜，以个人累计胜局循环决定下一局主牌。</p><p>每人每局首次降至 10 张及以下时公布剩余张数，此后不再重复爆牌。“分”玩法停用。真人 4A4A4 胜方 +20、负方 −20，有 AI 不结算积分。多人对局返回大厅后由规则 AI 托管座位，对局继续；单人模式可随时结束本局。</p><h3>段位</h3><p>800 以下纸牌学徒，800–1099 墨线新秀，1100–1399 银笔高手，1400–1799 黑金大师，1800–2399 牌桌宗师，2400 起无冕传奇。</p>`;
+ $('#rule-text').innerHTML=type==='classic'?`<h3>三人 · 一副牌</h3><p>每人 17 张，余下 3 张归地主。轮流叫 1–3 分，只能叫更高的分；叫 3 分立即成为地主。全部不叫时，本实现将最后叫分玩家设为 1 分地主。</p><h3>常见牌型</h3><p>单张、对子、三张、三带一、三带一对、顺子（至少 5 张，不含 2 和王）、连对（至少 3 对）、飞机及带单/带对、四带二、四带两对。飞机的翅膀不能包含机身点数；单翼允许同点。</p><p>相同牌型、相同张数比大小。四张同点炸弹压普通牌；一小王加一大王为最大王炸。点数 3 最小，2 大于 A，大王最大。</p><h3>胜负与积分</h3><p>地主先出完则地主胜，任一农民先出完则两位农民胜。全真人牌桌胜方每人 +24，负方每人 −24，最低 0；有 AI 不结算积分。</p>`:`<h3>标准版与变体</h3><p>标准版四人 110 张：两副牌和两张急牌。对座组队，主牌初始为 3，点数大于 2、小于小王。主牌可按原点数组成顺子、连对和飞机；2 和王不参与连续牌型。</p><p>三人 86 张：去掉两副牌的黑桃 3–K、两张小王和一张急牌，加入一张大王；每人独立争先。基础版四人 54 张：一副牌，三张起炸，顺子至少三张、连对至少两对，不允许任何带牌组合，仅额外支持勾、叉、4A4，同样亮黑桃 3 定先手，不使用升变。</p><p>Fieldlark DLC 额外加入黑桃 A ×5、Delta A ×2、Delta 2–K 各2张、大小王各1张、急牌×7，共额外40张。可在创建标准房间时选择。</p><h3>开局</h3><p>可展示至少六张原生同点牌进行升变，多人升变取自然点数最大的牌为主。全桌共用 10 秒亮牌和升变，倒计时结束自动继续。多人亮黑桃 3 时用猜拳决定先手，每轮共用 10 秒，可同时出拳。无人亮牌时随机选先手。下一局由上一局最先出完者先发牌、先出牌。</p><h3>带牌</h3><p>标准版与三人版：N 张同点牌可带 1 至 N−2 个单位（N 至少为 3）。单位按单牌或对子计数；单牌附件按实际张数计算，允许混合单牌、对子及更多同点牌。例如五带三可带一单加一对，六带四可带两单加一对或一单加三张同点牌；全部对子也可按张数跟单牌附件。附件不能与主组同点。连续两组及以上同样张数的主体也可组成飞机：每组四张可带一或两个单位，每组五张可带一至三个单位，以此类推；各组带牌单位数及类型一致。相同主组张数、附件单位数与单位类型才可比大小。基础版不允许带牌。</p><h3>特殊出牌</h3><table><tr><th>出法</th><th>条件与效果</th></tr><tr><td>叉</td><td>两张同点，管同点单张；叉后只能勾，无人勾则叉牌者继续出牌。</td></tr><tr><td>勾</td><td>一张同点，管叉出的两张牌；勾后可用同点对子再叉，再用同点单牌勾；无人再叉则勾牌者自由出牌。</td></tr><tr><td>点</td><td>一张同点，管非勾叉对子。</td></tr><tr><td>死点</td><td>用同点单张点对 2 或对主牌，取得自由牌权。传送带中，死点者先抽牌，其余玩家自动不出并抽牌，然后由死点者领出。</td></tr><tr><td>压</td><td>普通点之后按出牌顺序响应。轮到自己时，可用一张 2、主牌或王压点，取得自由牌权。</td></tr><tr><td>死压</td><td>三张同点，管非勾叉对子，直接获牌权。进阶版可用四张同点截获死压牌权。</td></tr><tr><td>回</td><td>同花色单牌管小于 2 的非特殊单牌，每轮一次。进阶版要求相同牌型、张数，主体各点数组的花色构成逐组相同，带牌附件任意；不比较点数。王、2 和主不能作为回牌或被回牌的主体，附件只需符合带牌规则。</td></tr><tr><td>黑桃 A</td><td>可以作为普通 A 单出；组合中可代替 3 到 2 的普通牌，不能代替王或急牌。可自动配牌或手动指定替代点数和花色。</td></tr><tr><td>急牌</td><td>选一张急牌和一张非急牌，在自己的出牌回合赠给任一仍在场玩家，公开显示赠送牌的花色与点数；急牌弃掉，不占出牌次数，可继续正常出牌或使用急牌。仅剩一张急牌自动末名。</td></tr></table><h3>炸弹与 4A4A4</h3><p>四炸 &lt; 双王 &lt; 五炸 &lt; 六炸 &lt; 三王 &lt; 七炸 &lt; 八炸 &lt; 四王 &lt; 九炸 &lt; 十炸 &lt; 基础 4A4A4 &lt; 更大 4A4A4。炸弹压普通及点牌；叉只能用勾管，勾可以再叉再勾。更多同点炸弹继续按张数排列。</p><p>标准 4A4A4 至少三张 4 和两张 A，4 的数量必须多于 A；等级只计算能配齐的组合：至少三张 4、两张 A，使用全部 A 和比 A 多一张的 4 计级；额外的 4 可以一起出，但不升级，例如 44444AA 与 444AA 同级。基础版最低两张 4 和一张 A。</p><h3>优先管牌</h3><p>叉、勾、点、死压可在优先窗口直接响应。联机限时五秒；窗口结束后，只能按当前桌面继续出牌。</p><h3>进贡</h3><p>创建房间时可勾选启用，默认关闭。启用后，下一局发牌后，被抓住的玩家交出最大普通牌（急牌不参与）。抓一人时首位出完者收贡；抓两人时胜方对家各选一张贡牌。收贡者分别还任意一张手牌给对应进贡者，完成后才能开局。</p><h3>胜负、主牌与爆牌</h3><p>其他在场玩家都不出时，牌权持有者可任意领出合法牌型。四人局已出完者的最后一手无人管牌时，牌权交给其仍在场的对家。四人局首位出完者所在队获胜，其对家出完后剩 1 人升 1 级、剩 2 人升 2 级、无人剩余不升级；败队不升级。两队各自从 3 升至 A，超过 A 停在 A；以 A 为主获胜后本轮结束，下一轮两队归零、主牌回 3 并重新亮黑桃 3。轮内后续对局不再亮黑桃 3，下一局使用胜队的主牌。三人第一位出完者胜，以个人累计胜局循环决定下一局主牌。</p><p>每人每局首次降至 10 张及以下时公布剩余张数，此后不再重复爆牌。“分”玩法停用。真人 4A4A4 胜方 +20、负方 −20，有 AI 不结算积分。多人对局返回大厅后由规则 AI 托管座位，对局继续；单人模式可随时结束本局。</p><h3>段位</h3><p>800 以下纸牌学徒，800–1099 墨线新秀，1100–1399 银笔高手，1400–1799 黑金大师，1800–2399 牌桌宗师，2400 起无冕传奇。</p>`;
 }
 function $$(s){return [...document.querySelectorAll(s)];}
-async function gameAction(action,extra={}){if(!state.room)return;return await mutation('action',{action,revision:state.room.revision,...extra});}
+async function gameAction(action,extra={}){
+  const room=state.room;
+  if(!room)return;
+  const opening=room.game?.openingClock;
+  const window=opening&&['reveal','promote','rps'].includes(action)?{matchId:room.matchId,openingPhase:room.game.phase,openingRound:opening.round}:{};
+  return await mutation('action',{action,revision:room.revision,...window,...extra});
+}
 function wildRank(value){return typeof value==='object'?value?.rank:value;}
 function wildcardPayload(){
   const cards=(state.room?.game?.hand||[]).filter(c=>selected.has(c.id));
   const wildIds=new Set(cards.filter(c=>c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild')&&(!state.room?.game?.conveyor||conveyorDouble?.id!==c.id)).map(c=>c.id));
   if(!wildIds.size)return undefined;
-  const map=Object.fromEntries(Object.entries(wildcardMap).filter(([id])=>wildIds.has(id)));
-  const declaration=Object.keys(map).length?map:undefined;
-  if(cards.every(c=>c.rank===14)&&(!state.room?.game?.conveyor||!conveyorDouble||!selected.has(conveyorDouble.id))){
-    const c=cards.length===1?cards[0]:null;
-    if(c?.rank===14&&c.suit==='S')return wildRank(declaration?.[c.id])===18?18:undefined;
-  }
-  return declaration;
+  if(cards.every(c=>c.rank===14)&&(!state.room?.game?.conveyor||!conveyorDouble||!selected.has(conveyorDouble.id)))return undefined;
+  const map=Object.fromEntries(Object.entries(wildcardMap).filter(([id,value])=>wildIds.has(id)&&wildRank(value)>=3&&wildRank(value)<=15));
+  return Object.keys(map).length?map:undefined;
 }
 function urgentSelected(){
- const wild=wildcardPayload();
- return state.room.game.hand.some(c=>selected.has(c.id)&&((c.effective??c.rank)===18||c.rank===14&&(c.suit==='S'||state.room.game.conveyor?.skill==='wild')&&(typeof wild==='object'?wildRank(wild[c.id])===18:wild===18)));
+ return state.room.game.hand.some(c=>selected.has(c.id)&&(c.effective??c.rank)===18);
 }
 function selectedPlay(){
   const c=state.room.game.conveyor;
@@ -435,20 +497,19 @@ function showWildcard(){
   const wild=fresh.filter(c=>c.rank===14&&(c.suit==='S'||state.room?.game?.conveyor?.skill==='wild')&&(!state.room?.game?.conveyor||c.id!==conveyorDouble?.id));
   if(fresh.length>1&&fresh.every(card=>card.rank===14)&&!(state.room?.mode==='conveyor'&&conveyorDouble&&selected.has(conveyorDouble.id))){toast('全是 A 时按原点数和花色出牌。');return;}
   const conveyor=state.room?.mode==='conveyor', label=state.room?.game?.conveyor?.skill==='wild'?'A':'黑桃 A';
-  const single=selected.size===1;
-  if(!wild.length||single&&(!conveyor||!wildRanks().includes(18))){toast('单张 A 按原点数和花色出牌；配牌请再选一张。');return;}
+  if(!wild.length||selected.size===1){toast('单张 A 按原点数和花色出牌；配牌请再选一张。');return;}
   if(conveyor){
     const options=wild.map((c,i)=>{
       const declared=wildcardMap[c.id];
-      const points=wildRanks().filter(n=>!single||n===14||n===18).map(n=>[n,ranks[n]]);
+      const points=wildRanks().map(n=>[n,ranks[n]]);
       const rankOptions=skillOptions('rank:'+c.id,'第 '+(i+1)+' 张 '+ranks[c.rank]+suits[c.suit]+' 的点数',points,{value:wildRank(declared)??14});
-      const suitPicker=single?'':skillOptions('suit:'+c.id,'花色',suitOptions(),{className:'skill-suit-options',value:declared?.suit??c.suit});
+      const suitPicker=skillOptions('suit:'+c.id,'花色',suitOptions(),{className:'skill-suit-options',value:declared?.suit??c.suit});
       return `<section class="skill-card-pair">${rankOptions}${suitPicker}</section>`;
     }).join('');
     showModal('wildcard',`<h2 class="modal-title">${label} 配牌</h2><form class="form" id="wildcard-form">${options}<button class="primary full" type="submit">确认配牌</button></form>`);
     return;
   }
-  showModal('wildcard',`<h2 class="modal-title">${label} 配牌</h2><p class="modal-desc">每张${label}可以独立代替非王牌。选择 A 表示保留原点数${state.features?.wildUrgent?(conveyor?'；选择急牌后可选择急牌效果。':'；选择急牌后出牌即可赠牌。'):'。'}</p><form class="form" id="wildcard-form">${wild.map((c,i)=>`<label>第 ${i+1} 张${label}<select name="rank:${esc(c.id)}">${wildRanks().filter(n=>!single||n===14||n===18).map(n=>`<option value="${n}" ${n===(wildRank(wildcardMap[c.id])||14)?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="suit:${esc(c.id)}" aria-label="替代花色" ${single?'disabled':''}>${Object.entries(suits).filter(([s])=>['S','H','C','D'].includes(s)||s==='T'&&state.room.options.dlc).map(([s,label])=>`<option value="${s}" ${s===(wildcardMap[c.id]?.suit||c.suit)?'selected':''}>${label}</option>`).join('')}</select></label>`).join('')}<button class="primary full" type="submit">确认配牌 →</button></form>`,'WILDCARD DECLARATION');
+  showModal('wildcard',`<h2 class="modal-title">${label} 配牌</h2><p class="modal-desc">每张${label}可以独立代替非王牌。选择 A 表示保留原点数。</p><form class="form" id="wildcard-form">${wild.map((c,i)=>`<label>第 ${i+1} 张${label}<select name="rank:${esc(c.id)}">${wildRanks().map(n=>`<option value="${n}" ${n===(wildRank(wildcardMap[c.id])||14)?'selected':''}>${ranks[n]}</option>`).join('')}</select><select name="suit:${esc(c.id)}" aria-label="替代花色">${Object.entries(suits).filter(([s])=>['S','H','C','D'].includes(s)||s==='T'&&state.room.options.dlc).map(([s,label])=>`<option value="${s}" ${s===(wildcardMap[c.id]?.suit||c.suit)?'selected':''}>${label}</option>`).join('')}</select></label>`).join('')}<button class="primary full" type="submit">确认配牌 →</button></form>`,'WILDCARD DECLARATION');
 }
 function selectionUpdate(){
  if(state.room?.mode==='conveyor')conveyorAfterRender();
@@ -462,7 +523,7 @@ function selectionUpdate(){
  const wildcardButton=$('[data-action="declare-wild"]');
  if(wildcardButton){
    const hasOther=g.hand.some(c=>selected.has(c.id)&&(c.rank!==14||g.conveyor&&c.id===conveyorDouble?.id));
-   wildcardButton.hidden=!(hasOther||selected.size===1&&g.conveyor&&wildRanks().includes(18))||!g.hand.some(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild')&&(!g.conveyor||c.id!==conveyorDouble?.id));
+   wildcardButton.hidden=!hasOther||!g.hand.some(c=>selected.has(c.id)&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild')&&(!g.conveyor||c.id!==conveyorDouble?.id));
    const declared=wildcardPayload();
    for(const card of $$('.hand [data-card]')){
      const match=g.hand.find(c=>c.id===card.dataset.card&&c.rank===14&&(c.suit==='S'||g.conveyor?.skill==='wild'));
@@ -574,7 +635,7 @@ document.addEventListener('click',async e=>{
    const move=hintMoves[hintIndex++%hintMoves.length];if(state.room.mode==='conveyor')conveyorDouble=move.double||null;selected=new Set(move.ids);wildcardMap=move.wildcard||{};renderedKey='';render();break;
  }
  case 'gift-player':{
-   const args={ids:[...selected],target:Number(b.dataset.seat)};const wild=wildcardPayload();if(wild!==undefined)args.wildcard=wild;
+   const args={ids:[...selected],target:Number(b.dataset.seat)};
    const result=await gameAction('urgent',args);if(result){closeModal();wildcardMap={};renderedKey='';render();toast('赠牌完成，不占出牌次数，可以继续出牌。');}break;
  }
  case 'play':{
@@ -610,6 +671,11 @@ document.addEventListener('keydown',e=>{
  if(button&&!button.disabled){e.preventDefault();button.click();}
 });
 document.addEventListener('change',e=>{
+ if(e.target.matches('[data-party-mode]')){
+  partyMode=e.target.checked;
+  try {localStorage.setItem('vgc-party-mode',partyMode?'1':'0');} catch {}
+  if(!partyMode)partyBurst?.remove();
+ }
  if(e.target.name==='botCount'){const field=$('[data-ai-type]',e.target.form);if(field)field.hidden=e.target.value==='0';}
 });
 document.addEventListener('submit',async e=>{

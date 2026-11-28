@@ -126,7 +126,8 @@ const gameAudio = (() => {
     const flights=[];
     for(const seat of seats){
       if(latestRoom?.code!==room.code||latestRoom?.matchId!==room.matchId||document.hidden)break;
-      const target=document.querySelector('.board .seat.'+positions[(seat-(room.seat??0)+4)%4]);if(!target)continue;
+      const target=document.querySelector(`[data-own-seat="${seat}"] .avatar`)||
+        document.querySelector('.board .seat.'+positions[(seat-(room.seat??0)+4)%4]);if(!target)continue;
       const rect=target.getBoundingClientRect(),card=pile.cloneNode(true);
       card.classList.add('deal-flight');card.style.left=origin.left+'px';card.style.top=origin.top+'px';document.body.append(card);
       flights.push(new Promise(resolve=>{requestAnimationFrame(()=>{card.style.transform=`translate(${rect.left+rect.width/2-origin.left}px,${rect.top+rect.height/2-origin.top}px)`;card.style.opacity='0';});setTimeout(()=>{card.remove();resolve();},330);}));

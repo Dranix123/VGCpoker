@@ -138,9 +138,9 @@ def classifications(ranks, mode, main, pattern=(4, 14)):
 def wildcard_rank(value):
     return value.get('rank') if isinstance(value, dict) else value
 
-def valid_wildcard(value, urgent=False):
+def valid_wildcard(value):
     if isinstance(value, dict) and (set(value) - {'rank', 'suit'} or value.get('suit', 'S') not in ('S', 'H', 'C', 'D', 'T')): return False
-    return wildcard_rank(value) in RANKS + ([18] if urgent else [])
+    return wildcard_rank(value) in RANKS
 
 def interpretations(cards, mode, main, wildcard=None, pattern=(4, 14), all_aces=False):
     ranks = [c['rank'] for c in cards]
@@ -254,6 +254,7 @@ class Game:
         self.hui_used = False
         self.landlord, self.bid, self.bids = None, 0, []
         self.promotions, self.reveals, self.rps = {}, [], {}
+        self.rps_round = 0
         self.urgent_last = []
         self.reported = set()
         self.report_counts = {}
@@ -278,7 +279,12 @@ class Game:
                 offers[0]['recipient'] = self.first
                 self.hands[self.first].append(offers[0]['card'])
             self.phase = 'tribute'
-        self.announce('牌已发出。' + ('请叫分。' if mode == 'landlord' else '可亮黑桃3，确认后开始。' if mode == 'basic' else '可升变、亮黑桃3，确认后开始。'))
+        if mode == 'landlord':
+            self.announce('牌已发出。请叫分。')
+        else:
+            opening = '可亮黑桃3' if mode == 'basic' else '可升变、亮黑桃3'
+            ending = '，倒计时结束后自动继续。' if self.options.get('_timedOpening') else '，确认后开始。'
+            self.announce('牌已发出。' + opening + ending)
 
     def announce(self, text):
         self.log.append(text)
@@ -293,16 +299,48 @@ class Game:
         return [s for s, hand in enumerate(self.hands) if self.can_reveal(s) or self.mode != 'basic'
                 and any(n >= 6 and rank in RANKS for rank, n in Counter(c['rank'] for c in hand).items())]
 
-    def finish_setup(self):
-        if self.phase != 'setup' or any(s not in self.rps for s in self.confirmation_seats()): return
+    def finish_setup(self, expired=False):
+        if self.phase != 'setup': return
+        eligible = self.confirmation_seats()
+        if not expired and eligible and (self.options.get('_timedOpening') or any(s not in self.rps for s in eligible)): return
         if self.promotions: self.main = max(self.promotions.values())
         self.rps = {}
         if self.first is None and len(self.reveals) > 1:
             self.phase = 'rps'
             self.announce('亮牌玩家请猜拳。')
         else:
-            self.turn = self.first if self.first is not None else (self.reveals[0] if self.reveals else random.randrange(len(self.players)))
+            self.turn = self.first if self.first is not None else (self.reveals[0] if self.reveals else self.random_opening_seat())
             self.phase = 'play'
+
+    def random_opening_seat(self):
+        return random.randrange(len(self.players))
+
+    def resolve_rps(self, expired=False):
+        if self.phase != 'rps' or not expired and any(s not in self.rps for s in self.reveals): return
+        if expired:
+            # A missing response forfeits this round. If nobody responds,
+            # select a starter so an unattended table still progresses.
+            self.reveals = [s for s in self.reveals if s in self.rps] or [random.choice(self.reveals)]
+        choices = {self.rps[s] for s in self.reveals if s in self.rps}
+        if len(choices) == 2:
+            beats = {'rock': 'scissors', 'paper': 'rock', 'scissors': 'paper'}
+            winning = next(c for c in choices if beats[c] in choices)
+            self.reveals = [s for s in self.reveals if self.rps[s] == winning]
+        self.rps = {}
+        self.rps_round += 1
+        if len(self.reveals) == 1:
+            self.turn = self.reveals[0]; self.phase = 'play'
+            self.announce('猜拳获胜：' + self.players[self.turn]['name'] + '，先出牌。')
+        elif len(choices) != 2:
+            self.announce('猜拳平局，请重出。')
+        else:
+            self.announce('猜拳胜者：' + '、'.join(self.players[s]['name'] for s in self.reveals) + '，继续猜拳。')
+
+    def expire_opening(self):
+        if self.phase == 'setup':
+            self.finish_setup(expired=True)
+        elif self.phase == 'rps':
+            self.resolve_rps(expired=True)
 
     def next_seat(self, seat):
         for i in range(1, len(self.players) + 1):
@@ -397,17 +435,14 @@ class Game:
                 self.hands[seat].remove(chosen[0]); self.hands[offer['donor']].append(chosen[0]); offer['returned'] = True
                 self.announce(self.players[seat]['name'] + '向' + self.players[offer['donor']]['name'] + '还牌。')
                 if all(o['returned'] for o in tribute['offers']):
-                    self.tribute = None; self.phase = 'setup'; self.announce('进贡完成，请确认开局。')
+                    self.tribute = None; self.phase = 'setup'; self.announce('进贡完成。')
             else: raise RuleError('请先完成进贡和还牌。')
             return
         if action == 'auto':
             if self.phase != 'play': raise RuleError('请先完成开局。')
             cards = self.select(seat, ids or [])
             wildcard = args.get('wildcard')
-            def urgent(card):
-                assigned = wildcard_rank(wildcard.get(card['id'], 14)) if isinstance(wildcard, dict) else wildcard
-                return card['rank'] == 18 or card['rank'] == 14 and card['suit'] == 'S' and assigned == 18
-            if any(urgent(c) for c in cards): action = 'urgent'
+            if any(c['rank'] == 18 for c in cards): action = 'urgent'
             else:
                 special = self.infer_action(seat, cards, wildcard)
                 if self.priority and special in PRIORITY_ACTIONS and seat in self.priority['pending'] + self.priority['bots']:
@@ -449,6 +484,7 @@ class Game:
                 self.announce(self.players[seat]['name'] + '展示六张' + LABELS[rank] + '，申请升变。')
             elif action == 'reveal':
                 if self.phase != 'setup' or not self.can_reveal(seat): raise RuleError('没有黑桃3可亮出。')
+                if seat in self.reveals and self.options.get('_timedOpening'): raise RuleError('已亮出黑桃3。')
                 if seat not in self.reveals: self.reveals.append(seat); self.announce(self.players[seat]['name'] + '亮出黑桃3。')
             elif action == 'confirm':
                 if self.phase != 'setup' or seat not in self.confirmation_seats(): raise RuleError('你无需确认开局。')
@@ -459,17 +495,7 @@ class Game:
                 if self.phase != 'rps' or seat not in self.reveals or value not in ('rock', 'paper', 'scissors'): raise RuleError('当前不能猜拳。')
                 if seat in self.rps: raise RuleError('已出拳，等待其他玩家。')
                 self.rps[seat] = value
-                if all(s in self.rps for s in self.reveals):
-                    choices = set(self.rps.values())
-                    if len(choices) != 2: self.rps = {}; self.announce('猜拳平局，请重出。')
-                    else:
-                        winning = next(c for c in choices if {'rock': 'scissors', 'paper': 'rock', 'scissors': 'paper'}[c] in choices)
-                        self.reveals = [s for s in self.reveals if self.rps[s] == winning]
-                        self.rps = {}
-                        if len(self.reveals) == 1:
-                            self.turn = self.reveals[0]; self.phase = 'play'
-                            self.announce('猜拳获胜：' + self.players[self.turn]['name'] + '，先出牌。')
-                        else: self.announce('猜拳胜者：' + '、'.join(self.players[s]['name'] for s in self.reveals) + '，继续猜拳。')
+                self.resolve_rps()
             return
         if self.phase != 'play': raise RuleError('请先完成开局。')
         if action in ('priority-play', 'priority-decline'):
@@ -503,22 +529,14 @@ class Game:
         if action == 'urgent':
             if self.mode in ('landlord', 'basic') or seat != self.turn: raise RuleError('仅轮到你时可使用急牌。')
             target = int(args.get('target', -1))
-            wildcard = args.get('wildcard')
-            wild_ids = {c['id'] for c in cards if c['rank'] == 14 and c['suit'] == 'S'}
-            if isinstance(wildcard, dict):
-                if not set(wildcard) <= wild_ids or any(not valid_wildcard(r, urgent=True) for r in wildcard.values()): raise RuleError('混子指定无效。')
-            elif wildcard is not None and wildcard not in RANKS + [18]: raise RuleError('黑桃A不能代替王。')
-            def is_urgent(card):
-                assigned = wildcard_rank(wildcard.get(card['id'], 14)) if isinstance(wildcard, dict) else wildcard
-                return card['rank'] == 18 or card['id'] in wild_ids and assigned == 18
-            if len(cards) != 2 or sum(is_urgent(c) for c in cards) != 1 or target == seat or target not in range(len(self.players)) or target in self.finished:
+            if args.get('wildcard') is not None: raise RuleError('急牌赠牌按原牌点数处理。')
+            if len(cards) != 2 or sum(c['rank'] == 18 for c in cards) != 1 or target == seat or target not in range(len(self.players)) or target in self.finished:
                 raise RuleError('选择一张急牌、一张非急牌和一位仍在场的玩家。')
             self.remove(seat, cards)
-            given = next(c for c in cards if not is_urgent(c))
-            substituted = any(c['id'] in wild_ids and is_urgent(c) for c in cards)
+            given = next(c for c in cards if c['rank'] != 18)
             self.hands[target].append(given)
             given_label = {'S': '黑桃', 'H': '红桃', 'C': '梅花', 'D': '方块', 'T': 'Delta'}.get(given['suit'], '') + LABELS[given['rank']]
-            self.announce(self.players[seat]['name'] + ('使用黑桃A代急牌向' if substituted else '使用急牌向') + self.players[target]['name'] + '赠送【' + given_label + '】；不占出牌次数。')
+            self.announce(self.players[seat]['name'] + '使用急牌向' + self.players[target]['name'] + '赠送【' + given_label + '】；不占出牌次数。')
             self.report(target); self.finish(seat)
             if seat in self.finished and self.phase != 'over': self.turn = self.next_seat(seat)
             # Urgent consumes cards, not the current lead or response opportunity.
@@ -848,9 +866,6 @@ class Game:
             normal = next((c for c in hand if c['rank'] != 18), None)
             targets = [s for s in range(len(self.players)) if s != seat and s not in self.finished]
             if urgent and normal and targets: output.append({'action': 'urgent', 'ids': [urgent['id'], normal['id']], 'target': targets[0], 'label': '急牌', 'power': -1, 'value': 0, 'n': 2})
-            if wild and targets:
-                given = next((c for c in hand if c['rank'] != 18 and c['id'] != wild[0]['id']), None)
-                if given: output.append({'action': 'urgent', 'ids': [wild[0]['id'], given['id']], 'target': targets[0], 'wildcard': {wild[0]['id']: 18}, 'label': '黑桃A代急牌', 'power': 1, 'value': 0, 'n': 2})
         return sorted(output, key=lambda x: (x['power'], -x['n'], x['value']))
 
     def play_damage(self, hand, move):
@@ -1135,8 +1150,7 @@ class Game:
             value += controls * (1 if danger <= 2 else 4)
             value += sum(c['rank'] == 14 and c['suit'] == 'S' for c in chosen) * 3
             if move['action'] == 'urgent':
-                gift = next(c for c in chosen if c['rank'] != 18 and move.get('wildcard', {}).get(c['id']) != 18)
-                if not urgent: value += 8
+                gift = next(c for c in chosen if c['rank'] != 18)
                 target = move['target']
                 value += 4 if allied(target) else -2
                 if allied(target) and strength(gift['rank'], self.main, self.mode) >= 15: value -= 5

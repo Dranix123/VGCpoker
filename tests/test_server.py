@@ -336,11 +336,16 @@ class ServerIntegration(unittest.TestCase):
         game.phase = 'setup'
         game.hands = [cards([5,6],prefix=str(seat)) for seat in range(4)]
         game.hands[3][0].update(rank=3,suit='S')
-        for _ in range(2):
-            with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
-                with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
-            self.assertTrue(server.audio_waiting(room))
-            room['audioEvent']['expires'] = 0
+        with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+        self.assertTrue(server.audio_waiting(room))
+        self.assertEqual(game.reveals,[])
+        room['audioEvent']['expires'] = 0
+        with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
+            with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
+        self.assertEqual(game.reveals,[3])
+        self.assertEqual(game.phase,'setup')
+        room['openingClock']['expires'] = 0
         with patch('server.time.sleep',side_effect=[None,RuntimeError('stop loop')]):
             with self.assertRaisesRegex(RuntimeError,'stop loop'): server.bot_loop()
         self.assertEqual(game.phase,'play')
@@ -379,16 +384,43 @@ class ServerIntegration(unittest.TestCase):
         self.request(self.clients[0],'audio-ack',{'event':event['id'],'code':code,'matchId':'current'})
         self.assertEqual(event['acknowledged'],[self.users[0]['id']])
 
-    def test_confirmation_skips_ineligible_players_and_moves_counterclockwise(self):
-        code=self.new_room('standard',4);self.request(self.clients[0],'start',{})
+    def test_shared_opening_clocks_accept_concurrent_actions_without_confirmation(self):
+        from test_engine import cards
+        code=self.new_room('standard',4)
+        with patch('server.time.monotonic',return_value=100):
+            self.request(self.clients[0],'start',{})
         room=server.ROOMS[code];g=room['game'];g.phase='setup'
-        g.hands=[[{'rank':rank,'suit':suit} for rank,suit in hand] for hand in (
-            [(3,'S')],[(7,'H')]*6,[(5,'H')],[(3,'S')])]
-        for seat in [0,3,1]:
-            self.assertEqual(server.confirmation_seat(room),seat)
-            self.assertEqual(self.request(self.clients[2],'action',{'action':'confirm','revision':room['revision']})[0],400)
-            self.assertEqual(self.request(self.clients[seat],'action',{'action':'confirm','revision':room['revision']})[0],200)
-        self.assertEqual(g.phase,'play')
+        g.hands=[cards([3,5],'S','a'),cards([7]*6,'H','b'),cards([5,6],'H','c'),cards([3,6],'S','d')]
+        def action(client, phase, round_number, **args):
+            return self.request(self.clients[client],'action',dict(matchId=room['matchId'],openingPhase=phase,
+                                openingRound=round_number,revision=0,**args))
+        with patch('server.time.monotonic',return_value=102):
+            states=[self.request(client,'state')[1]['room']['game'] for client in self.clients]
+            self.assertTrue(all(state['openingClock']['remaining']==8 for state in states))
+            self.assertEqual(states[0]['confirmationSeats'],[0,1,3])
+            self.assertEqual(action(2,'setup',0,action='reveal')[0],400)
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                results=list(pool.map(lambda item:action(item[0],'setup',0,**item[1])[0],
+                             [(0,dict(action='reveal')),(3,dict(action='reveal')),(1,dict(action='promote',rank=7))]))
+            self.assertEqual(results,[200,200,200])
+            self.assertEqual(set(g.reveals),{0,3})
+            self.assertEqual(g.phase,'setup')
+        with patch('server.time.monotonic',return_value=110):
+            view=self.request(self.clients[0],'state')[1]['room']['game']
+            self.assertEqual(view['phase'],'rps')
+            self.assertEqual(view['openingClock']['remaining'],10)
+            self.assertEqual(g.main,7)
+            self.assertEqual(action(0,'rps',0,action='rps',value='rock')[0],200)
+            self.assertEqual(action(3,'rps',0,action='rps',value='rock')[0],200)
+            self.assertEqual(action(0,'rps',0,action='rps',value='paper')[0],400)
+        with patch('server.time.monotonic',return_value=118):
+            view=self.request(self.clients[3],'state')[1]['room']['game']
+            self.assertEqual(view['openingClock'],dict(round=1,remaining=2,waiting=False))
+            self.assertEqual(action(3,'rps',1,action='rps',value='scissors')[0],200)
+        with patch('server.time.monotonic',return_value=120):
+            view=self.request(self.clients[0],'state')[1]['room']['game']
+            self.assertEqual((view['phase'],view['turn']),('play',3))
+            self.assertNotIn('openingClock',view)
 
     def test_priority_clock_is_public_and_expires_without_solo_takeover(self):
         code=self.new_room('basic',4);self.request(self.clients[0],'start',{})
@@ -399,6 +431,66 @@ class ServerIntegration(unittest.TestCase):
         self.assertNotIn(1,g.priority['pending'])
         room['single']=True;server.update_priority_clock(room)
         self.assertNotIn('priorityClock',room)
+
+    def test_conveyor_twins_use_both_opening_actions_and_keep_the_winning_hand(self):
+        from test_conveyor import ConveyorRules
+        fixture=ConveyorRules()
+        game=fixture.game('twins','anchor','anchor','anchor')
+        core=fixture.table(game,[[(3,'S'),5],[(3,'S'),6],[7,9],[8],[10]])
+        core.phase='setup'
+        core.options['_timedOpening']=True
+        room=dict(mode='conveyor',game=game,players=game.players,revision=1)
+        for actor in (0,1):
+            self.assertEqual(game.view(0)['conveyor']['actor'],actor)
+            server.perform_game_action(room,0,{'action':'reveal'})
+        self.assertEqual(core.reveals,[0,1])
+        server.update_opening_clock(room)
+        room['openingClock']['expires']=0
+        server.update_opening_clock(room)
+        self.assertEqual(core.phase,'rps')
+        server.perform_game_action(room,0,{'action':'rps','value':'rock'})
+        self.assertEqual(game.view(0)['conveyor']['actor'],1)
+        server.perform_game_action(room,0,{'action':'rps','value':'paper'})
+        self.assertEqual((core.phase,core.turn),('play',1))
+        self.assertEqual(game.view(0)['conveyor']['actor'],1)
+
+    def test_conveyor_room_requires_a_skill_that_can_open(self):
+        client=self.clients[0]
+        enabled={'redirect','scavenge'}
+        options={'skillDlc':[1,3], 'disabledSkills':sorted(server.SKILLS.keys()-enabled)}
+        status,data=self.request(client,'create',{'mode':'conveyor','options':options})
+        self.assertEqual(status,400)
+        self.assertIn('首出',data['error'])
+        options['disabledSkills'].remove('anchor')
+        _,data=self.request(client,'create',{'mode':'conveyor','options':options})
+        room=server.ROOMS[data['room']['code']]
+        self.request(client,'skill',{'skill':'redirect'})
+        for _ in range(3):self.request(client,'bot',{})
+        with patch('server.secrets.choice',side_effect=lambda keys:'redirect' if 'redirect' in keys else keys[0]):
+            status,_=self.request(client,'start',{})
+        self.assertEqual(status,200)
+        self.assertEqual([p['skill'] for p in room['players']],['redirect','anchor','redirect','redirect'])
+
+    def test_priority_decline_does_not_sound_like_an_actual_pass(self):
+        from test_engine import cards
+        players = [dict(id=i,name=str(i)) for i in range(4)]
+        game = Game('basic',players,interactive=True)
+        game.phase='play';game.turn=0
+        game.hands=[cards([5,8],prefix='a'),cards([5,5,9],prefix='b'),
+                    cards([6,7],prefix='c'),cards([8,9],prefix='d')]
+        room=dict(mode='basic',game=game,players=players)
+        server.perform_game_action(room,0,{'action':'play','ids':['a0']})
+        last_audio=room['audioEvent']
+        previous_log=game.log[:]
+        self.assertIn(1,game.priority['pending'])
+        server.perform_game_action(room,1,{'action':'priority-decline'})
+        self.assertIs(room['audioEvent'],last_audio)
+        self.assertIsNone(game.seat_plays[1])
+        self.assertEqual(game.log,previous_log)
+        server.perform_game_action(room,3,{'action':'pass'})
+        self.assertEqual(room['audioEvent']['items'],[{'voice':'pass'}])
+        self.assertTrue(game.seat_plays[3]['passed'])
+        self.assertIn('3：不出。',game.log)
 
     def test_suitmark_selected_suit_reaches_the_game_through_http(self):
         from conveyor import ConveyorGame
@@ -863,13 +955,21 @@ class ServerIntegration(unittest.TestCase):
             for card in hand:
                 if card['rank']==3 and card['suit']=='S': card['suit']='H'
         g.hands[0][0].update(rank=3,suit='S')
-        self.assertEqual(self.request(client,'action',{'action':'confirm','revision':room['revision']},headers)[0],400)
+        action={'action':'reveal','matchId':room['matchId'],'openingPhase':'setup','openingRound':0}
+        self.assertEqual(self.request(client,'action',action,headers)[0],400)
         self.request(client,'audio-ack',{'event':-1},headers)
         self.assertTrue(server.audio_waiting(server.ROOMS[room['code']]))
         self.request(client,'audio-ack',{'event':room['audioEvent']['id']},headers)
         self.assertFalse(server.audio_waiting(server.ROOMS[room['code']]))
-        status,data=self.request(client,'action',{'action':'confirm','revision':room['revision']},headers)
-        self.assertEqual(status,200);self.assertEqual(data['room']['audioEvent']['items'],[{'voice':'confirm'}])
+        status,data=self.request(client,'action',action,headers)
+        self.assertEqual(status,200)
+        self.assertEqual(data['room']['game']['reveals'],[0])
+        self.assertEqual(data['room']['game']['openingClock']['remaining'],10)
+        self.assertEqual(data['room']['audioEvent']['items'],[{'effect':'deal'},{'voice':'deal'}])
+        server.ROOMS[room['code']]['openingClock']['expires']=0
+        updated=self.request(client,'state',headers=headers)[1]['room']
+        self.assertEqual(updated['game']['phase'],'play')
+        self.assertEqual(updated['audioEvent']['items'],[{'voice':'reveal'}])
         server.ROOMS[room['code']]['players'][0]['seen']=0
         self.assertFalse(server.audio_waiting(server.ROOMS[room['code']]))
 
@@ -920,7 +1020,7 @@ class ServerIntegration(unittest.TestCase):
         state=self.request(client,'state')[1]
         self.assertEqual(state['preferences'],{'configured':True,'endpoint':'https://example.com/v1','model':'demo'})
         self.assertNotIn('private-test-key',json.dumps(state))
-        self.assertTrue(state['features']['wildUrgent'])
+        self.assertFalse(state['features']['wildUrgent'])
         code=self.new_room(humans=1)
         self.assertEqual(self.request(client,'bot',{'model':True})[0],200)
         self.assertEqual(server.ROOMS[code]['modelConfig']['key'],'private-test-key')
@@ -993,8 +1093,11 @@ class ServerIntegration(unittest.TestCase):
         for step in range(1000):
             g=room['game']
             if g.phase=='over':break
+            if g.phase=='setup' and all(s in g.rps for s in g.confirmation_seats()):
+                room['openingClock']['expires']=0
+                server.update_opening_clock(room)
+                continue
             for seat in range(4):
-                if g.phase=='setup' and server.confirmation_seat(room)!=seat: continue
                 if room.get('priorityClock') and room['priorityClock']['seat'] != seat: continue
                 move={'action':'priority-decline'} if g.priority and seat in g.priority['pending'] else g.bot_action(seat)
                 if move:

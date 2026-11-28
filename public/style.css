@@ -366,6 +366,12 @@ footer{gap:24px}
 .audio-controls label>span{display:flex;justify-content:space-between;font-size:15px}
 .audio-controls output{color:var(--muted);font:13px ui-monospace,monospace}
 .audio-controls input{width:100%;accent-color:var(--ink);cursor:pointer}
+.party-setting{display:flex;align-items:center;gap:8px;margin:18px 0 8px;min-height:32px;cursor:pointer}
+.party-setting input{width:18px;height:18px;accent-color:var(--ink)}
+.party-burst{position:fixed;z-index:9;overflow:hidden;pointer-events:none;border-radius:16px}
+.party-burst i{position:absolute;left:50%;top:50%;width:7px;height:11px;border-radius:1px}
+.party-burst i:nth-child(3n){width:7px;height:7px;border-radius:50%}
+@media(prefers-reduced-motion:reduce){.party-burst{display:none}}
 .dealing .hand .card{animation:deal-card .7s ease-out both}
 .dealing .hand .card:nth-child(3n+2){animation-delay:.09s}
 .dealing .hand .card:nth-child(3n){animation-delay:.18s}
@@ -787,10 +793,17 @@ footer{gap:24px}
   min-width:0;max-width:none;padding:0;gap:.55em;align-items:center;
 }
 .seat-portrait{display:grid;justify-items:center;align-content:center;gap:.28em;flex:none}
-:is(#view,.replay-stage) .seat .avatar{
+:is(#view,.replay-stage) :is(.seat,.own-player) .avatar{
   display:grid;width:2.8em;height:2.8em;font:600 1em/1 var(--serif);color:var(--ink);
   border:1px solid #22241f;border-radius:50%;box-shadow:0 1px 0 #2e3029;background:var(--panel);
 }
+.own-player{display:flex;align-items:center;gap:.55em;font-size:clamp(11px,min(1.65vw,3svh),14px)}
+.own-player.turn .avatar{outline:2px solid var(--ink);outline-offset:2px}
+.own-player .seat-role{position:static;background:none;color:var(--ink);white-space:nowrap;padding:0;font-size:.76em}
+.own-player .seat-meta{margin:0}
+.own-player .seat-skill{padding:0}
+.opening-clock{font-variant-numeric:tabular-nums;font-weight:700;margin:4px 0}
+:is(#view,.replay-stage) .board .own-seat .speech-bubble{left:min(27vw,140px)}
 :is(#view,.replay-stage) .board .turn .avatar{outline:2px solid #faf9e7;outline-offset:2px;box-shadow:inset 0 0 0 2px #43453d}
 :is(#view,.replay-stage) .board .seat-role{
   position:static;padding:0;background:none;color:#ebe9db;white-space:nowrap;font-size:.76em;line-height:1.15;
@@ -905,6 +918,10 @@ footer{gap:24px}
     top:50%;bottom:auto;left:auto;right:calc(100% + 8px);transform:translateY(-50%);width:min(19vw,162px);text-align:right;
   }
   .in-game #view .seat:is(.top,.bottom) .seat-play-cards{justify-content:flex-end}
+  .in-game #view .board .own-seat .seat-play{
+    top:auto;bottom:100%;left:50%;right:auto;transform:translateX(-50%);text-align:center;
+  }
+  .in-game #view .board .own-seat .seat-play-cards{justify-content:safe center}
   .in-game #view .seat-play-cards{max-height:66px;gap:2px;overflow:auto}
   .in-game #view .seat-play-card{min-width:19px;height:27px;padding:1px 2px}
   .in-game #view .seat-play-card b{font-size:13px}.in-game #view .seat-play-card small{font-size:9px}

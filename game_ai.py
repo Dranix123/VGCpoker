@@ -250,31 +250,28 @@ def urgent_moves(core, actor, conveyor):
     hand = core.hands[actor]
     for card in hand:
         rank = core.effective_rank(actor, card['rank']) if conveyor else card['rank']
-        wild = (card['rank'] == 14 and card['suit'] == 'S' and
-                not (conveyor and core.skill(actor, 'wild')))
-        if rank != 18 and not wild:
+        if rank != 18:
             continue
         card_id = card['id']
-        declaration = {'wildcard': {card_id: 18}} if wild else {}
         targets = [s for s in range(len(core.players)) if s not in core.finished]
         other_cards = [c for c in hand if c != card and (core.effective_rank(actor, c['rank']) if conveyor else c['rank']) != 18]
         if not conveyor:
             for target in targets:
                 if target != actor:
                     for gift in other_cards:
-                        yield dict(action='urgent', ids=[card_id, gift['id']], target=target, **declaration)
+                        yield dict(action='urgent', ids=[card_id, gift['id']], target=target)
             continue
         for direction in ('counterclockwise', 'clockwise'):
-            yield dict(action='urgent', ids=[card_id], effect='rotate', direction=direction, **declaration)
+            yield dict(action='urgent', ids=[card_id], effect='rotate', direction=direction)
         if core.urgent_uses.get(card_id, 0) >= 3:
             continue
         for effect in ('shield', 'judge-boost'):
-            yield dict(action='urgent', ids=[card_id], effect=effect, **declaration)
+            yield dict(action='urgent', ids=[card_id], effect=effect)
         for effect in ('draw', 'ban', 'maximum', 'silence'):
             for target in targets:
-                yield dict(action='urgent', ids=[card_id], effect=effect, target=target, **declaration)
+                yield dict(action='urgent', ids=[card_id], effect=effect, target=target)
         for ids in card_selections(other_cards, 0, min(2, len(hand) - 2)):
-            yield dict(action='urgent', ids=[card_id, *ids], effect='discard', **declaration)
+            yield dict(action='urgent', ids=[card_id, *ids], effect='discard')
 
 
 def bot_turn_order(game):
@@ -299,7 +296,7 @@ def reaction_move(core, seat):
             if move.get('target') == core.turn:
                 return move
         for move in urgent_moves(core, seat, True):
-            if move.get('effect') == 'ban' and move['target'] == core.turn and 'wildcard' not in move:
+            if move.get('effect') == 'ban' and move['target'] == core.turn:
                 return move
     return None
 

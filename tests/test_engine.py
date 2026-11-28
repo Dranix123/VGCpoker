@@ -694,10 +694,6 @@ class Rules(unittest.TestCase):
         for value in ({'rank':5,'suit':'J'},{'rank':17,'suit':'H'},{'rank':5,'suit':'H','extra':1}):
             self.assertFalse(interpretations(selected,'standard',3,{'w0':value}))
         self.assertFalse(interpretations(selected,'standard',3,{'a0':{'rank':5,'suit':'H'}}))
-        g=table();g.hands[0]=cards([14],'S','w')+cards([6,9],'H','a')
-        g.action(0,'auto',['w0','a0'],target=1,wildcard={'w0':{'rank':18,'suit':'H'}})
-        self.assertTrue(any(c['id']=='a0' for c in g.hands[1]))
-        self.assertEqual(g.turn,0)
 
     def test_hui_once_and_follow(self):
         g=table();g.hands[0]=cards([7,9],prefix='a');g.hands[3]=cards([5,10],prefix='b');g.hands[2]=cards([8,10],prefix='c');g.hands[1]=cards([6,10],prefix='d')
@@ -802,7 +798,7 @@ class Rules(unittest.TestCase):
         g.action(2,'urgent',['c0','c1'],target=1)
         self.assertTrue(g.forced_pass())
         g.hands[2]=cards([14],'S','w')+cards([9],prefix='x')
-        self.assertFalse(g.forced_pass())
+        self.assertTrue(g.forced_pass())
 
     def test_declining_priority_hook_still_allows_hook_on_own_turn(self):
         for mode in ('basic', 'standard'):
@@ -1069,19 +1065,22 @@ class Rules(unittest.TestCase):
         g=table('landlord');g.hands[0]=cards([6,6,6,6,8,9],prefix='a')
         self.assertTrue(any(m['label']=='四带二' and len(m['ids'])==6 for m in g.candidates(0)))
 
-    def test_spade_ace_can_substitute_urgent_but_never_a_joker(self):
-        g=table();g.hands[0]=cards([14],'S','w')+cards([6,9],prefix='a')
-        g.action(0,'urgent',['w0','a0'],target=1,wildcard={'w0':18})
-        self.assertEqual([c['id'] for c in g.hands[0]],['a1'])
-        self.assertTrue(any(c['id']=='a0' for c in g.hands[1]))
-        self.assertTrue(any('黑桃A代急牌' in log for log in g.log))
-        g=table();g.hands[0]=cards([14,14],'S','w')+cards([18],prefix='u')
-        with self.assertRaises(RuleError):g.action(0,'urgent',['w0','u0'],target=1,wildcard=18)
-        with self.assertRaises(RuleError):g.action(0,'urgent',['w0','w1'],target=1,wildcard=17)
-        moves=g.candidates(0)
-        move=next(m for m in moves if m['label']=='黑桃A代急牌')
-        g.action(0,**move)
-        self.assertTrue(any(c['id']=='w1' for c in g.hands[1]))
+    def test_only_a_real_urgent_card_can_be_used_for_gifting(self):
+        from game_ai import urgent_moves
+        for mode in ('standard','trio'):
+            with self.subTest(mode=mode):
+                g=table(mode);g.turn=0
+                g.hands[0]=cards([14],'S','w')+cards([6],prefix='a')
+                for action in ('auto','urgent'):
+                    for declaration in (18,{'w0':18},{'w0':{'rank':18,'suit':'H'}}):
+                        with self.assertRaises(RuleError):
+                            g.action(0,action,['w0','a0'],target=1,wildcard=declaration)
+                self.assertFalse(any(m['action']=='urgent' for m in g.candidates(0)))
+                self.assertEqual(list(urgent_moves(g,0,False)),[])
+                g.hands[0]+=cards([18],prefix='u')
+                g.action(0,'auto',['w0','u0'],target=1)
+                self.assertIn('w0',[c['id'] for c in g.hands[1]])
+                self.assertEqual(g.turn,0)
 
     def test_full_bot_games(self):
         for mode in MODES:
